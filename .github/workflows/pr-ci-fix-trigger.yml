@@ -1,0 +1,317 @@
+name: "ci-fix-team: PR CI 修复链路"
+
+on:
+  repository_dispatch:
+    types: [run-ci-fix-phase]
+
+# 同一个 PR 的修复串行执行，避免并发冲突
+concurrency:
+  group: ci-fix-${{ github.event.client_payload.source_repo }}-${{ github.event.client_payload.pr_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+  AI_RUNNER: ${{ vars.AI_RUNNER || 'opencode' }}
+  GITCODE_FORK_REPO: ${{ vars.GITCODE_FORK_REPO || '' }}
+  # AI_MODEL: opencode 时填模型名如 deepseek/deepseek-v4-pro；
+  #           claude-code-account 时填 claude-sonnet-4-6
+  AI_MODEL: ${{ vars.AI_MODEL || 'deepseek/deepseek-v4-pro' }}
+  AI_TIMEOUT_MS: ${{ vars.AI_TIMEOUT_MS || '1800000' }}
+  OPENAI_API_KEY: ${{ secrets.AI_API_KEY || '' }}
+  DEEPSEEK_API_KEY: ${{ secrets.AI_API_KEY || '' }}
+  # 如需自定义 API 代理地址，在 Variables 中添加 OPENAI_BASE_URL
+  OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || '' }}
+
+jobs:
+
+  # ── 阶段 1: CI 日志分析 ──────────────────────────────────────────
+  ci-log-analysis:
+    runs-on: ubuntu-latest
+    if: |
+      github.event.action == 'run-ci-fix-phase' &&
+      github.event.client_payload.phase == 'ci-log-analysis'
+    env:
+      SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+      SOURCE_PLATFORM: ${{ github.event.client_payload.source_platform || 'github' }}
+      PR_NUMBER: ${{ github.event.client_payload.pr_number }}
+      PR_TITLE: ${{ github.event.client_payload.pr_title }}
+      HEAD_SHA: ${{ github.event.client_payload.head_sha }}
+      FIX_BRANCH: ${{ github.event.client_payload.fix_branch }}
+      PR_BASE_BRANCH: ${{ github.event.client_payload.pr_base_branch }}
+      # 重试时为 fix PR 编号，首次为 0；ci-log-analysis 用它从 fix PR 评论中查最新 build URL
+      FIX_PR_NUMBER: ${{ github.event.client_payload.fix_pr_number || '0' }}
+      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
+
+    steps:
+      - name: Checkout docker-images-workflow
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout source repo (GitHub)
+        if: env.SOURCE_PLATFORM != 'gitcode'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.client_payload.source_repo }}
+          token: ${{ secrets.DISPATCH_TOKEN }}
+          fetch-depth: 1
+          path: source-repo
+
+      - name: Checkout source repo (GitCode)
+        if: env.SOURCE_PLATFORM == 'gitcode'
+        run: |
+          git clone --depth=1 \
+            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.SOURCE_REPO }}.git \
+            source-repo
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Setup Claude Code account credentials
+        if: env.AI_RUNNER == 'claude-code-account'
+        env:
+          CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
+        run: |
+          mkdir -p ~/.claude
+          echo "$CLAUDE_CREDENTIALS_JSON" > ~/.claude/.credentials.json
+          chmod 600 ~/.claude/.credentials.json
+
+      - name: Install AI Agent
+        run: |
+          if [ "$AI_RUNNER" = "claude-code-account" ]; then
+            npm install -g @anthropic-ai/claude-code
+            claude --version
+          else
+            npm install -g opencode-ai
+            opencode --version
+          fi
+
+      - name: Load conventions
+        run: python scripts/lib/discover_conventions.py source-repo source-conventions.md
+
+      - name: Run CI 日志分析
+        run: python scripts/stages/ci-log-analysis.py
+
+      - name: Mark failed
+        if: failure()
+        run: echo "⚠️ ci-log-analysis failed, check workflow logs"
+
+  # ── 阶段 2: 代码修复 ────────────────────────────────────────────
+  code-fix:
+    runs-on: ubuntu-latest
+    if: |
+      github.event.action == 'run-ci-fix-phase' &&
+      github.event.client_payload.phase == 'code-fix'
+    env:
+      SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+      SOURCE_PLATFORM: ${{ github.event.client_payload.source_platform || 'github' }}
+      PR_NUMBER: ${{ github.event.client_payload.pr_number }}
+      PR_TITLE: ${{ github.event.client_payload.pr_title }}
+      PR_HEAD_SHA: ${{ github.event.client_payload.pr_head_sha }}
+      FIX_BRANCH: ${{ github.event.client_payload.fix_branch }}
+      PR_BASE_BRANCH: ${{ github.event.client_payload.pr_base_branch }}
+      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
+
+    steps:
+      - name: Checkout docker-images-workflow
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout source repo (GitHub)
+        if: env.SOURCE_PLATFORM != 'gitcode'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.client_payload.source_repo }}
+          token: ${{ secrets.DISPATCH_TOKEN }}
+          fetch-depth: 0
+          path: source-repo
+
+      - name: Checkout source repo (GitCode)
+        if: env.SOURCE_PLATFORM == 'gitcode'
+        run: |
+          git clone \
+            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.SOURCE_REPO }}.git \
+            source-repo
+
+      - name: Setup fix branch
+        run: |
+          cd source-repo
+          git config user.name "${{ vars.GIT_COMMIT_NAME || 'github-actions[bot]' }}"
+          git config user.email "${{ vars.GIT_COMMIT_EMAIL || 'github-actions[bot]@users.noreply.github.com' }}"
+
+          if [ "$SOURCE_PLATFORM" = "gitcode" ]; then
+            # GitCode: 直接 fetch PR head ref
+            git fetch origin refs/merge-requests/${{ env.PR_NUMBER }}/head:pr-head 2>/dev/null || \
+              git fetch origin ${{ env.PR_HEAD_SHA }} 2>/dev/null || true
+
+            # fix 分支推送到 fork，需要用 fork remote 检查；若未配置 fork 则退回 origin
+            FORK_REPO="${GITCODE_FORK_REPO:-}"
+            if [ -n "$FORK_REPO" ] && [ "$FORK_REPO" != "$SOURCE_REPO" ]; then
+              git remote add fork \
+                https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${FORK_REPO}.git
+              FIX_BRANCH_REMOTE="fork"
+            else
+              FIX_BRANCH_REMOTE="origin"
+            fi
+          else
+            git fetch origin pull/${{ env.PR_NUMBER }}/head
+            FIX_BRANCH_REMOTE="origin"
+          fi
+
+          if git ls-remote --exit-code --heads $FIX_BRANCH_REMOTE ${{ env.FIX_BRANCH }}; then
+            git fetch $FIX_BRANCH_REMOTE ${{ env.FIX_BRANCH }}
+            git checkout -b ${{ env.FIX_BRANCH }} $FIX_BRANCH_REMOTE/${{ env.FIX_BRANCH }}
+          else
+            git checkout ${{ env.PR_HEAD_SHA }} 2>/dev/null || git checkout FETCH_HEAD
+            git checkout -b ${{ env.FIX_BRANCH }}
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Setup Claude Code account credentials
+        if: env.AI_RUNNER == 'claude-code-account'
+        env:
+          CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
+        run: |
+          mkdir -p ~/.claude
+          echo "$CLAUDE_CREDENTIALS_JSON" > ~/.claude/.credentials.json
+          chmod 600 ~/.claude/.credentials.json
+
+      - name: Install AI Agent
+        run: |
+          if [ "$AI_RUNNER" = "claude-code-account" ]; then
+            npm install -g @anthropic-ai/claude-code
+            claude --version
+          else
+            npm install -g opencode-ai
+            opencode --version
+          fi
+
+      - name: Load conventions
+        run: python scripts/lib/discover_conventions.py source-repo source-conventions.md
+
+      - name: Run 代码修复
+        id: code_fix
+        run: python scripts/stages/code-fix.py
+
+      - name: Remove AI artifacts from fix branch
+        if: steps.code_fix.outputs.no_changes != 'true'
+        run: |
+          cd source-repo
+          for pattern in ".claude" ".opencode" "__pycache__" ".aider" ".agents"; do
+            find . -name "$pattern" -not -path "./.git/*" | while read p; do
+              git rm -rf --cached "$p" 2>/dev/null || true
+              rm -rf "$p"
+            done
+          done
+          find . -name "*.pyc" -o -name "*.pyo" | grep -v ".git" | while read p; do
+            git rm -f --cached "$p" 2>/dev/null || true
+            rm -f "$p"
+          done
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: remove AI-generated artifacts"
+          fi
+
+      - name: Push fix branch
+        if: steps.code_fix.outputs.no_changes != 'true'
+        run: |
+          cd source-repo
+          if [ "$SOURCE_PLATFORM" = "gitcode" ]; then
+            PUSH_REPO="${GITCODE_FORK_REPO:-$SOURCE_REPO}"
+            git remote set-url origin \
+              https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${PUSH_REPO}.git
+          else
+            git remote set-url origin \
+              https://x-access-token:${{ secrets.DISPATCH_TOKEN }}@github.com/${{ env.SOURCE_REPO }}.git
+          fi
+          git push origin "+refs/heads/${{ env.FIX_BRANCH }}:refs/heads/${{ env.FIX_BRANCH }}"
+
+      - name: Create fix PR if not exists
+        if: steps.code_fix.outputs.no_changes != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        run: |
+          if [ "$SOURCE_PLATFORM" = "gitcode" ]; then
+            python - <<'EOF'
+          import os, sys
+          sys.path.insert(0, '.')
+          from scripts.lib.ci_gitcode_api import find_any_pr_by_head_branch, create_pull_request
+          from scripts.lib.fix_pr_body import build
+
+          repo      = os.environ['SOURCE_REPO']
+          fork_repo = os.environ.get('GITCODE_FORK_REPO', '').strip() or repo
+          token     = os.environ['GITCODE_TOKEN']
+          fix_br    = os.environ['FIX_BRANCH']
+          base_br   = os.environ['PR_BASE_BRANCH']
+          meta      = build(int(os.environ['PR_NUMBER']), os.environ['PR_TITLE'])
+
+          head = f"{fork_repo.split('/')[0]}:{fix_br}" if fork_repo != repo else fix_br
+          existing = find_any_pr_by_head_branch(repo, fix_br, token, open_only=True)
+          if not existing:
+              try:
+                  create_pull_request(repo, head, base_br, meta['title'], meta['body'], token)
+                  print(f"✅ Fix PR created: {meta['title']}")
+              except Exception as e:
+                  if 'already exists' in str(e).lower() or '422' in str(e):
+                      print("✅ Fix PR already exists (detected on create), new commit pushed")
+                  else:
+                      raise
+          else:
+              print(f"✅ Fix PR already exists (#{existing['number']}), new commit pushed")
+          EOF
+          else
+            PR_EXISTS=$(gh pr list \
+              --repo ${{ env.SOURCE_REPO }} \
+              --head ${{ env.FIX_BRANCH }} \
+              --state open \
+              --json number \
+              -q '.[0].number' 2>/dev/null || echo "")
+            if [ -z "$PR_EXISTS" ]; then
+              python - <<'PYEOF'
+          import os, sys, subprocess
+          sys.path.insert(0, '.')
+          from scripts.lib.fix_pr_body import build
+
+          meta = build(int(os.environ['PR_NUMBER']), os.environ['PR_TITLE'])
+          subprocess.run([
+              'gh', 'pr', 'create',
+              '--repo', os.environ['SOURCE_REPO'],
+              '--title', meta['title'],
+              '--body',  meta['body'],
+              '--head',  os.environ['FIX_BRANCH'],
+              '--base',  os.environ['PR_BASE_BRANCH'],
+          ], check=True)
+          print(f"✅ Fix PR created: {meta['title']}")
+          PYEOF
+            else
+              echo "✅ Fix PR #$PR_EXISTS already exists, new commit pushed"
+            fi
+          fi
+
+      - name: Mark failed
+        if: failure()
+        run: echo "⚠️ code-fix failed, check workflow logs"

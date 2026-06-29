@@ -1,0 +1,70 @@
+name: "Watch: Monitor PRs for CI Failures"
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      test_repo:
+        description: '测试特定仓库 (owner/repo)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Debug GitCode API
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          python - <<'EOF'
+          import os, requests, json
+          token = os.getenv('GITCODE_TOKEN', '')
+          print(f"GITCODE_TOKEN: {'set (' + str(len(token)) + ' chars)' if token else 'NOT SET'}")
+          url = "https://gitcode.com/api/v5/repos/openeuler/openeuler-docker-images/pulls"
+          params = {'state': 'open', 'per_page': 20}
+          if token:
+              params['access_token'] = token
+          r = requests.get(url, params=params, timeout=15)
+          print(f"API status: {r.status_code}")
+          prs = r.json() if r.ok else []
+          print(f"Open PRs returned: {len(prs)}")
+          for pr in prs:
+              labels = [l.get('name') for l in (pr.get('labels') or [])]
+              print(f"  PR #{pr.get('number')}: labels={labels}")
+          EOF
+
+      - name: Process PR events
+        env:
+          DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          python scripts/watch/process_pr_events.py
+
+      - name: Report status
+        if: always()
+        run: echo "✅ PR monitoring cycle completed"

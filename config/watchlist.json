@@ -1,0 +1,16 @@
+{
+  "watched_repos": [
+    {
+      "repo": "https://gitcode.com/openeuler/openeuler-docker-images",
+      "trigger_labels": ["ci_failed"],
+      "trigger_mode": "command",
+      "enabled": true,
+      "description": "Dockerfiles for openEuler official container images, include openEuler basic image and application images."
+    }
+  ],
+  "settings": {
+    "poll_interval_minutes": 10,
+    "max_events_per_run": 50,
+    "lookback_minutes": 100000
+  }
+}

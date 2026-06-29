@@ -1,0 +1,38 @@
+name: "Sync: poll_interval_minutes → cron schedule"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'config/watchlist.json'
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.DISPATCH_TOKEN }}
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Sync cron schedule
+        run: python scripts/watch/sync_poll_interval.py
+
+      - name: Commit if changed
+        run: |
+          git diff --quiet .github/workflows/stream-pr-events.yml && exit 0
+          git config user.name "${{ vars.GIT_COMMIT_NAME || 'github-actions[bot]' }}"
+          git config user.email "${{ vars.GIT_COMMIT_EMAIL || 'github-actions[bot]@users.noreply.github.com' }}"
+          git add .github/workflows/stream-pr-events.yml
+          git commit -m "chore: sync cron schedule from poll_interval_minutes"
+          git push
