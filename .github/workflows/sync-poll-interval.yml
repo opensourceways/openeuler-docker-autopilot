@@ -14,16 +14,14 @@ env:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    container:
+      image: python:3.11
     steps:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.DISPATCH_TOKEN }}
           fetch-depth: 1
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
 
       - name: Sync cron schedule
         run: python scripts/watch/sync_poll_interval.py

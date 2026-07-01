@@ -30,7 +30,9 @@ jobs:
 
   # ── 阶段 1: CI 日志分析 ──────────────────────────────────────────
   ci-log-analysis:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    container:
+      image: python:3.11
     if: |
       github.event.action == 'run-ci-fix-phase' &&
       github.event.client_payload.phase == 'ci-log-analysis'
@@ -70,11 +72,6 @@ jobs:
             https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.SOURCE_REPO }}.git \
             source-repo
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -88,6 +85,11 @@ jobs:
           mkdir -p ~/.claude
           echo "$CLAUDE_CREDENTIALS_JSON" > ~/.claude/.credentials.json
           chmod 600 ~/.claude/.credentials.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Install AI Agent
         run: |
@@ -111,7 +113,9 @@ jobs:
 
   # ── 阶段 2: 代码修复 ────────────────────────────────────────────
   code-fix:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    container:
+      image: python:3.11
     if: |
       github.event.action == 'run-ci-fix-phase' &&
       github.event.client_payload.phase == 'code-fix'
@@ -182,11 +186,6 @@ jobs:
             git checkout -b ${{ env.FIX_BRANCH }}
           fi
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -200,6 +199,11 @@ jobs:
           mkdir -p ~/.claude
           echo "$CLAUDE_CREDENTIALS_JSON" > ~/.claude/.credentials.json
           chmod 600 ~/.claude/.credentials.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Install AI Agent
         run: |
