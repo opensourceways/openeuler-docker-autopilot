@@ -106,6 +106,14 @@ def _tag(task: TaskSpec) -> str:
     return f"{task.version}-oe{os_tag}"
 
 
+def _app_root_relative(task: TaskSpec) -> str:
+    return (
+        task.mdu_path
+        if task.schema_version == 2 and task.mdu_path
+        else f"{task.domain}/{task.app}"
+    )
+
+
 def lint_dockerfile(
     *,
     executable: Path,
@@ -172,7 +180,8 @@ def _candidate_paths(
     workspace: Path,
     task: TaskSpec,
 ) -> tuple[Path, ...]:
-    app_root = workspace / task.domain / task.app
+    relative_app_root = _app_root_relative(task)
+    app_root = workspace / relative_app_root
     image_root = app_root / task.version / task.os_version
     paths = {
         workspace / task.domain / "image-list.yml",
@@ -381,11 +390,7 @@ def build_role_prompt(
         instructions = (_PROMPT_DIR / _PROMPT_FILES[role]).read_text()
     except (KeyError, OSError) as error:
         raise GenerationPipelineError(f"prompt is unavailable for role {role}") from error
-    app_root = (
-        task.mdu_path
-        if task.schema_version == 2 and task.mdu_path
-        else f"{task.domain}/{task.app}"
-    )
+    app_root = _app_root_relative(task)
     image_root = f"{app_root}/{task.version}/{task.os_version}"
     contract_lines = [
         "## Immutable task contract",
@@ -534,7 +539,7 @@ def _qa_prompt(
     evidence_bundle: Mapping[str, object] | None = None,
     return_snapshot: bool = False,
 ) -> str | tuple[str, Mapping[str, object]]:
-    app_root = workspace / task.domain / task.app
+    app_root = workspace / _app_root_relative(task)
     image_root = app_root / task.version / task.os_version
     if role != "testcase_qa":
         raise GenerationPipelineError(f"unsupported QA role: {role}")
@@ -1016,6 +1021,8 @@ def _review_pair(
         | None
     ) = None,
 ) -> ReviewPairResult:
+    relative_app_root = _app_root_relative(task)
+
     def qa_prompt(
         round_number: int,
         previous_review: Mapping[str, object] | None = None,
@@ -1071,7 +1078,7 @@ def _review_pair(
         payload=review.payload,
         api_key=api_key,
         snapshot=first_snapshot,
-        issue_root=f"{task.domain}/{task.app}/tests",
+        issue_root=f"{relative_app_root}/tests",
     )
     _write_report(report_dir, f"{qa_role.replace('_', '-')}-round1.json", review_payload, api_key)
     _log_review_result(
@@ -1159,7 +1166,7 @@ def _review_pair(
         payload=second.payload,
         api_key=api_key,
         snapshot=second_snapshot,
-        issue_root=f"{task.domain}/{task.app}/tests",
+        issue_root=f"{relative_app_root}/tests",
     )
     _write_report(
         report_dir,
@@ -1211,6 +1218,34 @@ def _review_pair(
     )
 
 
+def review_testcase_candidate(
+    *,
+    agent_runner: Callable[..., AgentResult],
+    executable: Path,
+    workspace: Path,
+    report_dir: Path,
+    task: TaskSpec,
+    base_sha: str,
+    api_key: str,
+    creator_payload: Mapping[str, object],
+    post_repair_check: Callable[[Mapping[str, object]], None],
+) -> ReviewPairResult:
+    """Reuse the scenario-one bounded Creator/QA convergence protocol."""
+    return _review_pair(
+        creator_role="testcase_creator",
+        qa_role="testcase_qa",
+        agent_runner=agent_runner,
+        executable=executable,
+        workspace=workspace,
+        report_dir=report_dir,
+        task=task,
+        base_sha=base_sha,
+        api_key=api_key,
+        post_repair_check=post_repair_check,
+        creator_payload=creator_payload,
+    )
+
+
 def run_generation_pipeline(
     *,
     workspace: Path,
@@ -1235,15 +1270,8 @@ def run_generation_pipeline(
     if report_dir.exists() and any(report_dir.iterdir()):
         raise GenerationPipelineError("Agent evidence directory must be empty")
     report_dir.mkdir(parents=True, exist_ok=True)
-    dockerfile = (
-        workspace
-        / task.domain
-        / task.app
-        / task.version
-        / task.os_version
-        / "Dockerfile"
-    )
-    app_root = workspace / task.domain / task.app
+    app_root = workspace / _app_root_relative(task)
+    dockerfile = app_root / task.version / task.os_version / "Dockerfile"
     tests_root = app_root / "tests"
 
     def resolve_creator_evidence(
