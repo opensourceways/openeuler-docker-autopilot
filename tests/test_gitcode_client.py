@@ -340,6 +340,7 @@ def test_list_issues_preserves_arrays_and_paginates():
         "/repos/openeuler/openeuler-docker-images/issues"
     )
     assert transport.requests[0].params["page"] == 1
+    assert transport.requests[0].params["filter"] == "all"
     assert transport.requests[1].params["page"] == 2
     assert transport.requests[1].params["search"] == (
         "new-image-database-kvrocks"

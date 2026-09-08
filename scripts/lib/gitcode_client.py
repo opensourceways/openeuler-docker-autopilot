@@ -419,6 +419,11 @@ class GitCodeClient:
         while True:
             params: dict[str, object] = {
                 "state": state,
+                # GitCode/Gitee API v5 defaults to Issues related to the
+                # authenticated user (assigned/created/commented). Without an
+                # explicit all-issue scope the watcher can never see Issues
+                # that other users created or commented on.
+                "filter": "all",
                 "page": page,
                 "per_page": 100,
             }
