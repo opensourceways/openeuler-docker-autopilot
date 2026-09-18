@@ -98,6 +98,71 @@ def test_scratch_size_counts_blocks_held_not_length_claimed(tmp_path):
     assert agent_runtime._directory_size_mb(tmp_path) < 64
 
 
+def test_prepare_scratch_excludes_scratch_and_tool_state_dirs(tmp_path):
+    from scripts.lib import agent_runtime
+
+    workspace = tmp_path / "target"
+    (workspace / ".git" / "info").mkdir(parents=True)
+
+    scratch = agent_runtime.prepare_scratch(workspace)
+
+    assert scratch == workspace / agent_runtime.SCRATCH_DIR
+    assert scratch.is_dir()
+    exclude = workspace / ".git" / "info" / "exclude"
+    assert exclude.read_text().splitlines() == [
+        f"/{agent_runtime.SCRATCH_DIR}/",
+        f"/{agent_runtime.TOOL_STATE_DIR}/",
+    ]
+
+    # A rerun keeps unrelated entries and a missing trailing newline intact.
+    exclude.write_text("/custom\n\nlast-no-newline")
+    agent_runtime.prepare_scratch(workspace)
+    assert exclude.read_text().splitlines() == [
+        "/custom",
+        "",
+        "last-no-newline",
+        f"/{agent_runtime.SCRATCH_DIR}/",
+        f"/{agent_runtime.TOOL_STATE_DIR}/",
+    ]
+
+
+def test_prepare_scratch_tolerates_a_workspace_without_git(tmp_path):
+    from scripts.lib import agent_runtime
+
+    scratch = agent_runtime.prepare_scratch(tmp_path)
+
+    assert scratch.is_dir()
+    assert not (tmp_path / ".git").exists()
+
+
+def test_tool_state_never_reaches_intent_to_add(tmp_path):
+    """Any `gh` the Agent runs writes .local/state/gh/device-id in the
+    workspace; that file must stay invisible to the deterministic gate."""
+    from scripts.lib import agent_runtime
+
+    workspace = tmp_path / "target"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+
+    agent_runtime.prepare_scratch(workspace)
+    device_id = workspace / ".local" / "state" / "gh" / "device-id"
+    device_id.parent.mkdir(parents=True)
+    device_id.write_text("abc123")
+    (workspace / agent_runtime.SCRATCH_DIR / "notes.txt").write_text("x")
+
+    subprocess.run(
+        ["git", "-C", str(workspace), "add", "--intent-to-add", "--", "."],
+        check=True,
+    )
+    status = subprocess.run(
+        ["git", "-C", str(workspace), "status", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert status == ""
+
+
 def test_default_agent_runner_streams_safe_progress(tmp_path, capsys):
     from scripts.lib.agent_runtime import run_agent
 
