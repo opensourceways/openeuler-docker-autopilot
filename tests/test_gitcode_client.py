@@ -24,7 +24,7 @@ def _delivery_config(environment="test"):
                 "environment": "test",
                 "delivery_mode": "fork_pr",
                 "target_repo": TARGET_REPO,
-                "push_repo": "qq_42020325/openeuler-docker-images",
+                "push_repo": "m0_46560176/openeuler-docker-images",
                 "target_branch": "master",
             }
         )
@@ -81,7 +81,7 @@ def test_test_delivery_creates_cross_repo_pr_without_duplicate_lookup():
     assert create.params == {"access_token": "top-secret"}
     assert create.json_body == {
         "title": "[New Image] Add Apache Kvrocks 2.16.0",
-        "head": f"qq_42020325:{BRANCH}",
+        "head": f"m0_46560176:{BRANCH}",
         "base": "master",
         "body": "Validated on x86_64 and aarch64.",
         "close_related_issue": False,
@@ -282,7 +282,7 @@ def test_validate_only_cannot_create_pr_even_with_a_client():
             "environment": "test",
             "delivery_mode": "validate_only",
             "target_repo": TARGET_REPO,
-            "push_repo": "qq_42020325/openeuler-docker-images",
+            "push_repo": "m0_46560176/openeuler-docker-images",
             "target_branch": "master",
         }
     )

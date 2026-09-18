@@ -12,7 +12,7 @@ from typing import Callable, Mapping
 
 
 TARGET_REPO = "openeuler/openeuler-docker-images"
-TEST_PUSH_REPO = "qq_42020325/openeuler-docker-images"
+TEST_PUSH_REPO = "m0_46560176/openeuler-docker-images"
 TARGET_BRANCH = "master"
 
 

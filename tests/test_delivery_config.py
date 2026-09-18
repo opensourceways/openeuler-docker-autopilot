@@ -6,7 +6,7 @@ def _test_mapping(mode="validate_only"):
         "environment": "test",
         "delivery_mode": mode,
         "target_repo": "openeuler/openeuler-docker-images",
-        "push_repo": "qq_42020325/openeuler-docker-images",
+        "push_repo": "m0_46560176/openeuler-docker-images",
         "target_branch": "master",
     }
 
@@ -29,7 +29,7 @@ def test_test_fork_pr_uses_cross_repository_head():
     assert config.allows_branch_push is True
     assert config.allows_pr_create is True
     assert config.pr_head("auto/new-image/kvrocks/2.16.0-oe2403sp4") == (
-        "qq_42020325:auto/new-image/kvrocks/2.16.0-oe2403sp4"
+        "m0_46560176:auto/new-image/kvrocks/2.16.0-oe2403sp4"
     )
     assert config.duplicate_pr_guard_enabled is False
 

@@ -92,6 +92,11 @@ _WRITE_ROLES = {"image_creator", "testcase_creator", "fixer"}
 _READ_ONLY_ROLES = {"testcase_qa"}
 _ROLES = _WRITE_ROLES | _READ_ONLY_ROLES
 SCRATCH_DIR = ".oe-scratch"
+# State directory CLI tools drop next to the workspace when the Agent runs
+# them from inside it: `gh` writes .local/state/gh/device-id on any
+# invocation. That noise must stay out of the candidate like the scratch
+# directory, or the deterministic gate stops the run on scope.outside_task.
+TOOL_STATE_DIR = ".local"
 # The two event types emit() counts toward the ACTIVITY summary.
 _ACTIVITY_EVENTS = {"text", "tool_use"}
 AgentRunner = Callable[
@@ -354,19 +359,27 @@ def prepare_scratch(workspace: Path) -> Path:
     target repo itself. Excluding the scratch path through .git/info/exclude
     keeps it out of `git add --intent-to-add`, and therefore out of both the
     deterministic gate and the candidate patch, without touching any tracked
-    ignore file in the target repository.
+    ignore file in the target repository. The tool-state directory needs the
+    same treatment: any `gh` the Agent runs from the workspace writes state
+    such as .local/state/gh/device-id there.
     """
     scratch = workspace / SCRATCH_DIR
     scratch.mkdir(parents=True, exist_ok=True)
     exclude = workspace / ".git" / "info" / "exclude"
     if not (workspace / ".git").is_dir():
         return scratch
-    entry = f"/{SCRATCH_DIR}/"
     exclude.parent.mkdir(parents=True, exist_ok=True)
     existing = exclude.read_text() if exclude.is_file() else ""
-    if entry not in existing.splitlines():
+    entries = existing.splitlines()
+    missing = [
+        entry
+        for entry in (f"/{SCRATCH_DIR}/", f"/{TOOL_STATE_DIR}/")
+        if entry not in entries
+    ]
+    if missing:
         separator = "" if not existing or existing.endswith("\n") else "\n"
-        exclude.write_text(f"{existing}{separator}{entry}\n")
+        addition = "".join(entry + "\n" for entry in missing)
+        exclude.write_text(f"{existing}{separator}{addition}")
     return scratch
 
 
