@@ -184,7 +184,7 @@ def _fork_deliver(args: argparse.Namespace) -> None:
             "environment": "test",
             "delivery_mode": "fork_pr",
             "target_repo": "openeuler/openeuler-docker-images",
-            "push_repo": "qq_42020325/openeuler-docker-images",
+            "push_repo": "m0_46560176/openeuler-docker-images",
             "target_branch": "master",
         }
     )

@@ -473,7 +473,7 @@ def test_delivery_config_command_reports_zero_write_validate_only(tmp_path):
         "--target-repo",
         "openeuler/openeuler-docker-images",
         "--push-repo",
-        "qq_42020325/openeuler-docker-images",
+        "m0_46560176/openeuler-docker-images",
         "--target-branch",
         "master",
         "--output",
@@ -797,7 +797,7 @@ def test_fork_delivery_reads_token_only_from_environment():
     assert "--delivery-run-id" in result.stdout
     assert "--delivery-run-attempt" in result.stdout
     assert "--gitcode-username" in result.stdout
-    assert "qq_42020325" not in result.stdout
+    assert "m0_46560176" not in result.stdout
 
 
 def test_issue_contract_test_is_explicit_and_reads_environment_token():

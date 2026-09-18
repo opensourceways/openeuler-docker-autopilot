@@ -213,7 +213,7 @@ def test_issue_trigger_reuses_scenario_one_and_finalizes_the_source_issue():
     assert '--gitcode-username "${GITCODE_USERNAME}"' in (
         delivery_step["run"]
     )
-    assert "--gitcode-username qq_42020325" not in delivery_step["run"]
+    assert "--gitcode-username m0_46560176" not in delivery_step["run"]
     assert "--source-issue-number" in delivery_step["run"]
     assert 'case "${SOURCE_RUN_ID}"' in delivery_step["run"]
     assert "case \"${{ inputs.source_run_id }}\"" not in delivery_step["run"]

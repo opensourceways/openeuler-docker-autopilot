@@ -15,7 +15,7 @@ def _config(mode="fork_pr"):
             "environment": "test",
             "delivery_mode": mode,
             "target_repo": "openeuler/openeuler-docker-images",
-            "push_repo": "qq_42020325/openeuler-docker-images",
+            "push_repo": "m0_46560176/openeuler-docker-images",
             "target_branch": "master",
         }
     )
@@ -60,14 +60,14 @@ def test_push_uses_credential_free_url_askpass_and_empty_branch_lease(tmp_path):
         repo=tmp_path,
         config=_config(),
         branch=BRANCH,
-        username="qq_42020325",
+        username="m0_46560176",
         token=token,
         runner=runner,
     )
 
     assert len(runner.calls) == 2
     remote = (
-        "https://gitcode.com/qq_42020325/openeuler-docker-images.git"
+        "https://gitcode.com/m0_46560176/openeuler-docker-images.git"
     )
     assert runner.calls[0]["args"] == [
         "ls-remote",
@@ -87,7 +87,7 @@ def test_push_uses_credential_free_url_askpass_and_empty_branch_lease(tmp_path):
         assert token not in call["askpass_content"]
         assert "OE_GITCODE_TOKEN" in call["askpass_content"]
         assert call["env"]["GIT_TERMINAL_PROMPT"] == "0"
-        assert call["env"]["OE_GITCODE_USERNAME"] == "qq_42020325"
+        assert call["env"]["OE_GITCODE_USERNAME"] == "m0_46560176"
         assert call["env"]["OE_GITCODE_TOKEN"] == token
 
 
@@ -108,7 +108,7 @@ def test_push_uses_exact_observed_sha_as_force_with_lease(tmp_path):
         repo=tmp_path,
         config=_config(),
         branch=BRANCH,
-        username="qq_42020325",
+        username="m0_46560176",
         token="secret",
         runner=runner,
     )
@@ -128,7 +128,7 @@ def test_validate_only_and_unsafe_branch_refuse_before_git_runs(tmp_path):
             repo=tmp_path,
             config=_config("validate_only"),
             branch=BRANCH,
-            username="qq_42020325",
+            username="m0_46560176",
             token="secret",
             runner=runner,
         )
@@ -137,7 +137,7 @@ def test_validate_only_and_unsafe_branch_refuse_before_git_runs(tmp_path):
             repo=tmp_path,
             config=_config(),
             branch="master",
-            username="qq_42020325",
+            username="m0_46560176",
             token="secret",
             runner=runner,
         )
@@ -160,7 +160,7 @@ def test_cleanup_deletes_only_exact_observed_auto_branch(tmp_path):
         repo=tmp_path,
         config=_config(),
         branch=BRANCH,
-        username="qq_42020325",
+        username="m0_46560176",
         token="secret",
         runner=runner,
     )
@@ -169,7 +169,7 @@ def test_cleanup_deletes_only_exact_observed_auto_branch(tmp_path):
     assert runner.calls[1]["args"] == [
         "push",
         f"--force-with-lease=refs/heads/{BRANCH}:{old_sha}",
-        "https://gitcode.com/qq_42020325/openeuler-docker-images.git",
+        "https://gitcode.com/m0_46560176/openeuler-docker-images.git",
         f":refs/heads/{BRANCH}",
     ]
 
@@ -183,7 +183,7 @@ def test_cleanup_is_noop_when_exact_branch_does_not_exist(tmp_path):
         repo=tmp_path,
         config=_config(),
         branch=BRANCH,
-        username="qq_42020325",
+        username="m0_46560176",
         token="secret",
         runner=runner,
     )
@@ -205,7 +205,7 @@ def test_git_failure_redacts_token_from_error(tmp_path):
             repo=tmp_path,
             config=_config(),
             branch=BRANCH,
-            username="qq_42020325",
+            username="m0_46560176",
             token=token,
             runner=runner,
         )
