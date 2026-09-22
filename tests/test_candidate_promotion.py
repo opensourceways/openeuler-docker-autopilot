@@ -23,7 +23,11 @@ def _upstream(tmp_path):
     _git(repo, "config", "user.name", "Fixture")
     _git(repo, "config", "user.email", "fixture@example.com")
     (repo / "README.md").write_text("upstream\n")
-    _git(repo, "add", "README.md")
+    (repo / "Database").mkdir()
+    (repo / "Database" / "image-list.yml").write_text(
+        "images:\n  redis: redis\n"
+    )
+    _git(repo, "add", ".")
     _git(repo, "commit", "-m", "initial")
     return repo
 

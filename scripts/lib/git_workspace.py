@@ -190,12 +190,18 @@ class TargetWorkspace:
             raise GitWorkspaceError("no changes available for candidate patch")
         Path(destination).write_bytes(patch)
 
-    def apply_patch(self, patch: Path) -> None:
+    def apply_patch(
+        self,
+        patch: Path,
+        *,
+        exclude: tuple[str, ...] = (),
+    ) -> None:
         patch = Path(patch)
         if not patch.is_file() or patch.stat().st_size == 0:
             raise GitWorkspaceError("candidate patch is missing or empty")
-        _run(self.path, "apply", "--check", "--binary", str(patch))
-        _run(self.path, "apply", "--binary", str(patch))
+        excludes = [f"--exclude={relative}" for relative in exclude]
+        _run(self.path, "apply", "--check", "--binary", *excludes, str(patch))
+        _run(self.path, "apply", "--binary", *excludes, str(patch))
 
     def commit_candidate(self, *, branch: str, message: str) -> str:
         if not branch.startswith("auto/"):
