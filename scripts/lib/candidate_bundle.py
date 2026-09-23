@@ -8,6 +8,8 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import yaml
+
 from scripts.lib.git_workspace import TargetWorkspace
 from scripts.lib.task_spec import TaskSpec, TaskSpecError
 from scripts.lib.target_contract import (
@@ -261,6 +263,14 @@ class CandidatePromotion:
     validated_run_id: str
 
 
+def _merge_image_list(workspace: TargetWorkspace, task: TaskSpec) -> None:
+    path = workspace.path / task.domain / "image-list.yml"
+    data = yaml.safe_load(path.read_text()) or {}
+    images = data.setdefault("images", {})
+    images[task.app] = task.app
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
+
+
 def promote_candidate(
     *,
     candidate_dir: Path,
@@ -273,7 +283,12 @@ def promote_candidate(
         expected_run_id=expected_run_id,
     )
 
-    workspace.apply_patch(bundle.root / "changes.patch")
+    image_list = f"{bundle.task.domain}/image-list.yml"
+    workspace.apply_patch(
+        bundle.root / "changes.patch",
+        exclude=(image_list,),
+    )
+    _merge_image_list(workspace, bundle.task)
     delivery_branch = branch or bundle.task.branch
     commit_sha = workspace.commit_candidate(
         branch=delivery_branch,
