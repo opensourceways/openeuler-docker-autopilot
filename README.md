@@ -206,7 +206,7 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `MAX_PARALLEL_IMAGES` | 场景二 / 三 Matrix 并行的镜像数上限 | `4` |
 | `GITCODE_BOT_USERNAME` | 交付阶段用于推送分支的 GitCode 账号名 | _(无)_ |
 
-Agent 模型默认取 `deepseek/deepseek-v4-flash`（定义在 [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py)），可用 `OPENCODE_MODEL` / `OPENCODE_TIMEOUT` 环境变量覆盖。
+Agent 模型默认取 `deepseek/deepseek-flash`（定义在 [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py)），可用 `OPENCODE_MODEL` / `OPENCODE_TIMEOUT` 环境变量覆盖。
 
 ### 2.4 冒烟验证
 

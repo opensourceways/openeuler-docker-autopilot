@@ -235,7 +235,7 @@ def test_default_agent_runner_streams_safe_progress(tmp_path, capsys):
     assert result.payload["success"] is True
     assert (
         "[flow][agent:image_creator] START "
-        "model=deepseek/deepseek-v4-flash timeout=3600s"
+        "model=deepseek/deepseek-flash timeout=3600s"
     ) in output
     assert (
         "[flow][agent:image_creator] ACTION tool=write "
@@ -344,7 +344,7 @@ def test_write_agent_uses_pinned_model_and_scoped_permissions(tmp_path):
         str(executable),
         "run",
         "--model",
-        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-flash",
         "--format",
         "json",
         "--auto",
