@@ -59,7 +59,7 @@ class AgentScratchOverLimitError(AgentRuntimeError):
         self.limit_mb = limit_mb
 
 
-MODEL = "deepseek/deepseek-v4-flash"
+MODEL = "deepseek/deepseek-flash"
 _AGENT_HEARTBEAT_SECONDS = 60.0
 # Research downloads are the one Agent action that can quietly consume a whole
 # budget, so cap the scratch directory instead of trusting the prompt alone.
