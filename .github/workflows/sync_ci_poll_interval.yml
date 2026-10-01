@@ -1,0 +1,46 @@
+name: Sync CI poll interval
+
+# watchlist.json 的 poll_interval_minutes 变更时，自动把 cron 表达式同步到
+# monitor_ci_failed_prs.yml，避免轮询频率要在两处手工维护。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'config/watchlist.json'
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  sync:
+    name: Sync cron schedule
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          token: ${{ secrets.DISPATCH_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up runner environment
+        uses: ./.github/actions/phase1-setup
+
+      - name: Sync cron schedule
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" \
+            scripts/watch/sync_poll_interval.py
+
+      - name: Commit if changed
+        run: |
+          git diff --quiet .github/workflows/monitor_ci_failed_prs.yml && exit 0
+          git config user.name "${{ vars.GIT_COMMIT_NAME || 'github-actions[bot]' }}"
+          git config user.email "${{ vars.GIT_COMMIT_EMAIL || 'github-actions[bot]@users.noreply.github.com' }}"
+          git add .github/workflows/monitor_ci_failed_prs.yml
+          git commit -m "chore: sync ci-fix cron schedule from poll_interval_minutes"
+          git push

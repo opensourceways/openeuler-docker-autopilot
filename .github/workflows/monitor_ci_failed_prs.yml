@@ -1,0 +1,74 @@
+name: Watch CI failed PRs
+
+# 场景二（PR CI 失败自动修复）的入口：按 config/watchlist.json 轮询目标仓库中
+# 带 ci_failed 标签的 PR，读取其 Fix PR 状态并决定是否 dispatch 修复链路。
+#
+# cron 间隔与 poll_interval_minutes 保持同步：
+#   config/watchlist.json 变更 → sync_ci_poll_interval.yml 自动改写下面的 cron。
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      test_repo:
+        description: '测试特定仓库 (owner/repo)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  monitor:
+    name: Scan ci_failed PRs
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Set up runner environment
+        uses: ./.github/actions/phase1-setup
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
+      - name: Debug GitCode API
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" - <<'EOF'
+          import os, requests, json
+          token = os.getenv('GITCODE_TOKEN', '')
+          print(f"GITCODE_TOKEN: {'set (' + str(len(token)) + ' chars)' if token else 'NOT SET'}")
+          url = "https://gitcode.com/api/v5/repos/openeuler/openeuler-docker-images/pulls"
+          params = {'state': 'open', 'per_page': 20}
+          if token:
+              params['access_token'] = token
+          r = requests.get(url, params=params, timeout=15)
+          print(f"API status: {r.status_code}")
+          prs = r.json() if r.ok else []
+          print(f"Open PRs returned: {len(prs)}")
+          for pr in prs:
+              labels = [l.get('name') for l in (pr.get('labels') or [])]
+              print(f"  PR #{pr.get('number')}: labels={labels}")
+          EOF
+
+      - name: Process PR events
+        env:
+          DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" \
+            scripts/watch/process_pr_events.py
+
+      - name: Report status
+        if: always()
+        run: echo "✅ PR monitoring cycle completed"

@@ -30,9 +30,10 @@
 
 | 场景 | 触发方式 | 输出 |
 |------|---------|------|
-| 新增应用镜像 | GitCode Issue（`【new-image】` 模板） | PR：完整镜像目录 + 文档 + 测试 |
-| 应用版本更新 | anitya 监控触发 / workflow_dispatch | PR：新增版本子目录 |
-| openEuler 大版本升级 | 监控新 oe 版本 / workflow_dispatch | 批量 PR：所有应用新增 oe 版本子目录 |
+| ① 新增应用镜像 | GitCode Issue（`【new-image】` 模板） | PR：完整镜像目录 + 文档 + 测试 |
+| ② PR CI 失败自动修复 | 目标仓 PR 打上 `ci_failed` 标签（cron 轮询） | Fix PR：最终 Dockerfile 以最小 diff 落回源码 |
+| ③ 应用版本更新 | anitya 监控触发 / workflow_dispatch | PR：新增版本子目录 |
+| ④ openEuler 大版本升级 | 监控新 oe 版本 / workflow_dispatch | 批量 PR：所有应用新增 oe 版本子目录 |
 
 ### 1.3 设计原则
 
@@ -94,13 +95,16 @@ easysoftware 的 SMTP 邮件通知改为 GitHub Actions workflow 通知 + PR/Iss
 
 ### 1.5 实施阶段
 
-三个场景共享同一套编排、生成、验证、交付能力，差异只在触发输入与调度方式。因此按场景分阶段交付，每阶段以一条可独立验证的能力收口：
+场景一 / 三 / 四共享同一套编排、生成、验证、交付能力，差异只在触发输入与调度方式；场景二是独立的修复链路（见 3.3 节）。因此按场景分阶段交付，每阶段以一条可独立验证的能力收口：
 
 | 阶段 | 范围 | 完成判据 |
 |------|------|---------|
 | 一 | 场景一：新增应用镜像 | 创建带 `new-image` 标签的 Issue 后，无人工介入即产出通过全部门禁、双架构构建与测试均有证据的 PR |
-| 二 | 场景二：应用版本更新 | 上游发布新版本后自动产出 PR，新版本目录完整继承既有版本的附属文件 |
-| 三 | 场景三：openEuler 大版本升级 | 批量补齐缺失的 oe 版本，成功项汇总为批量 PR、失败项汇总为 Issue |
+| 二 | 场景二：PR CI 失败自动修复 | 目标仓 PR 打上 `ci_failed` 后，无人工介入即产出通过 arm64 复验、以最小 diff 落回源码的 Fix PR |
+| 三 | 场景三：应用版本更新 | 上游发布新版本后自动产出 PR，新版本目录完整继承既有版本的附属文件 |
+| 四 | 场景四：openEuler 大版本升级 | 批量补齐缺失的 oe 版本，成功项汇总为批量 PR、失败项汇总为 Issue |
+
+**场景二的来源与边界：** 该能力完整移植自 [docker-images-workflow](https://github.com/FdeCad/docker-images-workflow)，保留其独立子系统（`scripts/stages/`、`scripts/watch/`、`config/watchlist.json` 与 `ci_*` 库），仅适配本仓的 Runner 标签、锁定工具链与凭据约定。它与其它场景不共享 TaskSpec / 候选包 / 门禁体系——它操作的是目标仓已有的 PR，不生成新的镜像目录。
 
 **写入目标的分级。** 阶段一的写入目标限定为测试仓，生产仓需显式配置开启。配置缺失、为空或错误时一律解析为测试仓，任何情况下都不得回退到生产仓——自动化对目标仓持有 push 权限，误写的代价由社区承担。
 
@@ -280,7 +284,38 @@ GitCode Issue 创建 [new-image 标签]
             3 轮后仍失败？→ 标记 needs-human-review
 ```
 
-### 3.3 场景二：应用版本更新
+### 3.3 场景二：PR CI 失败自动修复
+
+此场景移植自 [docker-images-workflow](https://github.com/FdeCad/docker-images-workflow)，处理的是「PR 已经提出、但 CI 失败」的存量 PR。它不创建镜像目录，也不使用 TaskSpec 契约——输入是目标仓 PR 与 CI 日志，输出是落回源码的最小 diff。
+
+```
+目标仓 PR 获得 ci_failed 标签
+  → monitor_ci_failed_prs.yml（cron 轮询 watchlist）→ 跳过规则过滤
+    → dispatch ci_fix_pipeline.yml（repository_dispatch，phase=ci-log-analysis）
+      → 阶段 1 诊断：PR diff + 失败架构的 Jenkins 日志 + 知识库 → ci-analysis.md（写入 ci-fix-log 分支）
+        → 阶段 2 构建修复（arm64 首修 → amd64 续修）：
+             起容器 → 逐条执行 Dockerfile 指令 → 失败即诊断并重试该条
+             → 跑通后反推 Dockerfile → docker build 从零验证
+          → 阶段 3 verify-arm：最终 Dockerfile 在 arm64 确定性复验（失败回 amd64 再修，最多 2 轮）
+            → 阶段 4 code-fix：最终 Dockerfile 作为最小 diff 落回源码 → commit → push → Fix PR
+              → Fix PR CI 通过 → 评论原始 PR 通知 reviewer 合并 + 写入知识库
+              → Fix PR CI 再失败 → 重新进入阶段 1（最多 6 次，超限关闭 Fix PR 并通知人工）
+```
+
+**与其它场景的差异：**
+
+| 维度 | 场景一 / 三 / 四 | 场景二 |
+|------|-----------------|--------|
+| 输入 | 结构化 Issue / webhook / 手动 | 目标仓已有的 PR + `ci_failed` 标签 |
+| 修复方式 | 生成候选 → 双架构验证 → Fixer 依据报告改文件 | 容器内逐条执行 Dockerfile 指令、失败即修，再反推回 Dockerfile |
+| 交付 | 新增目录的 PR | 落回源码的最小 diff Fix PR（`fix:` 前缀，可追加 commit 重试） |
+| 状态存储 | 不可变候选包 + 验证证据 artifact | `ci-fix-log` 数据分支（诊断报告 + 修复摘要）+ 知识库 |
+
+**为什么不直接改 Dockerfile：** 文本层面的盲改无法证明改动真的可构建。容器内逐条执行得到的命令序列是「已被证明可行」的，反推回 Dockerfile 后再用 `docker build` 从零复验一次，确保反推没有引入偏差。
+
+**跳过与终止规则：** 预发布版本（`-alpha` / `-beta` / `-rc` 等）与 `fix:` 前缀的 PR 不触发修复；连续 6 次仍未通过 CI 时关闭 Fix PR 并通知人工，不做无限重试。
+
+### 3.4 场景三：应用版本更新
 
 版本监控不依赖自身轮询。anitya 持续追踪上游 Release，检测到新版本后通过 webhook 触发 `version-update` workflow。同时也支持 `workflow_dispatch` 手动触发。
 
@@ -298,7 +333,7 @@ anitya 检测到上游新版本
           → 失败？→ Fixer 分析 + 修复（最多 3 轮）
 ```
 
-### 3.4 场景三：openEuler 大版本升级
+### 3.5 场景四：openEuler 大版本升级
 
 此场景直接借鉴 easysoftware 的 `batchUpdatePremiumApp()` 模式：遍历所有 OS 版本，对缺少最新镜像的版本生成 Dockerfile。
 
@@ -323,7 +358,9 @@ anitya 检测到上游新版本
 
 ### 4.1 角色定义
 
-系统共 4 个 Agent 角色：Image Creator、Testcase Creator、Testcase QA 和 Code Fixer。只有测试用例生成保留 QA 对抗复核；CI Failure Analyst 不设为独立角色，其诊断能力作为 Fixer 的内置能力通过知识库驱动。
+场景一 / 三 / 四共 4 个 Agent 角色：Image Creator、Testcase Creator、Testcase QA 和 Code Fixer。只有测试用例生成保留 QA 对抗复核；CI Failure Analyst 在这些场景中不设为独立角色，其诊断能力作为 Fixer 的内置能力通过知识库驱动。
+
+场景二（3.3 节）自带 2 个独立 Agent 角色：CI Failure Analyst（诊断）与 Dockerfile Builder（容器内修复）。两者只产出报告与 Dockerfile，不做任何 git / 平台写操作。
 
 #### Image Creator（镜像生成者）
 
@@ -404,8 +441,8 @@ Testcase QA 不认可不代表阻塞——复核的任务是尽可能提高测�
 ### 4.3.1 证据所有权与生成期门禁
 
 以下契约在数据结构和 legacy 入口上与场景无关，差异只体现在
-`TaskSpec.scenario`。当前生产接线只完成阶段一；场景二、三的旧 workflow 尚未准备目标仓
-工作区和完整 TaskSpec，不得把接口兼容性表述为流水线已经接通。
+`TaskSpec.scenario`。当前生产接线只完成阶段一；场景三、四的旧 workflow 尚未准备目标仓
+工作区和完整 TaskSpec，不得把接口兼容性表述为流水线已经接通（场景二走独立链路，不涉及 TaskSpec）。
 
 1. Creator 直接提交结构化 `evidence`，并在 `command_evidence` 中通过 evidence ID 引用；Creator 提供的 URL 和摘录只构成待固定的输入，不等于已经验证。
 2. Harness 仅从受支持的官方代码托管域解析证据；证据 URL 必须与 TaskSpec 同仓且 ref 精确等于固定 revision。Harness 固定原文件、摘录和 SHA-256，并把结果交给 QA。证据不可用不阻断，不单独触发 Creator 修复。
@@ -563,6 +600,7 @@ manifest merge                   manifest merge                   manifest merge
 | 新增单个镜像 | 1 镜像 × 2 架构 | x86_64×1 + ARM64×1 |
 | N 个应用版本更新 | N 镜像并行 | x86_64×N + ARM64×N |
 | M 个应用 oe 升级 | M 镜像并行 | x86_64×M + ARM64×M |
+| PR CI 修复（场景二） | 单 PR 串行（arm64 → amd64 → arm64 复验），跨 PR 由 Runner 队列并行 | ARM64×1 + x86_64×1 |
 
 ### 6.2 单个镜像构建流程
 
@@ -809,38 +847,55 @@ openeuler-docker-images-workflow/
 │   │   ├── create_new_images.yml      # 场景一：新镜像请求（编排 4 轮收敛）
 │   │   ├── monitor_new_image_issues.yml # 场景一：扫描 GitCode issue 自动触发
 │   │   ├── _create_new_image_rounds.yml # 场景一：单轮验证-修复-决策组件
-│   │   ├── upgrade_upstream_versions.yml # 场景二：应用版本更新（anitya webhook 或 workflow_dispatch 触发）
-│   │   ├── upgrade_openeuler_versions.yml # 场景三：openEuler 大版本升级
-│   │   ├── _upgrade_versions.yml     # 场景二/三共享验证（生成 + 构建 + 测试）
+│   │   ├── monitor_ci_failed_prs.yml  # 场景二：ci_failed PR 轮询（cron，间隔由 watchlist 控制）
+│   │   ├── ci_fix_pipeline.yml        # 场景二：四阶段修复链路（分析 → build-fix → 复验 → 落回）
+│   │   ├── sync_ci_poll_interval.yml  # 场景二：watchlist 变更时同步 cron
+│   │   ├── upgrade_upstream_versions.yml # 场景三：应用版本更新（anitya webhook 或 workflow_dispatch 触发）
+│   │   ├── upgrade_openeuler_versions.yml # 场景四：openEuler 大版本升级
+│   │   ├── _upgrade_versions.yml     # 场景三/四共享验证（生成 + 构建 + 测试）
 │   │   └── test-e2e.yml              # 开发自测（不创建真实 PR）
 │   └── agents/
 │       ├── image-creator.md           # Image Creator（生成者）
 │       ├── testcase-creator.md        # Testcase Creator（生成者）
 │       ├── testcase-qa.md             # Testcase QA（挑战者）
+│       ├── ci-failure-analyst.md      # 场景二：CI 失败诊断师
+│       ├── dockerfile-builder.md      # 场景二：容器构建修复工程师
 │       └── code-fixer.md              # Fixer（修复者，内置故障分析）
+├── config/
+│   └── watchlist.json                 # 场景二：监控仓库列表与轮询参数
 ├── scripts/
 │   ├── harness/
 │   │   ├── flow.py                    # 阶段一确定性编排入口
-│   │   ├── run.py                     # 场景二、三 legacy Agent/test 入口
+│   │   ├── run.py                     # 场景三、四 legacy Agent/test 入口
 │   │   ├── parse_issue.py             # Issue 解析
 │   │   ├── query_version.py           # 版本对比查询
 │   │   ├── validate_meta.py           # meta.yml schema 校验
 │   │   ├── gate_diff.py               # "只能新增" 差分检查
 │   │   └── compose_pr.py              # PR 内容组装
+│   ├── stages/                        # 场景二：ci-log-analysis / build-fix / code-fix
+│   ├── watch/                         # 场景二：PR 轮询、手动触发、cron 同步
 │   ├── lib/
 │   │   ├── generation_pipeline.py     # Creator/QA 生成期流水线
-│   │   ├── agent_runtime.py           # Agent 进程与结构化契约
+│   │   ├── agent_runtime.py           # Agent 进程与结构化契约（场景一/三/四）
 │   │   ├── evidence_resolver.py       # Harness 受限取证
 │   │   ├── target_contract.py         # 候选目录确定性门禁
 │   │   ├── native_validation.py       # 原生构建、就绪调度、功能测试
 │   │   ├── native_repair.py           # Native Fixer 收敛循环
 │   │   ├── task_spec.py               # 场景无关任务契约
-│   │   └── failure_knowledge.py       # verified 结构化故障知识
+│   │   ├── failure_knowledge.py       # verified 结构化故障知识
+│   │   ├── ci_api.py / ci_gitcode_api.py / ci_github_api.py # 场景二：平台 API 与 CI 日志抓取
+│   │   ├── ci_data.py                 # 场景二：ci-fix-log / main 分支读写
+│   │   ├── build_runner.py            # 场景二：Dockerfile 解析/定位/diff + docker CLI
+│   │   ├── ai_runner.py / opencode_run.py / claude_code_run.py # 场景二：Agent 调用
+│   │   ├── stage_common.py            # 场景二：阶段公共工具与 dispatch
+│   │   ├── fix_pr_body.py             # 场景二：Fix PR 标题与正文
+│   │   └── discover_conventions.py    # 场景二：源仓库规范读取
 │   └── utils/
 │       └── scoring.py                 # 置信度计算
 ├── docs/
 │   ├── failure-patterns.yml           # verified 结构化故障模式
-│   └── failure-patterns.md            # 知识库维护策略
+│   ├── failure-patterns.md            # 知识库维护策略
+│   └── ci-failure-patterns.md         # 场景二：CI 失败模式知识库（自动维护）
 ├── templates/
 │   ├── new-image-issue.md             # Issue 模板
 │   └── pr.md                          # PR 模板
@@ -870,7 +925,7 @@ openeuler-docker-images-workflow/
 
 **约束**：
 - 同一 workflow 内 job 显示名必须唯一（round 编号 + 动作组合），`Round N:` 前缀只用于验证轮，修复 job 不得复用该前缀。
-- **job id 与显示名同构**：验证轮 `round-{n}`、修复 `fix-{n}`（场景 2/3 的 `verify`/`fix-r1` 与场景 1 的 `round1` 均已统一到该标准），其他 job 用 kebab-case。`needs.round-1` / `needs.fix-1` 引用随 id 同步。
+- **job id 与显示名同构**：验证轮 `round-{n}`、修复 `fix-{n}`（场景 3/4 的 `verify`/`fix-r1` 与场景 1 的 `round1` 均已统一到该标准），其他 job 用 kebab-case。`needs.round-1` / `needs.fix-1` 引用随 id 同步。场景二按阶段名命名（`ci-log-analysis`、`build-fix-arm64`、`verify-arm`、`code-fix`），与 `client_payload.phase` 一一对应。
 - round 相关输入沿用 `round` / `next_round` / `max_rounds`；artifact 名保留 `phase1-` 前缀（跨 run 恢复契约，见 `resume` 机制）。以下内部标识属于跨 run 契约，**不随 job id 改名**：seed-decisions 目录（`phase1-seed-decisions/roundN`）、`phase1-decideN-` artifact、operation 值（`failure_issue_contract_test`）。
 
 ### 12.2 workflow 与 job/step 命名风格
