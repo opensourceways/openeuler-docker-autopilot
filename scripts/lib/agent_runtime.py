@@ -1,0 +1,822 @@
+"""Secret-safe OpenCode process boundary and structured result parser."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Iterator, Mapping, Sequence
+
+from scripts.lib.progress import log, run_streaming
+from scripts.lib.toolchain import MIN_DISK_FREE
+
+
+class AgentRuntimeError(RuntimeError):
+    """Raised when OpenCode fails or violates its output contract."""
+
+
+class AgentContractError(AgentRuntimeError):
+    """Raised after a normal run cannot produce a valid required contract."""
+
+    def __init__(self, *, diagnostic: str) -> None:
+        self.diagnostic = diagnostic.strip()[:1000]
+        super().__init__(f"Agent JSON contract failed: {self.diagnostic}")
+
+
+class AgentTimeoutError(AgentRuntimeError):
+    """Raised when an Agent overran its budget without completing normally."""
+
+    def __init__(self, *, role: str, elapsed: float) -> None:
+        super().__init__(f"OpenCode {role} timed out after {elapsed:.1f}s")
+        self.role = role
+        self.elapsed = elapsed
+
+
+class AgentScratchOverLimitError(AgentRuntimeError):
+    """Raised when the scratch watchdog stopped the Agent over its cap.
+
+    Deliberately a sibling of AgentTimeoutError: a budget timeout can be an
+    advisory gap (QA) or a retry candidate, but an overfull scratch directory
+    is a hard resource failure that must never be retried.
+    """
+
+    def __init__(
+        self, *, role: str, elapsed: float, scratch_mb: int, limit_mb: int
+    ) -> None:
+        super().__init__(
+            f"OpenCode {role} stopped after {elapsed:.1f}s because scratch "
+            f"{scratch_mb}MB exceeded the {limit_mb}MB limit"
+        )
+        self.role = role
+        self.elapsed = elapsed
+        self.scratch_mb = scratch_mb
+        self.limit_mb = limit_mb
+
+
+MODEL = "deepseek/deepseek-flash"
+_AGENT_HEARTBEAT_SECONDS = 60.0
+# Research downloads are the one Agent action that can quietly consume a whole
+# budget, so cap the scratch directory instead of trusting the prompt alone.
+#
+# The cap is derived, not guessed: the Agent may grow scratch until free disk
+# would fall to the floor a native build needs (toolchain.MIN_DISK_FREE), which
+# is the only quantity that actually matters on a self-hosted Runner. A fixed
+# constant could not serve both a small C++ project and a Bigdata image whose
+# working set is multi-GB by nature, and raising it after every abort (3000 ->
+# 6000 -> ...) was guessing at a number that can be computed. Run 31106121623
+# was killed at 8226MB while 63% of its time budget was still unspent.
+#
+# OE_AGENT_SCRATCH_LIMIT_MB remains only as a ceiling, so a Runner with a very
+# large disk still cannot let one Agent run unbounded.
+_SCRATCH_CEILING_MB = int(os.environ.get("OE_AGENT_SCRATCH_LIMIT_MB", "20000"))
+if _SCRATCH_CEILING_MB < 1:
+    raise ValueError("OE_AGENT_SCRATCH_LIMIT_MB must be a positive integer")
+_SCRATCH_WARN_FRACTION = 0.8
+_MESSAGE_DETAIL_LIMIT = 4000
+_ACTION_DETAIL_LIMIT = 240
+_VISIBLE_ACTION_TOOLS = {
+    "bash",
+    "edit",
+    "invalid",
+    "task",
+    "webfetch",
+    "write",
+}
+_WRITE_ROLES = {"image_creator", "testcase_creator", "fixer"}
+_READ_ONLY_ROLES = {"testcase_qa"}
+_ROLES = _WRITE_ROLES | _READ_ONLY_ROLES
+SCRATCH_DIR = ".oe-scratch"
+# State directory CLI tools drop next to the workspace when the Agent runs
+# them from inside it: `gh` writes .local/state/gh/device-id on any
+# invocation. That noise must stay out of the candidate like the scratch
+# directory, or the deterministic gate stops the run on scope.outside_task.
+TOOL_STATE_DIR = ".local"
+# The two event types emit() counts toward the ACTIVITY summary.
+_ACTIVITY_EVENTS = {"text", "tool_use"}
+AgentRunner = Callable[
+    [Sequence[str], Path, Mapping[str, str], int],
+    subprocess.CompletedProcess,
+]
+
+
+@dataclass(frozen=True)
+class AgentResult:
+    role: str
+    payload: dict[str, object]
+
+
+def _default_runner(
+    command: Sequence[str],
+    cwd: Path,
+    env: Mapping[str, str],
+    timeout: int,
+) -> subprocess.CompletedProcess:
+    process_env = os.environ.copy()
+    process_env.update(env)
+    role = env.get("OE_AGENT_ROLE", "unknown")
+    secret = env.get("DEEPSEEK_API_KEY", "")
+    scratch = Path(env.get("OE_AGENT_SCRATCH", cwd / SCRATCH_DIR))
+    started = time.monotonic()
+    last_output = [started]
+    last_action = ["none"]
+    message_count = [0]
+    action_counts: dict[str, int] = {}
+    scratch_mb = [0]
+    completed = threading.Event()
+
+    def safe_detail(value: object, *, limit: int) -> str:
+        if isinstance(value, str):
+            detail = value
+        else:
+            detail = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        if secret:
+            detail = detail.replace(secret, "REDACTED")
+        return " ".join(detail.split())[:limit]
+
+    def safe_path(value: object) -> str:
+        detail = safe_detail(value, limit=_ACTION_DETAIL_LIMIT)
+        try:
+            return str(Path(detail).resolve().relative_to(cwd.resolve()))
+        except ValueError:
+            return detail
+
+    def tool_summary(tool: str, state: object) -> str:
+        if not isinstance(state, dict):
+            return f"tool={tool}"
+        tool_input = state.get("input", {})
+        metadata = state.get("metadata", {})
+        fields = [f"tool={tool}"]
+        if isinstance(tool_input, dict):
+            file_path = tool_input.get("filePath") or tool_input.get("path")
+            if file_path:
+                fields.append(f"path={safe_path(file_path)}")
+            elif tool == "bash" and tool_input.get("command"):
+                command = safe_detail(
+                    tool_input["command"],
+                    limit=_ACTION_DETAIL_LIMIT,
+                )
+                fields.append(
+                    f"command={json.dumps(command, ensure_ascii=False)}"
+                )
+            elif tool in {"grep", "glob"} and tool_input.get("pattern"):
+                pattern = safe_detail(
+                    tool_input["pattern"],
+                    limit=_ACTION_DETAIL_LIMIT,
+                )
+                fields.append(
+                    f"pattern={json.dumps(pattern, ensure_ascii=False)}"
+                )
+            elif tool == "webfetch" and tool_input.get("url"):
+                fields.append(
+                    "url="
+                    + safe_detail(
+                        tool_input["url"],
+                        limit=_ACTION_DETAIL_LIMIT,
+                    )
+                )
+            elif tool == "task" and tool_input.get("description"):
+                description = safe_detail(
+                    tool_input["description"],
+                    limit=_ACTION_DETAIL_LIMIT,
+                )
+                fields.append(
+                    f"description={json.dumps(description, ensure_ascii=False)}"
+                )
+            elif tool == "todowrite":
+                todos = tool_input.get("todos", [])
+                count = len(todos) if isinstance(todos, list) else 0
+                fields.append(f"items={count}")
+        status = state.get("status")
+        if status:
+            fields.append(f"status={status}")
+        if isinstance(metadata, dict) and metadata.get("exit") is not None:
+            fields.append(f"exit={metadata['exit']}")
+        return " ".join(fields)
+
+    def emit(line: str) -> None:
+        safe_line = line.replace(secret, "REDACTED") if secret else line
+        try:
+            event = json.loads(safe_line)
+        except json.JSONDecodeError:
+            detail = safe_line.strip()
+            if detail:
+                last_output[0] = time.monotonic()
+                log(
+                    f"agent:{role}",
+                    safe_detail(detail, limit=_MESSAGE_DETAIL_LIMIT),
+                )
+            return
+        event_type = str(event.get("type", "unknown"))
+        part = event.get("part")
+        if event_type == "text" and isinstance(part, dict):
+            last_output[0] = time.monotonic()
+            message_count[0] += 1
+            message = safe_detail(
+                part.get("text", ""),
+                limit=_MESSAGE_DETAIL_LIMIT,
+            )
+            log(f"agent:{role}", f"MESSAGE {message}")
+        elif event_type == "tool_use" and isinstance(part, dict):
+            tool = str(part.get("tool", "unknown"))
+            state = part.get("state", part)
+            summary = tool_summary(tool, state)
+            last_output[0] = time.monotonic()
+            last_action[0] = summary
+            action_counts[tool] = action_counts.get(tool, 0) + 1
+            status = state.get("status") if isinstance(state, dict) else None
+            metadata = state.get("metadata", {}) if isinstance(state, dict) else {}
+            failed_command = (
+                isinstance(metadata, dict)
+                and metadata.get("exit") not in {None, 0}
+            )
+            if (
+                tool in _VISIBLE_ACTION_TOOLS
+                or status in {"error", "failed"}
+                or failed_command
+            ):
+                log(f"agent:{role}", f"ACTION {summary}")
+
+    def heartbeat() -> None:
+        while not completed.wait(_AGENT_HEARTBEAT_SECONDS):
+            now = time.monotonic()
+            silence = now - last_output[0]
+            if silence < _AGENT_HEARTBEAT_SECONDS:
+                continue
+            log(
+                f"agent:{role}",
+                f"WAIT elapsed={now - started:.1f}s "
+                f"silence={silence:.1f}s "
+                f"last_action={last_action[0]} "
+                f"timeout={float(timeout):g}s "
+                f"scratch={scratch_mb[0]}MB",
+            )
+
+    def scratch_watchdog() -> str | None:
+        scratch_mb[0] = _directory_size_mb(scratch)
+        budget = _scratch_budget_mb(scratch, scratch_mb[0])
+        if scratch_mb[0] <= budget:
+            if scratch_mb[0] > budget * _SCRATCH_WARN_FRACTION:
+                log(
+                    f"agent:{role}",
+                    f"WARN scratch_high scratch={scratch_mb[0]}MB "
+                    f"limit={budget}MB "
+                    f"threshold={_SCRATCH_WARN_FRACTION:.0%}",
+                )
+            return None
+        log(
+            f"agent:{role}",
+            f"ABORT reason=scratch_over_limit "
+            f"scratch={scratch_mb[0]}MB limit={budget}MB",
+        )
+        return "scratch_over_limit"
+
+    heartbeat_thread = threading.Thread(
+        target=heartbeat,
+        name=f"agent-heartbeat-{role}",
+        daemon=True,
+    )
+    heartbeat_thread.start()
+    try:
+        result = run_streaming(
+            command,
+            cwd=cwd,
+            env=process_env,
+            timeout=timeout,
+            emit=emit,
+            watchdog=scratch_watchdog,
+        )
+    finally:
+        completed.set()
+        heartbeat_thread.join(timeout=1)
+    tools = ",".join(
+        f"{tool}:{count}" for tool, count in sorted(action_counts.items())
+    )
+    scratch_mb[0] = max(scratch_mb[0], _directory_size_mb(scratch))
+    log(
+        f"agent:{role}",
+        f"ACTIVITY messages={message_count[0]} "
+        f"actions={sum(action_counts.values())} tools={tools or 'none'} "
+        f"scratch={scratch_mb[0]}MB",
+    )
+    return result
+
+
+def _directory_size_mb(path: Path) -> int:
+    """Disk actually occupied, not the size the files claim.
+
+    st_size counts a sparse or preallocated file at its nominal length, which a
+    JVM heap or an embedded database can inflate by gigabytes it never wrote.
+    Charging the Agent for blocks it does not hold is how run 31106121623
+    recorded a 6GB jump in a single watchdog interval.
+    """
+    total = 0
+    stack = [path]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=False):
+                    stat = entry.stat(follow_symlinks=False)
+                    blocks = getattr(stat, "st_blocks", None)
+                    total += stat.st_size if blocks is None else blocks * 512
+            except OSError:
+                continue
+    return total // (1024 * 1024)
+
+
+def _scratch_budget_mb(path: Path, scratch_mb: int) -> int:
+    """How far scratch may grow before it eats the build's reserved disk.
+
+    Measured live rather than once at startup: image layers and the BuildKit
+    cache grow under the Agent's feet, so the headroom a job began with is not
+    the headroom it still has.
+    """
+    try:
+        free_mb = shutil.disk_usage(path).free // (1024 * 1024)
+    except OSError:
+        return _SCRATCH_CEILING_MB
+    # Deleting scratch would return its own blocks, so they count as headroom.
+    budget = free_mb + scratch_mb - MIN_DISK_FREE // (1024 * 1024)
+    return max(0, min(budget, _SCRATCH_CEILING_MB))
+
+
+def prepare_scratch(workspace: Path) -> Path:
+    """Give the Agent a writable place that never reaches the candidate.
+
+    OpenCode denies external_directory, so the only writable location was the
+    target repo itself. Excluding the scratch path through .git/info/exclude
+    keeps it out of `git add --intent-to-add`, and therefore out of both the
+    deterministic gate and the candidate patch, without touching any tracked
+    ignore file in the target repository. The tool-state directory needs the
+    same treatment: any `gh` the Agent runs from the workspace writes state
+    such as .local/state/gh/device-id there.
+    """
+    scratch = workspace / SCRATCH_DIR
+    scratch.mkdir(parents=True, exist_ok=True)
+    exclude = workspace / ".git" / "info" / "exclude"
+    if not (workspace / ".git").is_dir():
+        return scratch
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude.read_text() if exclude.is_file() else ""
+    entries = existing.splitlines()
+    missing = [
+        entry
+        for entry in (f"/{SCRATCH_DIR}/", f"/{TOOL_STATE_DIR}/")
+        if entry not in entries
+    ]
+    if missing:
+        separator = "" if not existing or existing.endswith("\n") else "\n"
+        addition = "".join(entry + "\n" for entry in missing)
+        exclude.write_text(f"{existing}{separator}{addition}")
+    return scratch
+
+
+def _scan_json(text: str) -> Iterator[object]:
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(text):
+        if character not in "[{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            continue
+        yield value
+
+
+def _saw_any_activity(stdout: str) -> bool:
+    """Whether the Agent did anything, using the same events ACTIVITY counts.
+
+    Lifecycle events such as step_start say the process started, not that the
+    model responded, so counting them would let a provider that hangs right
+    after one suppress the retry. Restricting this to text and tool calls also
+    makes retrying a write role safe: without a tool call there is no
+    half-finished edit in the workspace to repeat.
+    """
+    return any(
+        isinstance(event, dict) and event.get("type") in _ACTIVITY_EVENTS
+        for event in _scan_json(stdout)
+    )
+
+
+def _parse_contract(
+    stdout: str,
+    required_keys: tuple[str, ...],
+) -> dict[str, object]:
+    matches = []
+    objects: list[dict[str, object]] = []
+    decode_errors: list[tuple[int, json.JSONDecodeError]] = []
+    decoder = json.JSONDecoder()
+    for event in _scan_json(stdout):
+        if not isinstance(event, dict) or event.get("type") != "text":
+            continue
+        part = event.get("part")
+        if not isinstance(part, dict) or not isinstance(part.get("text"), str):
+            continue
+        text = part["text"]
+        for index, character in enumerate(text):
+            if character not in "[{":
+                continue
+            try:
+                candidate, _ = decoder.raw_decode(text, index)
+            except json.JSONDecodeError as error:
+                decode_errors.append((error.pos - index, error))
+                continue
+            if isinstance(candidate, dict):
+                objects.append(candidate)
+            if (
+                isinstance(candidate, dict)
+                and all(key in candidate for key in required_keys)
+            ):
+                matches.append(candidate)
+    if not matches:
+        if objects:
+            missing = [key for key in required_keys if key not in objects[-1]]
+            diagnostic = "JSON object is missing required keys: " + ", ".join(
+                missing
+            )
+        elif decode_errors:
+            _, error = max(decode_errors, key=lambda item: item[0])
+            diagnostic = (
+                f"JSON decoding failed at line {error.lineno} column "
+                f"{error.colno}: {error.msg}"
+            )
+        else:
+            diagnostic = "No valid JSON object was found in Agent text output"
+        raise AgentContractError(diagnostic=diagnostic)
+    return matches[-1]
+
+
+def _session_id(stdout: str) -> str | None:
+    session_ids = [
+        event["sessionID"]
+        for event in _scan_json(stdout)
+        if isinstance(event, dict)
+        and isinstance(event.get("type"), str)
+        and isinstance(event.get("sessionID"), str)
+        and event["sessionID"].strip()
+    ]
+    return session_ids[-1] if session_ids else None
+
+
+def _validated_contract(
+    stdout: str,
+    required_keys: tuple[str, ...],
+) -> dict[str, object]:
+    payload = _parse_contract(stdout, required_keys)
+    try:
+        validate_agent_payload(payload, required_keys=required_keys)
+    except AgentRuntimeError as error:
+        raise AgentContractError(diagnostic=str(error)) from error
+    return payload
+
+
+_COMMAND_EVIDENCE_FIELDS = ("command", "semantics")
+_IDENTITY_MODES = {"dynamic", "reuse_existing"}
+_LINUX_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*\$?$")
+
+
+def qa_requests_repair(payload: Mapping[str, object]) -> bool:
+    """Use only the candidate-issue channel, never evidence reviews, for repair."""
+    issues = payload.get("issues")
+    return (
+        payload.get("status") == "needs_fix"
+        and isinstance(issues, list)
+        and any(
+            isinstance(issue, Mapping)
+            and issue.get("severity") in {"blocker", "major"}
+            for issue in issues
+        )
+    )
+
+
+def _validate_command_evidence(evidence: object) -> None:
+    """Require a semantics claim and Harness evidence reference per command."""
+    if not isinstance(evidence, list) or not evidence:
+        raise AgentRuntimeError(
+            "Agent contract command_evidence must be a non-empty list"
+        )
+    for entry in evidence:
+        if not isinstance(entry, Mapping):
+            raise AgentRuntimeError(
+                "Agent contract command_evidence entries must be objects"
+            )
+        for field in _COMMAND_EVIDENCE_FIELDS:
+            value = entry.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise AgentRuntimeError(
+                    "Agent contract command_evidence entries must set a "
+                    f"non-empty {field}"
+                )
+
+
+def _validate_identity_decision(decision: object) -> None:
+    """Validate the application-neutral runtime identity contract."""
+    if not isinstance(decision, Mapping):
+        raise AgentRuntimeError("Agent contract identity_decision must be an object")
+    mode = decision.get("mode")
+    if mode not in _IDENTITY_MODES:
+        raise AgentRuntimeError(
+            "Agent contract identity_decision mode must be dynamic or "
+            "reuse_existing"
+        )
+    for field in ("user", "group"):
+        value = decision.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise AgentRuntimeError(
+                f"Agent contract identity_decision {field} must be non-empty"
+            )
+        if _LINUX_NAME_RE.fullmatch(value.strip()) is None:
+            raise AgentRuntimeError(
+                "Agent contract identity_decision "
+                f"{field} must be a literal Linux name"
+            )
+    uid = decision.get("uid")
+    gid = decision.get("gid")
+    if uid is not None or gid is not None:
+        raise AgentRuntimeError(
+            f"Agent contract {mode} identity must leave uid and gid null"
+        )
+
+
+def _validate_contract(
+    payload: Mapping[str, object],
+    required_keys: tuple[str, ...],
+) -> None:
+    if "success" in payload and not isinstance(payload["success"], bool):
+        raise AgentRuntimeError("Agent contract success must be a boolean")
+    for key in ("files_created", "changes", "issues", "assumptions"):
+        if key in payload and not isinstance(payload[key], list):
+            raise AgentRuntimeError(f"Agent contract {key} must be a list")
+    if "command_evidence" in required_keys:
+        _validate_command_evidence(payload["command_evidence"])
+    if "identity_decision" in required_keys:
+        _validate_identity_decision(payload["identity_decision"])
+    if "status" in required_keys:
+        status = payload["status"]
+        if not isinstance(status, str) or status not in {
+            "approved",
+            "needs_fix",
+        }:
+            raise AgentRuntimeError(
+                "Agent contract status must be approved or needs_fix"
+            )
+    if "summary" in payload and not isinstance(payload["summary"], str):
+        raise AgentRuntimeError("Agent contract summary must be a string")
+    if "coverage_score" in required_keys:
+        score = payload["coverage_score"]
+        if (
+            isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or not 0 <= score <= 1
+        ):
+            raise AgentRuntimeError(
+                "Agent contract coverage_score must be between 0 and 1"
+            )
+
+
+def validate_agent_payload(
+    payload: Mapping[str, object],
+    *,
+    required_keys: tuple[str, ...],
+) -> None:
+    """Apply the shared structured contract outside the OpenCode runner."""
+    missing = [key for key in required_keys if key not in payload]
+    if missing:
+        raise AgentRuntimeError(
+            "Agent payload is missing required keys: " + ", ".join(missing)
+        )
+    _validate_contract(payload, required_keys)
+
+
+def _permission_config(
+    role: str,
+    *,
+    external_read_dirs: Sequence[Path] = (),
+    deny_all: bool = False,
+) -> str:
+    if deny_all:
+        return json.dumps(
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "permission": {
+                    "*": "deny",
+                    "read": "deny",
+                    "edit": "deny",
+                    "bash": "deny",
+                    "webfetch": "deny",
+                    "task": "deny",
+                    "external_directory": "deny",
+                },
+            },
+            separators=(",", ":"),
+        )
+    writable = role in _WRITE_ROLES
+    external_patterns = tuple(f"{path.as_posix()}/**" for path in external_read_dirs)
+    edit_permission: object = "allow" if writable else "deny"
+    external_permission: object = "deny"
+    if external_patterns:
+        edit_permission = {
+            "*": "allow",
+            "../**": "deny",
+        }
+        external_permission = {
+            "*": "deny",
+            **{pattern: "allow" for pattern in external_patterns},
+        }
+    permission = {
+        "read": "allow" if writable else "deny",
+        "edit": edit_permission,
+        "bash": "allow" if writable else "deny",
+        "webfetch": "allow" if writable else "deny",
+        "task": "deny",
+        "external_directory": external_permission,
+    }
+    return json.dumps(
+        {
+            "$schema": "https://opencode.ai/config.json",
+            "permission": permission,
+        },
+        separators=(",", ":"),
+    )
+
+
+def run_agent(
+    *,
+    executable: Path,
+    role: str,
+    prompt: str,
+    workspace: Path,
+    api_key: str,
+    required_keys: tuple[str, ...],
+    response_keys: tuple[str, ...] | None = None,
+    runner: AgentRunner = _default_runner,
+    timeout: int = 3600,
+    external_read_dirs: Sequence[Path] = (),
+) -> AgentResult:
+    executable = Path(executable)
+    workspace = Path(workspace)
+    if role not in _ROLES:
+        raise AgentRuntimeError(f"unsupported Agent role: {role}")
+    if not executable.is_absolute() or not executable.is_file():
+        raise AgentRuntimeError("OpenCode executable must be an absolute file path")
+    if not os.access(executable, os.X_OK):
+        raise AgentRuntimeError("OpenCode executable is not executable")
+    if not workspace.is_dir():
+        raise AgentRuntimeError("Agent workspace does not exist")
+    if not api_key:
+        raise AgentRuntimeError("DEEPSEEK_API_KEY is required")
+    if not prompt.strip():
+        raise AgentRuntimeError("Agent prompt is required")
+    if not required_keys:
+        raise AgentRuntimeError("Agent JSON contract must require at least one key")
+    complete_keys = response_keys or required_keys
+    if external_read_dirs and role != "fixer":
+        raise AgentRuntimeError("external evidence directories are fixer-only")
+    normalized_external_dirs: list[Path] = []
+    for directory in external_read_dirs:
+        resolved = Path(directory).resolve()
+        if not resolved.is_dir():
+            raise AgentRuntimeError(
+                f"external evidence directory does not exist: {resolved}"
+            )
+        if resolved == workspace.resolve() or workspace.resolve() in resolved.parents:
+            raise AgentRuntimeError(
+                "external evidence directory must remain outside the Agent workspace"
+            )
+        normalized_external_dirs.append(resolved)
+
+    command = [
+        str(executable),
+        "run",
+        "--model",
+        MODEL,
+        "--format",
+        "json",
+        "--auto",
+        "--dir",
+        str(workspace),
+        "--",
+        prompt,
+    ]
+    env = {
+        "DEEPSEEK_API_KEY": api_key,
+        "OE_AGENT_ROLE": role,
+        "OE_AGENT_SCRATCH": str(prepare_scratch(workspace)),
+        "OPENCODE_CONFIG_CONTENT": _permission_config(
+            role,
+            external_read_dirs=tuple(normalized_external_dirs),
+        ),
+    }
+    started = time.monotonic()
+    log(
+        f"agent:{role}",
+        f"START model={MODEL} timeout={float(timeout):g}s "
+        f"prompt_chars={len(prompt)} workspace={workspace}",
+    )
+    result = runner(command, workspace, env, timeout)
+    if (
+        result.returncode == 124
+        and not _saw_any_activity(str(result.stdout or ""))
+        and getattr(result, "abort_reason", "timeout") != "scratch_over_limit"
+    ):
+        # Nothing was ever attempted, so the provider hung rather than the
+        # Agent overrunning its boundary. Failing here made the run repay the
+        # Creator calls that had already succeeded. An overfull scratch
+        # directory is never retried: the workspace is already at its cap and
+        # the retry would be aborted again.
+        log(
+            f"agent:{role}",
+            f"RETRY reason=no_output elapsed={time.monotonic() - started:.1f}s",
+        )
+        started = time.monotonic()
+        result = runner(command, workspace, env, timeout)
+    elapsed = time.monotonic() - started
+    if result.returncode != 0:
+        if result.returncode == 124:
+            if getattr(result, "abort_reason", "timeout") == "scratch_over_limit":
+                scratch_path = Path(env["OE_AGENT_SCRATCH"])
+                scratch_mb = _directory_size_mb(scratch_path)
+                budget_mb = _scratch_budget_mb(scratch_path, scratch_mb)
+                log(
+                    f"agent:{role}",
+                    f"SCRATCH_OVER_LIMIT elapsed={elapsed:.1f}s "
+                    f"scratch={scratch_mb}MB limit={budget_mb}MB",
+                )
+                raise AgentScratchOverLimitError(
+                    role=role,
+                    elapsed=elapsed,
+                    scratch_mb=scratch_mb,
+                    limit_mb=budget_mb,
+                )
+            log(f"agent:{role}", f"TIMEOUT elapsed={elapsed:.1f}s")
+            raise AgentTimeoutError(role=role, elapsed=elapsed)
+        log(
+            f"agent:{role}",
+            f"FAIL exit_code={result.returncode} elapsed={elapsed:.1f}s",
+        )
+        detail = str(result.stderr or result.stdout or "OpenCode failed")
+        detail = detail.replace(api_key, "REDACTED").strip()[:2000]
+        raise AgentRuntimeError(f"OpenCode {role} failed: {detail}")
+    stdout = str(result.stdout or "")
+    try:
+        payload = _validated_contract(stdout, required_keys)
+    except AgentContractError as initial_error:
+        session_id = _session_id(stdout)
+        if session_id is None:
+            raise
+        diagnostic = initial_error.diagnostic.replace(api_key, "REDACTED")[:1000]
+        recovery_prompt = (
+            "Your previous final response failed JSON contract validation.\n\n"
+            f"Validation error:\n{diagnostic}\n\n"
+            "Regenerate and re-emit the complete final JSON object required by "
+            "the original role instructions already present in this session. "
+            "Preserve every completed conclusion, finding, evidence item, "
+            "summary, and other response field. Do not re-analyze the task, "
+            "change the workspace, or use tools. Do not return a partial object "
+            "that contains only the runtime-required keys.\n\n"
+            "The complete response must include these contract fields: "
+            + ", ".join(complete_keys)
+            + ".\nReturn exactly one valid JSON object without Markdown, code "
+            "fences, prose, or commentary."
+        )
+        recovery_command = [
+            str(executable),
+            "run",
+            "--session",
+            session_id,
+            "--model",
+            MODEL,
+            "--format",
+            "json",
+            "--dir",
+            str(workspace),
+            "--",
+            recovery_prompt,
+        ]
+        recovery_env = dict(env)
+        recovery_env["OPENCODE_CONFIG_CONTENT"] = _permission_config(
+            role,
+            deny_all=True,
+        )
+        log(
+            f"agent:{role}",
+            "CONTRACT_RECOVERY session=available",
+        )
+        recovered = runner(recovery_command, workspace, recovery_env, timeout)
+        if recovered.returncode != 0:
+            raise initial_error
+        payload = _validated_contract(str(recovered.stdout or ""), required_keys)
+    log(f"agent:{role}", f"PASS elapsed={elapsed:.1f}s")
+    return AgentResult(role=role, payload=payload)

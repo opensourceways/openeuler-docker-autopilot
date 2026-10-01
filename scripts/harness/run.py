@@ -1,0 +1,628 @@
+"""Main orchestrator for the openEuler Docker image automation system.
+
+Invokes agent roles (defined under .github/agents/*.md) via opencode CLI.
+Image generation has no QA review. Testcase generation uses the Creator ->
+QA1 -> Creator-fix -> QA2 review loop.
+
+Usage:
+    python run.py adversarial-pair --role image|testcase
+    python run.py test --app <name> --platform <arch>
+    python run.py fix
+    python run.py report-failures [--oe-version <ver>]
+
+Environment:
+    TARGET_REPO_DIR   - absolute path to the cloned target repo (agent cwd)
+    OPENCODE_MODEL    - legacy command model override
+    OPENCODE_TIMEOUT  - per-call timeout seconds (default 4800)
+"""
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+AGENTS_DIR = PROJECT_ROOT / ".github" / "agents"
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.lib.agent_runtime import (  # noqa: E402
+    MODEL,
+    qa_requests_repair,
+    validate_agent_payload,
+)
+from scripts.lib.evidence_resolver import (  # noqa: E402
+    creator_result_for_qa,
+    freeze_creator_evidence,
+    render_qa_evidence,
+    resolve_advisory_evidence,
+)
+from scripts.lib.failure_knowledge import (  # noqa: E402
+    FailureKnowledgeError,
+    render_knowledge,
+)
+from scripts.lib.task_spec import TaskSpec, TaskSpecError  # noqa: E402
+
+OPENCODE_MODEL = os.environ.get("OPENCODE_MODEL", MODEL)
+OPENCODE_TIMEOUT = int(os.environ.get("OPENCODE_TIMEOUT", "4800"))
+OPENCODE_STALE_SECONDS = 600
+MAX_QA_ROUNDS = 2
+_CREATOR_REQUIRED_KEYS = {
+    "image": (
+        "success",
+        "files_created",
+        "identity_decision",
+    ),
+    "testcase": (
+        "success",
+        "files_created",
+        "command_evidence",
+    ),
+}
+
+
+def _check_opencode() -> None:
+    if not shutil.which("opencode"):
+        sys.exit(
+            "opencode CLI not found. Install with:\n"
+            "  curl -fsSL https://opencode.ai/install | bash"
+        )
+
+
+def _load_agent_prompt(name: str) -> str:
+    path = AGENTS_DIR / f"{name}.md"
+    if not path.exists():
+        raise FileNotFoundError(f"Agent definition not found: {path}")
+    return path.read_text()
+
+
+def _target_dir() -> Path:
+    """Return the directory agents should operate in (cloned target repo)."""
+    d = os.environ.get("TARGET_REPO_DIR")
+    if not d:
+        sys.exit("TARGET_REPO_DIR not set; cannot run agent without target repo")
+    p = Path(d)
+    if not p.is_dir():
+        sys.exit(f"TARGET_REPO_DIR does not exist: {p}")
+    return p
+
+
+def _agent_record_dir() -> Path:
+    """Keep Agent evidence outside the candidate repository."""
+    target = _target_dir().resolve()
+    configured = os.environ.get("AGENT_REPORT_DIR", "").strip()
+    root = (
+        Path(configured).resolve()
+        if configured
+        else target.parent / "agent-reports"
+    )
+    if root == target or target in root.parents:
+        raise RuntimeError("AGENT_REPORT_DIR must remain outside TARGET_REPO_DIR")
+    pkg = os.environ.get("PACKAGE", os.environ.get("APP", ""))
+    domain = os.environ.get("DOMAIN", "")
+    record_dir = root / domain / pkg
+    record_dir.mkdir(parents=True, exist_ok=True)
+    return record_dir
+
+
+def _run_opencode(prompt: str, *, cwd: Path) -> str:
+    """Run opencode with the given prompt; return concatenated text output."""
+    _check_opencode()
+    work_dir = str(cwd)
+
+    cmd = [
+        "opencode", "run",
+        "--format", "json",
+        "--model", OPENCODE_MODEL,
+        "--dangerously-skip-permissions",
+    ]
+    help_r = subprocess.run(["opencode", "run", "--help"], capture_output=True, text=True)
+    if "--auto" in (help_r.stdout + help_r.stderr):
+        cmd[cmd.index("--dangerously-skip-permissions")] = "--auto"
+    cmd += ["--", prompt]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        cwd=work_dir,
+    )
+
+    text_parts: list[str] = []
+    last_output = time.monotonic()
+    deadline = time.monotonic() + OPENCODE_TIMEOUT
+
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        now = time.monotonic()
+        if now > deadline:
+            proc.kill()
+            print("[opencode] TIMEOUT - killing process", file=sys.stderr)
+            break
+        if now - last_output > OPENCODE_STALE_SECONDS:
+            proc.kill()
+            print("[opencode] STALE - killing process", file=sys.stderr)
+            break
+        last_output = now
+
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        t = ev.get("type")
+        part = ev.get("part", {})
+
+        if t == "text":
+            text = part.get("text", "")
+            if text:
+                text_parts.append(text)
+                print(text, end="", flush=True)
+        elif t == "tool_use":
+            tool = part.get("tool", "")
+            st = part.get("state", {})
+            status = st.get("status", "")
+            inp = st.get("input", {})
+            if status == "pending":
+                brief = json.dumps(inp, ensure_ascii=False)[:200]
+                print(f"\n[opencode: {tool}] {brief}", flush=True)
+            elif status == "completed":
+                output = st.get("output", "")
+                if output:
+                    display = output[:500] + ("..." if len(output) > 500 else "")
+                    print(f"\n[opencode: {tool}] output: {display}", flush=True)
+
+    proc.wait(timeout=10)
+
+    stderr_text = proc.stderr.read() if proc.stderr else ""
+    if proc.returncode != 0 and stderr_text:
+        print(f"[opencode] stderr: {stderr_text[-1000:]}", file=sys.stderr)
+
+    output = "".join(text_parts)
+    if not output.strip():
+        if stderr_text:
+            print(f"[opencode] NO OUTPUT. Stderr: {stderr_text[-2000:]}", file=sys.stderr)
+        else:
+            print("[opencode] NO OUTPUT produced - model may have failed silently", file=sys.stderr)
+
+    return output
+
+
+def _parse_json_output(output: str) -> dict:
+    """Parse a JSON object from opencode text output (tolerant of surrounding prose)."""
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        pass
+    m = output.rfind("{")
+    e = output.rfind("}")
+    if m != -1 and e > m:
+        try:
+            return json.loads(output[m:e + 1])
+        except json.JSONDecodeError:
+            pass
+    return {"status": "unknown", "raw": output}
+
+
+def _build_creator_prompt(role: str, *, round_num: int, qa_feedback: dict | None = None) -> str:
+    """Build the Creator agent prompt for the given round."""
+    if role not in _CREATOR_REQUIRED_KEYS:
+        raise ValueError(f"unsupported Creator role: {role}")
+    creator_name = f"{role}-creator"
+    creator_md = _load_agent_prompt(creator_name)
+    target = _target_dir()
+
+    pkg = os.environ.get("PACKAGE", os.environ.get("APP", ""))
+    src = os.environ.get("SOURCE", "")
+    domain = os.environ.get("DOMAIN", "")
+    os_ver = os.environ.get("OS_VERSION", os.environ.get("OE_VERSION", ""))
+    app_ver = os.environ.get("APP_VERSION", "")
+    os_tag = "oe" + os_ver.lower().replace(".", "").replace("-", "")
+
+    if role == "image":
+        instruction = (
+            f"Create the container image directory for {pkg} {app_ver} on "
+            f"openEuler {os_ver}.\n\n"
+            f"Parameters: package_name={pkg}, source_repo_url={src}, "
+            f"category={domain}, os_version={os_ver}, os_tag={os_tag}, "
+            f"app_version={app_ver}, image_repo_dir={target}\n\n"
+            "Create ONLY: Dockerfile, meta.yml, README.md, "
+            "doc/image-info.yml, doc/picture/logo.png, update "
+            "image-list.yml, and write ai-result.json.\n"
+            f"Place files under {target}/{domain}/{pkg}/."
+        )
+    else:
+        instruction = (
+            f"Create functional test cases for {pkg} {app_ver}.\n"
+            f"Place test.sh and optional test_helpers.sh under "
+            f"{target}/{domain}/{pkg}/tests/.\n"
+            f"Read the Dockerfile at {target}/{domain}/{pkg}/{app_ver}/"
+            f"{os_ver}/Dockerfile to determine binary name, ports, and "
+            "version.\nWrite test-ai-result.json with your self-assessment."
+        )
+
+    if round_num > 1 and qa_feedback:
+        instruction += (
+            f"\n\n## QA Feedback from round {round_num - 1}\n"
+            f"The QA reviewer found these issues:\n"
+            f"{json.dumps(qa_feedback.get('issues', []), ensure_ascii=False, indent=2)}\n\n"
+            f"Fix these issues. Do NOT regenerate from scratch - only fix what QA flagged.\n"
+            f"Update ai-result.json (or test-ai-result.json) with the changes made."
+        )
+
+    return f"{creator_md}\n\n## TASK (round {round_num}):\n{instruction}"
+
+
+def _build_qa_prompt(
+    role: str,
+    *,
+    creator_payload: dict,
+    evidence_bundle: dict | None = None,
+) -> str:
+    """Build the QA reviewer prompt."""
+    if role != "testcase":
+        raise ValueError("only testcase has a QA prompt")
+    qa_name = f"{role}-qa"
+    qa_md = _load_agent_prompt(qa_name)
+    target = _target_dir()
+    pkg = os.environ.get("PACKAGE", os.environ.get("APP", ""))
+    domain = os.environ.get("DOMAIN", "")
+    scenario = os.environ.get("SCENARIO", "new-image")
+
+    tests_root = f"{target}/{domain}/{pkg}/tests/"
+    instruction = (
+        f"Review only the files created by the testcase creator under "
+        f"{tests_root}.\n"
+        f"Scenario: {scenario}. Apply the same evidence contract regardless "
+        f"of whether this is new-image, version-update, or oe-upgrade.\n"
+        f"Read tests/test.sh, optional tests/test_helpers.sh, and "
+        f"test-ai-result.json.\n"
+        f"The Dockerfile (read-only context) may explain the runtime contract, "
+        f"but image-only findings are out of scope and must not trigger repair.\n"
+        f"Output your review as JSON per the schema in your instructions.\n"
+        f"If no issues found, output {{\"status\": \"approved\", \"issues\": [], \"summary\": \"...\"}}.\n\n"
+        "## Creator structured result\n"
+        + json.dumps(
+            creator_result_for_qa(creator_payload),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    if evidence_bundle is not None:
+        instruction += render_qa_evidence(evidence_bundle)
+    return f"{qa_md}\n\n## TASK:\n{instruction}"
+
+
+def _task_spec_from_environment() -> TaskSpec | None:
+    """Build the shared task contract for legacy scenario entrypoints."""
+    serialized = os.environ.get("TASK_SPEC_JSON", "").strip()
+    try:
+        if serialized:
+            return TaskSpec.from_json(serialized)
+        return TaskSpec.from_workflow_dispatch(
+            {
+                "app": os.environ.get("PACKAGE", os.environ.get("APP", "")),
+                "version": os.environ.get("APP_VERSION", ""),
+                "os_version": os.environ.get(
+                    "OS_VERSION", os.environ.get("OE_VERSION", "")
+                ),
+                "domain": os.environ.get("DOMAIN", ""),
+                "source_url": os.environ.get("SOURCE", ""),
+                "scenario": os.environ.get("SCENARIO", "new-image"),
+            }
+        )
+    except (TaskSpecError, json.JSONDecodeError):
+        return None
+
+
+def _resolve_creator_evidence(
+    role: str,
+    creator_payload: dict,
+    *,
+    round_num: int,
+    evidence_resolver=freeze_creator_evidence,
+) -> dict:
+    evidence = creator_payload.get("evidence", [])
+    task = _task_spec_from_environment()
+    scenario = os.environ.get("SCENARIO", "new-image")
+    bundle = resolve_advisory_evidence(
+        task=task,
+        scenario=scenario,
+        evidence=evidence,
+        resolver=evidence_resolver,
+    )
+
+    record_dir = _agent_record_dir()
+    (record_dir / f"{role}-round{round_num}-evidence-bundle.json").write_text(
+        json.dumps(bundle, ensure_ascii=False, indent=2) + "\n"
+    )
+    return bundle
+
+
+def _write_qa_record(role: str, round_num: int, qa_result: dict, *, approved: bool) -> None:
+    """Persist QA review to a JSON file for PR body composition."""
+    record_dir = _agent_record_dir()
+    record = {
+        "role": role,
+        "round": round_num,
+        "approved": approved,
+        "status": qa_result.get("status", "unknown"),
+        "summary": qa_result.get("summary", ""),
+        "issues": qa_result.get("issues", []),
+        "evidence_reviews": qa_result.get("evidence_reviews", []),
+        "coverage_score": qa_result.get("coverage_score"),
+    }
+    out = record_dir / f"qa-review-{role}-r{round_num}.json"
+    out.write_text(json.dumps(record, ensure_ascii=False, indent=2))
+    print(f"[{role}] QA round {round_num} {'approved' if approved else 'needs_fix'} -> {out}")
+
+
+def _testcase_qa_issues(payload: dict) -> list[dict]:
+    root = (
+        os.environ.get("DOMAIN", ""),
+        os.environ.get("PACKAGE", os.environ.get("APP", "")),
+        "tests",
+    )
+    issues = []
+    for issue in payload.get("issues", []):
+        if not isinstance(issue, dict) or not isinstance(issue.get("file"), str):
+            continue
+        path = Path(issue["file"].replace("\\", "/"))
+        if (
+            not path.is_absolute()
+            and ".." not in path.parts
+            and path.parts[: len(root)] == root
+            and len(path.parts) > len(root)
+            and issue.get("description")
+            and issue.get("evidence")
+        ):
+            issues.append(issue)
+    return issues
+
+
+def _run_adversarial_pair(
+    role: str,
+    *,
+    evidence_resolver=freeze_creator_evidence,
+) -> None:
+    """Run Creator <-> QA adversarial pair with up to MAX_QA_ROUNDS rounds."""
+    if role == "image":
+        scenario = os.environ.get("SCENARIO", "new-image")
+        if scenario != "new-image":
+            raise RuntimeError(
+                f"legacy image generation for {scenario} has not migrated"
+            )
+        target = _target_dir()
+        creator_out = _run_opencode(
+            _build_creator_prompt(role, round_num=1),
+            cwd=target,
+        )
+        validate_agent_payload(
+            _parse_json_output(creator_out),
+            required_keys=_CREATOR_REQUIRED_KEYS[role],
+        )
+        return
+    if role != "testcase":
+        raise ValueError(f"unsupported adversarial role: {role}")
+    target = _target_dir()
+    print(f"\n=== Adversarial pair: {role} (cwd={target}) ===")
+
+    creator_out = _run_opencode(
+        _build_creator_prompt(role, round_num=1),
+        cwd=target,
+    )
+    latest_creator_payload = _parse_json_output(creator_out)
+    validate_agent_payload(
+        latest_creator_payload,
+        required_keys=_CREATOR_REQUIRED_KEYS[role],
+    )
+
+    for round_num in range(1, MAX_QA_ROUNDS + 1):
+        print(f"\n--- {role} QA round {round_num} ---")
+        qa_out = _run_opencode(
+            _build_qa_prompt(
+                role,
+                creator_payload=latest_creator_payload,
+                evidence_bundle=_resolve_creator_evidence(
+                    role,
+                    latest_creator_payload,
+                    round_num=round_num,
+                    evidence_resolver=evidence_resolver,
+                ),
+            ),
+            cwd=target,
+        )
+        qa_result = _parse_json_output(qa_out)
+        qa_result["issues"] = _testcase_qa_issues(qa_result)
+        approved = qa_result.get("status") == "approved"
+        evidence_only = (
+            qa_result.get("status") == "needs_fix"
+            and not qa_requests_repair(qa_result)
+        )
+        approved = approved or evidence_only
+        _write_qa_record(role, round_num, qa_result, approved=approved)
+
+        if approved:
+            if evidence_only:
+                print(
+                    f"[{role}] QA evidence-only needs_fix is advisory; "
+                    "no Creator repair"
+                )
+            else:
+                print(f"[{role}] QA approved at round {round_num}")
+            return
+
+        if round_num == MAX_QA_ROUNDS:
+            record_dir = _agent_record_dir()
+            (record_dir / "qa-disagreements.json").write_text(
+                json.dumps(
+                    {
+                        "status": "pending_local_validation",
+                        "disagreements": [
+                            {
+                                "role": f"{role}_qa",
+                                "round": round_num,
+                                "issues": qa_result.get("issues", []),
+                                "summary": qa_result.get("summary", ""),
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n"
+            )
+            print(
+                f"[{role}] QA did not approve after "
+                f"{MAX_QA_ROUNDS} rounds; proceeding to local validation"
+            )
+            return
+
+        print(f"[{role}] QA found issues; running Creator round {round_num + 1} to fix")
+        creator_out = _run_opencode(
+            _build_creator_prompt(role, round_num=round_num + 1, qa_feedback=qa_result),
+            cwd=target,
+        )
+        latest_creator_payload = _parse_json_output(creator_out)
+        validate_agent_payload(
+            latest_creator_payload,
+            required_keys=_CREATOR_REQUIRED_KEYS[role],
+        )
+
+
+def cmd_adversarial_pair(args: argparse.Namespace) -> None:
+    _run_adversarial_pair(args.role)
+
+
+def cmd_test(args: argparse.Namespace) -> None:
+    """Fail closed until legacy version-update scenarios are migrated."""
+    print(
+        "Legacy scenario runtime testing is not supported by this entrypoint",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
+def _build_fixer_prompt(
+    *,
+    target: Path,
+    logs: dict[str, str],
+    whitelist: list[str],
+) -> str:
+    fixer_md = _load_agent_prompt("code-fixer")
+    knowledge = ""
+    try:
+        document = (PROJECT_ROOT / "docs" / "failure-patterns.yml").read_text()
+        knowledge = render_knowledge(document, {"logs": logs})
+    except (OSError, UnicodeError, FailureKnowledgeError):
+        pass
+    instruction = (
+        f"Diagnose and fix the CI failures in the target repo at {target}.\n\n"
+        "Build logs are in /tmp/build-*.log. Read them.\n\n"
+        "You may only modify files in this whitelist "
+        f"(relative to {target}):\n"
+        + "\n".join(f"  - {path}" for path in whitelist)
+        + "\n\nAfter fixing, write ai-result.json with status, diagnosis, and changes."
+    )
+    return f"{fixer_md}\n\n{knowledge}\n## TASK:\n{instruction}"
+
+
+def cmd_fix(args: argparse.Namespace) -> None:
+    """Run the Fixer agent against build/test failures in the target repo."""
+    target = _target_dir()
+
+    logs = {}
+    for log_file in Path("/tmp").glob("build-*.log"):
+        logs[log_file.name] = log_file.read_text()
+
+    if not logs:
+        print("::warning::No build-*.log files in /tmp; Fixer will have no failure context")
+
+    ai_result_paths = list(target.rglob("ai-result.json"))
+    ai_result_path = ai_result_paths[0] if ai_result_paths else target / "ai-result.json"
+    whitelist: list[str] = []
+    if ai_result_path.exists():
+        try:
+            data = json.loads(ai_result_path.read_text())
+            whitelist = data.get("files_created", [])
+        except json.JSONDecodeError:
+            pass
+    if not whitelist:
+        for f in target.rglob("*"):
+            if f.is_file() and ".git" not in str(f):
+                whitelist.append(str(f.relative_to(target)))
+
+    full_prompt = _build_fixer_prompt(
+        target=target,
+        logs=logs,
+        whitelist=whitelist,
+    )
+    output = _run_opencode(full_prompt, cwd=target)
+    result = _parse_json_output(output)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def cmd_get_app_name(args: argparse.Namespace) -> None:
+    print(os.environ.get("PACKAGE", os.environ.get("APP", "")))
+
+
+def cmd_report_failures(args: argparse.Namespace) -> None:
+    report = ["# openEuler Upgrade Failure Report\n"]
+    oe_version = args.oe_version or os.environ.get("OE_VERSION", "unknown")
+    report.append(f"\nopenEuler version: {oe_version}\n")
+
+    for log_file in sorted(Path("/tmp").glob("build-*.log")):
+        content = log_file.read_text()
+        if "ERROR" in content or "FAILED" in content:
+            report.append(f"\n## {log_file.name}\n")
+            report.append("```\n")
+            report.append(content[-2000:])
+            report.append("\n```\n")
+
+    out = Path("/tmp/failure-report.md")
+    out.write_text("".join(report))
+    print(f"Failure report written to {out}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="openEuler Docker image orchestrator")
+    sub = parser.add_subparsers(dest="command")
+
+    p = sub.add_parser("adversarial-pair")
+    p.add_argument("--role", choices=["image", "testcase"], required=True)
+
+    p = sub.add_parser("test")
+    p.add_argument("--app", required=True)
+    p.add_argument("--platform", required=True)
+
+    sub.add_parser("fix")
+    sub.add_parser("get-app-name")
+
+    p = sub.add_parser("report-failures")
+    p.add_argument("--oe-version")
+
+    args = parser.parse_args(argv)
+
+    if args.command == "adversarial-pair":
+        cmd_adversarial_pair(args)
+    elif args.command == "test":
+        cmd_test(args)
+    elif args.command == "fix":
+        cmd_fix(args)
+    elif args.command == "get-app-name":
+        cmd_get_app_name(args)
+    elif args.command == "report-failures":
+        cmd_report_failures(args)
+    else:
+        parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

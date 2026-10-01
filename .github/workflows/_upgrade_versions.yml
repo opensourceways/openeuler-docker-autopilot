@@ -1,0 +1,110 @@
+name: Verify
+
+# Reusable workflow: generate (adversarial pair) → build → test.
+# Called by upgrade_upstream_versions.yml and upgrade_openeuler_versions.yml.
+# On retry (retry=true): skips generation, only build+test — fixer changes are already applied.
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        required: true
+        type: string
+      app_version:
+        type: string
+      os_version:
+        type: string
+      oe_version:
+        type: string
+      scenario:
+        required: true
+        type: string
+      retry:
+        type: boolean
+        default: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  generate:
+    name: Generate image candidate
+    # Skip generation on retry — fixer changes are already in the repo
+    if: ${{ !inputs.retry }}
+    runs-on: [self-hosted, Linux, x64]
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@v4
+
+      - name: Install opencode
+        run: npm install -g opencode-ai
+
+      - name: Run adversarial pair (image)
+        env:
+          ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.DEEPSEEK_API_KEY }}
+          APP: ${{ inputs.app }}
+          APP_VERSION: ${{ inputs.app_version }}
+          OS_VERSION: ${{ inputs.os_version }}
+          OE_VERSION: ${{ inputs.oe_version }}
+          SCENARIO: ${{ inputs.scenario }}
+        run: python scripts/harness/run.py adversarial-pair --role image
+
+      - name: Validate meta
+        run: python scripts/harness/validate_meta.py
+
+      - name: Upload generated files
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-files-${{ inputs.app }}
+          path: |
+            */**/Dockerfile
+            */meta.yml
+            */README.md
+            */doc/
+
+  build-and-test:
+    name: Build and test image
+    needs: generate
+    if: ${{ !inputs.retry || always() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - runner: [self-hosted, Linux, x64]
+            platform: linux/amd64
+          - runner: [self-hosted, Linux, ARM64]
+            platform: linux/arm64
+    runs-on: ${{ matrix.arch.runner }}
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@v4
+      - name: Download generated files
+        if: ${{ !inputs.retry }}
+        uses: actions/download-artifact@v4
+        with:
+          name: generated-files-${{ inputs.app }}
+
+      - name: Build image
+        run: |
+          set -o pipefail
+          APP="${{ inputs.app }}"
+          docker buildx build \
+            --platform ${{ matrix.arch.platform }} \
+            --tag "openeuler/${APP}:test" \
+            --load \
+            . 2>&1 | tee /tmp/build-${{ matrix.arch.platform }}.log
+
+      - name: Run tests
+        run: |
+          APP="${{ inputs.app }}"
+          python scripts/harness/run.py test --app "$APP" --platform ${{ matrix.arch.platform }}
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ inputs.app }}-${{ matrix.arch.platform }}
+          path: |
+            /tmp/build-${{ matrix.arch.platform }}.log
+            **/results/**/*.junit.xml

@@ -1,0 +1,72 @@
+schema_version: 1
+patterns:
+  - id: runtime_identity_collision
+    title: Runtime identity collides with an account supplied by the base image
+    stages: [native_build]
+    symptom_keywords:
+      - groupadd
+      - GID
+      - not unique
+      - "exit code: 4"
+    diagnosis: >-
+      An explicitly assigned numeric user or group identifier can already be
+      occupied after runtime packages are installed. The deterministic image
+      contract rejects fixed numeric identities instead of trying to prove a
+      numeric identifier is free.
+    remediation:
+      - Prefer dynamic allocation or reuse a compatible account created by an installed package.
+      - Synchronize runtime ownership and identity assertions when the identity changes.
+    prevention: >-
+      Use a named identity that is dynamically allocated or safely reused, then
+      enforce the deterministic identity gate and native build against the final
+      package set.
+    verification:
+      status: verified
+      sources:
+        - https://github.com/Meihan-chen/openeuler-docker-images-workflow/actions/runs/30781977554/job/91597036026
+        - regression:tests/test_agent_runtime.py
+
+  - id: build_feature_dependency_mismatch
+    title: An optional build feature requires a dependency unavailable in the target environment
+    stages: [native_build]
+    symptom_keywords:
+      - cannot find static library
+      - disable
+      - CMake Error
+    diagnosis: >-
+      The upstream build enables an optional feature by default, but the target
+      distribution does not provide the dependency or artifact that feature
+      requires.
+    remediation:
+      - Read the upstream configure error and pinned build definitions to identify the controlling feature switch.
+      - Disable the optional feature only after confirming it is not part of the required runtime contract.
+      - Preserve any runtime dependency needed by the resulting linkage mode.
+    prevention: >-
+      Derive build switches from pinned upstream definitions and prove the final
+      configuration with native builds on every supported architecture.
+    verification:
+      status: verified
+      sources:
+        - https://github.com/Meihan-chen/openeuler-docker-images-workflow/actions/runs/30781977554/job/91597036026
+
+  - id: protocol_command_semantics_mismatch
+    title: A protocol-compatible command has application-specific semantics
+    stages: [runtime_test]
+    symptom_keywords:
+      - metadata assertion failed
+    diagnosis: >-
+      A test assumes the conventional meaning of a familiar command, while the
+      target application implements asynchronous, cached, placeholder, or
+      otherwise application-specific behavior.
+    remediation:
+      - Compare the assertion with Creator evidence verified by QA against the Harness-fixed upstream source.
+      - Replace an unsupported assumption with a semantically verified assertion that covers the same behavior.
+      - Do not change a healthy image merely to satisfy an incorrect test expectation.
+    prevention: >-
+      Require every application command in the shared test entrypoint to
+      provide Creator evidence for QA to verify against Harness-fixed source material.
+    verification:
+      status: verified
+      sources:
+        - https://github.com/Meihan-chen/openeuler-docker-images-workflow/actions/runs/30781977554/job/91597036026
+        - regression:tests/test_agent_runtime.py
