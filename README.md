@@ -222,6 +222,21 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 
 场景二的监控与交付 Job 只需要 Python、git 与网络；容器内修复 Job 额外需要 Docker（由 preflight 把关）。AI Agent 统一使用锁定工具链中的 opencode，**Runner 无需安装 Node.js**；只有把 `AI_RUNNER` 切到 `claude-code` / `claude-code-account` 时才需要 Node 与 Claude Code CLI。
 
+**场景二的机器可换，架构不可换。** 三类 Job 的标签都能在手动触发时覆盖，或用 Variables 固定（标签写 JSON 数组字符串）：
+
+| Job 类别 | 默认标签 | 覆盖方式 |
+|---------|---------|---------|
+| `prepare` / 日志分析 / `code-fix`（轻量） | `["self-hosted","Linux","X64"]` | 输入 `x64_runner_labels`，Variables `CI_FIX_X64_RUNNER_LABELS` |
+| amd64 修复（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-image-x86"]` | 输入 `amd64_runner_labels`，Variables `CI_FIX_AMD64_RUNNER_LABELS` |
+| arm64 首修 / 复验（**必须 arm64**） | `["self-hosted","Linux","ARM64","oe-image-arm64"]` | 输入 `arm64_runner_labels`，Variables `CI_FIX_ARM64_RUNNER_LABELS` |
+| 监控 / cron 同步 | 同轻量 Job | Variables `CI_FIX_X64_RUNNER_LABELS`（监控另有输入 `runner_labels`） |
+
+例如把重活放到免费托管 Runner：`["ubuntu-latest"]`（x86）与 `["ubuntu-24.04-arm"]`（arm64，公开仓免费）。
+
+⚠️ 标签必须是合法 JSON 数组字符串（写成 `ubuntu-latest` 这种不带方括号的形式就是错的），否则 Job 会在**调度阶段**直接失败——这类错误发生在 `prepare` 能启动之前，GitHub 只会给一句 invalid expression，所以改完建议先手动触发一次验证。`prepare` 里另有一次内容校验：空数组、非字符串元素会得到一句可读报错。
+
+托管 Runner 上 `/opt/oe-image-tools` 不可写时，工具链缓存自动降级到 Job 临时目录——不需要 sudo，代价是每个 Job 重新下载一次工具链。
+
 ### 2.2 Secrets
 
 在 **Settings → Secrets and variables → Actions → Secrets** 配置：
@@ -244,13 +259,16 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 |------|------|--------|
 | `MAX_PARALLEL_IMAGES` | 场景三 / 四 Matrix 并行的镜像数上限 | `4` |
 | `GITCODE_BOT_USERNAME` | 交付阶段用于推送分支的 GitCode 账号名 | _(无)_ |
-| `AI_RUNNER` | 场景二 AI 后端：`opencode` / `claude-code` / `claude-code-account` | `opencode` |
+| `AI_RUNNER` | 场景二 AI 后端：`opencode` / `claude-code-account` | `opencode` |
 | `AI_MODEL` | 场景二模型名 | `deepseek/deepseek-v4-pro` |
 | `AI_TIMEOUT_MS` | 场景二单次 Agent 调用超时（毫秒） | `1800000` |
 | `GITCODE_FORK_REPO` | 场景二 fix 分支的推送去向（`owner/repo`）；留空则直推源仓库 | _(空)_ |
 | `PR_COMMENT_ON_FAILURE` | 场景二自动修复连续失败时是否回帖源 PR（回帖是 outward-facing 动作，故默认不回） | _(空)_ |
 | `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二 Fix commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
 | `OPENAI_BASE_URL` | 自定义模型 API 代理地址 | _(空)_ |
+| `CI_FIX_X64_RUNNER_LABELS` | 场景二轻量 Job（prepare / 分析 / code-fix / 监控 / cron 同步）的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64"]` |
+| `CI_FIX_AMD64_RUNNER_LABELS` | 场景二 amd64 修复 Job 的 runner 标签（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-image-x86"]` |
+| `CI_FIX_ARM64_RUNNER_LABELS` | 场景二 arm64 首修 / 复验 Job 的 runner 标签（必须 arm64） | `["self-hosted","Linux","ARM64","oe-image-arm64"]` |
 
 场景一的 Agent 模型默认取 `deepseek/deepseek-flash`（定义在 [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py)），可用 `OPENCODE_MODEL` / `OPENCODE_TIMEOUT` 覆盖；场景二默认取 `deepseek/deepseek-v4-pro`，用 `AI_MODEL` 覆盖。
 
@@ -258,7 +276,7 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 
 部署完成后，从 Actions 页面手动运行 **Create New Images**，`operation` 选 `pipeline_smoke`：它跑完整编排链路，但不调用 AI、不做任何 GitCode 写操作，用于确认 Runner、工具链与编排本身健康。
 
-场景二的入口是 **Fix PR CI failures**：`workflow_dispatch` 指定 `source_repo` / `pr_number` / `source_platform` 可手动触发一次完整修复链（会真实写 fix 分支与 Fix PR）。日常运行由 **Watch CI failed PRs** 按 `config/watchlist.json` 轮询驱动，首次接入时建议先保持 `enabled: false`，确认凭据与 Runner 就绪后再开启。
+场景二的入口是 **Fix PR CI failures**：`workflow_dispatch` 指定 `source_repo` / `pr_number` / `source_platform` 可手动触发一次完整修复链（会真实写 fix 分支与 Fix PR），同时可用 `x64_runner_labels` / `amd64_runner_labels` / `arm64_runner_labels` 临时指定跑在哪些机器上。日常运行由 **Watch CI failed PRs** 按 `config/watchlist.json` 轮询驱动（跑在哪台机器由 `CI_FIX_X64_RUNNER_LABELS` 决定），首次接入时建议先保持 `enabled: false`，确认凭据与 Runner 就绪后再开启。
 
 ---
 
@@ -546,6 +564,16 @@ Git 与平台写操作集中在验证完成后的交付阶段，由确定性代�
 ### Q: 想手动跳过某条 PR 怎么做？
 
 移除该 PR 的 `ci_failed` 标签即可，下次轮询不再处理它。
+
+### Q: 不想搭自托管机器，能直接跑在 GitHub 托管 Runner 上吗？
+
+可以，手动触发 **Fix PR CI failures** 时把三个标签输入换成托管标签：轻量的用 `["ubuntu-latest"]`，amd64 修复用 `["ubuntu-latest"]`，arm64 修复/复验用 `["ubuntu-24.04-arm"]`（arm64 托管 Runner 目前**仅公开仓免费**）。三点注意：
+
+1. **缓存退化**：托管 Runner 每次都是干净环境，工具链（hadolint / jq / opencode）会在每个 Job 重新下载；`/opt/oe-image-tools` 的跨 Job 缓存只有自托管 Runner 才有。
+2. **6 小时/job 上限**：托管 Runner 超过即被砍；自托管没有这个限制。重型镜像（如源码编译的 milvus）整轮修复可能被砍在构建中途——那属于预算不足，不是修复失败。
+3. **预装差异**：托管的 Ubuntu Runner 自带 Docker、buildx 与 `gh`；自托管机器需要自己装（`gh` 只在 GitHub 平台的 Fix PR 创建路径上用到）。
+
+要把选择固定下来（自动轮询也生效）就设对应 Variables。
 
 ---
 

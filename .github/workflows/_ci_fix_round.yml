@@ -6,7 +6,7 @@ name: CI fix - one repair round
 #
 # 复验失败**不让 job 失败**：结果写进 verify_passed，由调用方决定是否再开一轮。
 # 这样"修了几次"在 Actions 的 job 列表里直接可见（Round 1 / Round 2 / Round 3），
-# 而不是靠隐式 dispatch 把链路散到看不见的多个 run 里。
+
 
 on:
   workflow_call:
@@ -54,6 +54,20 @@ on:
         description: "PR base branch"
         required: true
         type: string
+      arm64_runner_labels:
+        description: >-
+          JSON array of runner labels for the arm64 jobs（首修 + 复验）,
+          e.g. '["self-hosted","Linux","ARM64","oe-image-arm64"]' or
+          '["ubuntu-24.04-arm"]'. 必须仍是 arm64——复验就是双架构保证本身。
+        required: true
+        type: string
+      amd64_runner_labels:
+        description: >-
+          JSON array of runner labels for the amd64 repair job,
+          e.g. '["self-hosted","Linux","X64","oe-image-x86"]' or
+          '["ubuntu-latest"]'（需要 Docker 与 ≥4 CPU）。
+        required: true
+        type: string
     secrets:
       GITCODE_TOKEN:
         required: false
@@ -73,6 +87,8 @@ on:
 permissions:
   contents: read
 
+# 可复用 workflow **不继承**调用方的 env：脚本读的每个变量都要在这里再声明一次，
+# 否则会静默失效（终止轮的"连续失败回帖"开关就是这么丢过一次）。
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -82,6 +98,7 @@ env:
   OPENAI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
   DEEPSEEK_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
   OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || '' }}
+  PR_COMMENT_ON_FAILURE: ${{ vars.PR_COMMENT_ON_FAILURE || '' }}
 
 jobs:
 
@@ -89,7 +106,7 @@ jobs:
   arm64-fix:
     name: "Round ${{ inputs.round }}: fix (aarch64)"
     if: ${{ inputs.include_arm64_fix }}
-    runs-on: [self-hosted, Linux, ARM64, oe-image-arm64]
+    runs-on: ${{ fromJSON(inputs.arm64_runner_labels) }}
     timeout-minutes: 240
     env:
       SOURCE_REPO: ${{ inputs.source_repo }}
@@ -195,7 +212,7 @@ jobs:
       ${{ always() &&
           (needs.arm64-fix.result == 'success' ||
            needs.arm64-fix.result == 'skipped') }}
-    runs-on: [self-hosted, Linux, X64, oe-image-x86]
+    runs-on: ${{ fromJSON(inputs.amd64_runner_labels) }}
     timeout-minutes: 240
     env:
       SOURCE_REPO: ${{ inputs.source_repo }}
@@ -298,7 +315,7 @@ jobs:
     name: "Round ${{ inputs.round }}: verify (aarch64)"
     needs: [amd64-fix]
     if: ${{ always() && needs.amd64-fix.result == 'success' }}
-    runs-on: [self-hosted, Linux, ARM64, oe-image-arm64]
+    runs-on: ${{ fromJSON(inputs.arm64_runner_labels) }}
     timeout-minutes: 300
     outputs:
       verify_passed: ${{ steps.verify.outputs.verify_passed }}

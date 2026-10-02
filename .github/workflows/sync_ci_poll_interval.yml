@@ -18,7 +18,10 @@ env:
 jobs:
   sync:
     name: Sync cron schedule
-    runs-on: [self-hosted, Linux, X64]
+    # push 触发、没有输入，只能用 Variables（留空则用默认标签）
+    runs-on: >-
+      ${{ fromJSON(vars.CI_FIX_X64_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64"]') }}
     timeout-minutes: 10
 
     steps:

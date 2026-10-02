@@ -44,8 +44,17 @@ runs:
       env:
         ARCH: ${{ inputs.arch }}
       run: |
+        # 自托管 Runner 用 /opt 下的持久缓存（跨 job 复用）；GitHub 托管 Runner 上
+        # /opt 归 root 所有、不可写，这里自动降级到 job 临时目录——缓存只在本次 job
+        # 内有效，代价是每个 job 重新下载工具链，但不用 sudo、不用改 Runner。
+        default_cache=/opt/oe-image-tools
+        cache_root="${default_cache}"
+        if ! mkdir -p "${default_cache}" 2>/dev/null || [ ! -w "${default_cache}" ]; then
+          cache_root="${RUNNER_TEMP}/oe-image-tools"
+          echo "::warning::${default_cache} 不可写，工具链缓存改用 ${cache_root}（仅本 job 有效）"
+        fi
         "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/bootstrap_tools.py \
-          --cache-root /opt/oe-image-tools \
+          --cache-root "${cache_root}" \
           --arch "${ARCH}" \
           --output-json "${RUNNER_TEMP}/toolchain.json" \
           --github-output "${GITHUB_OUTPUT}"

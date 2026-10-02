@@ -28,6 +28,23 @@ on:
         description: '平台：gitcode / github'
         required: false
         default: 'gitcode'
+      # 三类 job 的 runner 标签都可覆盖（JSON 数组，留空则用 Variable / 默认值）。
+      # 架构相关的 job 只能换"哪台 arm64/x64 机器"，不能换架构——复验就是双架构保证本身。
+      x64_runner_labels:
+        description: 'prepare / 分析 / code-fix 的 runner 标签，JSON 数组'
+        required: false
+        type: string
+        default: '["self-hosted","Linux","X64"]'
+      amd64_runner_labels:
+        description: 'amd64 修复 job 的 runner 标签（需 Docker + ≥4 CPU），JSON 数组'
+        required: false
+        type: string
+        default: '["self-hosted","Linux","X64","oe-image-x86"]'
+      arm64_runner_labels:
+        description: 'arm64 修复/复验 job 的 runner 标签（必须 arm64），JSON 数组'
+        required: false
+        type: string
+        default: '["self-hosted","Linux","ARM64","oe-image-arm64"]'
   repository_dispatch:
     types: [run-ci-fix]
 
@@ -65,7 +82,12 @@ jobs:
   # ── 入口解析：两种入口统一成一份 PR 元数据 ──────────────────────
   prepare:
     name: Prepare repair attempt
-    runs-on: [self-hosted, Linux, X64]
+    # prepare 是最先运行的 job：它的 runs-on 拿不到 needs 上下文，只能直接读
+    # inputs/vars。同样一句话在三处出现（dispatch 表单默认值、这里、下面步骤的
+    # env），改默认值时三处要一起改——它们分别对应手动入口、自动入口与校验。
+    runs-on: >-
+      ${{ fromJSON(inputs.x64_runner_labels || vars.CI_FIX_X64_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64"]') }}
     timeout-minutes: 15
     outputs:
       source_repo: ${{ steps.resolve.outputs.source_repo }}
@@ -77,6 +99,9 @@ jobs:
       pr_base_branch: ${{ steps.resolve.outputs.pr_base_branch }}
       fix_pr_number: ${{ steps.resolve.outputs.fix_pr_number }}
       attempt: ${{ steps.resolve.outputs.attempt }}
+      x64_runner_labels: ${{ steps.resolve.outputs.x64_runner_labels }}
+      amd64_runner_labels: ${{ steps.resolve.outputs.amd64_runner_labels }}
+      arm64_runner_labels: ${{ steps.resolve.outputs.arm64_runner_labels }}
     env:
       SOURCE_REPO: >-
         ${{ github.event.client_payload.source_repo ||
@@ -91,6 +116,17 @@ jobs:
       ATTEMPT: ${{ github.event.client_payload.attempt || '1' }}
       GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
+      # 三类 job 的 runner 标签：手动入口 → inputs，自动入口（Monitor 触发）→
+      # Variables，都没有 → 与 dispatch 表单相同的默认值。
+      X64_RUNNER_LABELS: >-
+        ${{ inputs.x64_runner_labels || vars.CI_FIX_X64_RUNNER_LABELS ||
+            '["self-hosted","Linux","X64"]' }}
+      AMD64_RUNNER_LABELS: >-
+        ${{ inputs.amd64_runner_labels || vars.CI_FIX_AMD64_RUNNER_LABELS ||
+            '["self-hosted","Linux","X64","oe-image-x86"]' }}
+      ARM64_RUNNER_LABELS: >-
+        ${{ inputs.arm64_runner_labels || vars.CI_FIX_ARM64_RUNNER_LABELS ||
+            '["self-hosted","Linux","ARM64","oe-image-arm64"]' }}
     steps:
       - name: Check out workflow source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -105,7 +141,7 @@ jobs:
           "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
             -r requirements.txt
 
-      - name: Resolve PR metadata
+      - name: Resolve PR metadata and runner labels
         id: resolve
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/watch/resolve_pr.py
@@ -114,7 +150,7 @@ jobs:
   ci-log-analysis:
     name: Analyze CI failure
     needs: prepare
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ fromJSON(needs.prepare.outputs.x64_runner_labels) }}
     timeout-minutes: 60
     env:
       SOURCE_REPO: ${{ needs.prepare.outputs.source_repo }}
@@ -215,6 +251,8 @@ jobs:
       head_sha: ${{ needs.prepare.outputs.head_sha }}
       fix_branch: ${{ needs.prepare.outputs.fix_branch }}
       pr_base_branch: ${{ needs.prepare.outputs.pr_base_branch }}
+      arm64_runner_labels: ${{ needs.prepare.outputs.arm64_runner_labels }}
+      amd64_runner_labels: ${{ needs.prepare.outputs.amd64_runner_labels }}
     secrets:
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
       DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
@@ -239,6 +277,8 @@ jobs:
       head_sha: ${{ needs.prepare.outputs.head_sha }}
       fix_branch: ${{ needs.prepare.outputs.fix_branch }}
       pr_base_branch: ${{ needs.prepare.outputs.pr_base_branch }}
+      arm64_runner_labels: ${{ needs.prepare.outputs.arm64_runner_labels }}
+      amd64_runner_labels: ${{ needs.prepare.outputs.amd64_runner_labels }}
     secrets:
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
       DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
@@ -262,6 +302,8 @@ jobs:
       head_sha: ${{ needs.prepare.outputs.head_sha }}
       fix_branch: ${{ needs.prepare.outputs.fix_branch }}
       pr_base_branch: ${{ needs.prepare.outputs.pr_base_branch }}
+      arm64_runner_labels: ${{ needs.prepare.outputs.arm64_runner_labels }}
+      amd64_runner_labels: ${{ needs.prepare.outputs.amd64_runner_labels }}
     secrets:
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
       DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
@@ -279,7 +321,7 @@ jobs:
           (needs.round-1.outputs.verify_passed == 'true' ||
            needs.round-2.outputs.verify_passed == 'true' ||
            needs.round-3.outputs.verify_passed == 'true') }}
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ fromJSON(needs.prepare.outputs.x64_runner_labels) }}
     timeout-minutes: 30
     env:
       SOURCE_REPO: ${{ needs.prepare.outputs.source_repo }}

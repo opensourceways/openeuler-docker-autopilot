@@ -309,6 +309,13 @@ GitCode Issue 创建 [new-image 标签]
 Actions 的 job 列表里直接可读；只有 Monitor 的跨周期重试是新 run，第几次写在 run
 标题的 `attempt` 上。
 
+**机器可换、架构不可换。** 三类 job（轻量 / amd64 修复 / arm64 首修与复验）的
+runner 标签由 `prepare` 统一解析：手动入口读 `workflow_dispatch` 输入，自动入口
+读 Variables，最后落到默认的自托管标签；解析结果经 job outputs 传给轮次组件。
+架构相关的 job 只允许换"哪台 arm64/x64 机器"，不允许换架构——复验就是双架构保证
+本身。托管 Runner 上 `/opt` 不可写时，工具链缓存根自动降级到 job 临时目录
+（`phase1-setup`），因此同一套 workflow 在自托管与托管 Runner 上都能跑。
+
 **与其它场景的差异：**
 
 | 维度 | 场景一 / 三 / 四 | 场景二 |

@@ -15,6 +15,10 @@ on:
         description: '测试特定仓库 (owner/repo)'
         required: false
         type: string
+      runner_labels:
+        description: '本次运行使用的 runner 标签（JSON 数组），留空用 Variables / 默认值'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -25,7 +29,11 @@ env:
 jobs:
   monitor:
     name: Scan ci_failed PRs
-    runs-on: [self-hosted, Linux, X64]
+    # 与场景二其它 job 共用一组标签配置：手动运行可临时覆盖，
+    # 自动轮询走 Variables CI_FIX_X64_RUNNER_LABELS
+    runs-on: >-
+      ${{ fromJSON(inputs.runner_labels || vars.CI_FIX_X64_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64"]') }}
     timeout-minutes: 15
 
     steps:

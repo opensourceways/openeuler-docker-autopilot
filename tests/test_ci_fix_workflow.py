@@ -5,19 +5,23 @@ repository_dispatch，Actions 列表里就只剩互不相干的一堆 run，"修
 现在第几轮、还剩几轮预算"全靠翻日志猜。这里把编排形状钉死在测试里。
 """
 
+import json
+import re
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts.watch.resolve_pr import _resolve_platform  # noqa: E402
+from scripts.watch.resolve_pr import _resolve_platform, resolve_runner_labels  # noqa: E402
 
 PIPELINE = ROOT / '.github' / 'workflows' / 'ci_fix_pipeline.yml'
 ROUND = ROOT / '.github' / 'workflows' / '_ci_fix_round.yml'
 MONITOR = ROOT / '.github' / 'workflows' / 'monitor_ci_failed_prs.yml'
+SYNC = ROOT / '.github' / 'workflows' / 'sync_ci_poll_interval.yml'
 ROUNDS = ('round-1', 'round-2', 'round-3')
 
 
@@ -101,9 +105,10 @@ def test_round_component_fixes_both_arches_and_reports_the_round_result():
     jobs = data['jobs']
 
     assert list(jobs) == ['arm64-fix', 'amd64-fix', 'verify-arm']
-    assert jobs['arm64-fix']['runs-on'] == ['self-hosted', 'Linux', 'ARM64', 'oe-image-arm64']
-    assert jobs['amd64-fix']['runs-on'] == ['self-hosted', 'Linux', 'X64', 'oe-image-x86']
-    assert jobs['verify-arm']['runs-on'] == ['self-hosted', 'Linux', 'ARM64', 'oe-image-arm64']
+    # 机器由调用方通过 inputs 指定（默认仍是本仓的 oe-image-* 自托管 Runner）
+    assert jobs['arm64-fix']['runs-on'] == '${{ fromJSON(inputs.arm64_runner_labels) }}'
+    assert jobs['amd64-fix']['runs-on'] == '${{ fromJSON(inputs.amd64_runner_labels) }}'
+    assert jobs['verify-arm']['runs-on'] == '${{ fromJSON(inputs.arm64_runner_labels) }}'
     # 每一轮的收口是 arm64 上的确定性复验，结果回传给调用方
     assert jobs['verify-arm']['outputs']['verify_passed'] == \
         '${{ steps.verify.outputs.verify_passed }}'
@@ -115,6 +120,56 @@ def test_round_component_fixes_both_arches_and_reports_the_round_result():
     assert "needs.arm64-fix.result == 'skipped'" in _squash(jobs['amd64-fix']['if'])
 
 
+ENV_READ = re.compile(r"os\.(?:getenv|environ\.get)\(\s*'([A-Z0-9_]+)'")
+RUNTIME_PROVIDED = {'GITHUB_OUTPUT', 'GITHUB_REPOSITORY', 'XDG_DATA_HOME', 'HOME'}
+# claude-code（API Key 模式）不在支持矩阵内：只支持 opencode 与
+# claude-code-account（凭证走 CLAUDE_CREDENTIALS_JSON 文件）
+UNSUPPORTED_BACKEND = {'ANTHROPIC_API_KEY', 'CLAUDE_CODE_BIN'}
+
+# 每个跑阶段脚本的 job 必须把脚本要读的 env 都声明到位
+JOB_SCRIPTS = {
+    PIPELINE: {
+        'prepare': ('scripts/watch/resolve_pr.py',),
+        'ci-log-analysis': ('scripts/stages/ci-log-analysis.py',
+                            'scripts/lib/ai_runner.py',
+                            'scripts/lib/opencode_run.py'),
+        'code-fix': ('scripts/stages/code-fix.py',),
+    },
+    ROUND: {
+        'arm64-fix': ('scripts/stages/build-fix.py',
+                      'scripts/lib/ai_runner.py',
+                      'scripts/lib/opencode_run.py',
+                      'scripts/lib/claude_code_run.py'),
+        'amd64-fix': ('scripts/stages/build-fix.py',),
+        'verify-arm': ('scripts/stages/build-fix.py',),
+    },
+}
+
+
+def test_every_job_declares_the_env_its_scripts_read():
+    """脚本读的 env 必须在 workflow 里声明：漏了不会报错，只会静默失效。
+
+    两类漏法都要拦住：可复用 workflow **不继承**调用方 env（终止轮的
+    PR_COMMENT_ON_FAILURE 就这么丢过一次），以及重构时把 job env 搬丢。
+    """
+    for wf_path, jobs in JOB_SCRIPTS.items():
+        doc = _workflow(wf_path)
+        workflow_env = set(doc.get('env') or {})
+        for job_id, scripts in jobs.items():
+            job = doc['jobs'][job_id]
+            declared = workflow_env | set(job.get('env') or {})
+            for step in job.get('steps') or []:
+                declared |= set(step.get('env') or {})
+
+            needed = set()
+            for rel in scripts:
+                needed |= set(ENV_READ.findall(
+                    (ROOT / rel).read_text(encoding='utf-8')))
+
+            missing = needed - declared - RUNTIME_PROVIDED - UNSUPPORTED_BACKEND
+            assert missing == set(), f'{wf_path.name}/{job_id} 未声明 {sorted(missing)}'
+
+
 def test_monitor_dispatches_one_repair_attempt_per_run():
     assert 'run-ci-fix' in _trigger(_workflow(PIPELINE))['repository_dispatch']['types']
 
@@ -124,6 +179,75 @@ def test_monitor_dispatches_one_repair_attempt_per_run():
     assert "'attempt': attempt" in monitor
     assert 'attempt' in _workflow(PIPELINE)['run-name']
     assert _trigger(_workflow(MONITOR))['schedule']
+
+
+def test_runner_labels_are_configurable_and_stay_arch_safe():
+    """机器可换、架构不许换：arm64 的默认标签必须是 arm64，x64 的必须落在 x86。"""
+    doc = _workflow(PIPELINE)
+    inputs = _trigger(doc)['workflow_dispatch']['inputs']
+    defaults = {name: inputs[name]['default'] for name in (
+        'x64_runner_labels', 'amd64_runner_labels', 'arm64_runner_labels',
+    )}
+    for name, raw in defaults.items():
+        labels = json.loads(raw)
+        assert labels and all(isinstance(label, str) for label in labels), name
+
+    assert 'ARM64' in defaults['arm64_runner_labels']
+    for name in ('x64_runner_labels', 'amd64_runner_labels'):
+        assert 'ARM64' not in defaults[name]
+
+    # prepare 自己只能读 inputs/vars（最先运行，没有 needs），解析后交给后续 job
+    prepare = doc['jobs']['prepare']
+    for out in ('x64_runner_labels', 'amd64_runner_labels', 'arm64_runner_labels'):
+        assert out in prepare['outputs']
+    assert 'inputs.x64_runner_labels' in _squash(prepare['runs-on'])
+    assert 'vars.CI_FIX_X64_RUNNER_LABELS' in _squash(prepare['runs-on'])
+
+    assert _squash(doc['jobs']['ci-log-analysis']['runs-on']) == \
+        '${{ fromJSON(needs.prepare.outputs.x64_runner_labels) }}'
+    assert _squash(doc['jobs']['code-fix']['runs-on']) == \
+        '${{ fromJSON(needs.prepare.outputs.x64_runner_labels) }}'
+    for job_id in ROUNDS:
+        passed = doc['jobs'][job_id]['with']
+        assert passed['arm64_runner_labels'] == \
+            '${{ needs.prepare.outputs.arm64_runner_labels }}'
+        assert passed['amd64_runner_labels'] == \
+            '${{ needs.prepare.outputs.amd64_runner_labels }}'
+
+    # 轮询与 cron 同步共用同一个 Variable；监控手动运行可临时覆盖
+    for path, job_id in ((MONITOR, 'monitor'), (SYNC, 'sync')):
+        runner = _squash(_workflow(path)['jobs'][job_id]['runs-on'])
+        assert 'vars.CI_FIX_X64_RUNNER_LABELS' in runner
+        assert 'self-hosted' in runner
+    assert 'inputs.runner_labels' in _squash(_workflow(MONITOR)['jobs']['monitor']['runs-on'])
+
+
+def test_toolchain_cache_falls_back_when_opt_is_not_writable():
+    """托管 Runner 上 /opt 不可写：缓存根必须自动降级，否则换机器就白换。"""
+    action = (ROOT / '.github' / 'actions' / 'phase1-setup' / 'action.yml'
+              ).read_text(encoding='utf-8')
+
+    assert '/opt/oe-image-tools' in action
+    assert '${RUNNER_TEMP}/oe-image-tools' in action
+    assert '--cache-root "${cache_root}"' in action
+
+
+def test_runner_label_input_is_validated_before_scheduling(monkeypatch):
+    """写坏的标签要在 prepare 里得到可读报错，而不是让后续 job 报 invalid expression。"""
+    monkeypatch.setenv('X64_RUNNER_LABELS', '["self-hosted","Linux","X64"]')
+    monkeypatch.setenv('AMD64_RUNNER_LABELS', '["ubuntu-latest"]')
+    monkeypatch.setenv('ARM64_RUNNER_LABELS', '["ubuntu-24.04-arm"]')
+
+    assert resolve_runner_labels()['arm64_runner_labels'] == '["ubuntu-24.04-arm"]'
+
+    monkeypatch.setenv('AMD64_RUNNER_LABELS', 'ubuntu-latest')  # 忘了写 JSON
+    with pytest.raises(RuntimeError, match='AMD64_RUNNER_LABELS'):
+        resolve_runner_labels()
+
+    monkeypatch.setenv('AMD64_RUNNER_LABELS', '["ubuntu-latest"]')  # 修好后轮到下一项
+    monkeypatch.setenv('ARM64_RUNNER_LABELS', '[]')
+    with pytest.raises(RuntimeError, match='ARM64_RUNNER_LABELS'):
+        resolve_runner_labels()
 
 
 def test_platform_detection_prefers_the_repo_url():

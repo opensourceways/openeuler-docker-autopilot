@@ -13,8 +13,10 @@
   SOURCE_REPO / PR_NUMBER / SOURCE_PLATFORM  必备
   FIX_PR_NUMBER                              重试时为 Fix PR 编号，首次为 0
   ATTEMPT                                    本次修复是第几次（用于 run 标题）
+  X64/AMD64/ARM64_RUNNER_LABELS              三类 job 的 runner 标签（JSON 数组）
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -72,6 +74,35 @@ def resolve() -> dict:
     }
 
 
+def resolve_runner_labels() -> dict:
+    """解析三类 job 的 runner 标签（JSON 数组）并挡住写坏的输入。
+
+    prepare 是最早运行的 job，它的 runs-on 只能直接读 inputs/vars（还没有 needs
+    上下文），所以这里再解析一次并校验：写坏的值应当得到一句可读的报错，而不是让
+    后续 job 在调度阶段报一句难以定位的 invalid expression。
+    """
+    resolved: dict = {}
+    for env_name, output_name in (
+        ('X64_RUNNER_LABELS', 'x64_runner_labels'),
+        ('AMD64_RUNNER_LABELS', 'amd64_runner_labels'),
+        ('ARM64_RUNNER_LABELS', 'arm64_runner_labels'),
+    ):
+        raw = (os.getenv(env_name) or '').strip()
+        if not raw:
+            raise RuntimeError(f'{env_name} 为空——runner 标签必须由 workflow 传入')
+        try:
+            labels = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f'{env_name} 不是合法 JSON 数组（{exc}）：{raw}') from exc
+        if not isinstance(labels, list) or not labels or \
+                not all(isinstance(x, str) and x.strip() for x in labels):
+            raise RuntimeError(f'{env_name} 必须是非空字符串数组：{raw}')
+        labels = [x.strip() for x in labels]
+        resolved[output_name] = json.dumps(labels)
+        log_stage('prepare', f'{output_name} = {labels}')
+    return resolved
+
+
 def emit_outputs(values: dict) -> None:
     """把解析结果写进 $GITHUB_OUTPUT。"""
     gh_output = os.environ.get('GITHUB_OUTPUT', '')
@@ -90,6 +121,7 @@ def main():
         f"pr=#{values['pr_number']} attempt={values['attempt']} "
         f"sha={values['head_sha'][:8]} base={values['pr_base_branch']}",
     )
+    values.update(resolve_runner_labels())
     emit_outputs(values)
     log_stage('prepare', '✅ PR metadata resolved')
 
