@@ -10,7 +10,8 @@ verify 模式：
 
 输入: PR 信息 + ci-analysis 提示 + (amd64/verify 时) 前序 derived Dockerfile
 输出: derived-dockerfile / dockerfile-target / build-log-<arch>（写入 ci-fix-log 分支）
-副作用: dispatch 下一阶段
+副作用: verify 模式把 `verify_passed` 写进 $GITHUB_OUTPUT；阶段推进由 ci_fix_pipeline.yml
+        的 job 依赖负责，本脚本不再 dispatch
 """
 
 import os
@@ -25,7 +26,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.lib.ai_runner import run_agent
 from scripts.lib.stage_common import (
-    agent_prompt_file, log_stage, get_conventions_file, dispatch_phase, normalize_repo,
+    agent_prompt_file, log_stage, get_conventions_file,
 )
 from scripts.lib.ci_api import get_api
 from scripts.lib import ci_data
@@ -34,7 +35,8 @@ from scripts.lib import build_runner
 WORK_BASE = os.path.join(PROJECT_ROOT, 'ci-fix-log')
 SOURCE_REPO_DIR = os.path.join(PROJECT_ROOT, 'source-repo')
 
-# arm 复验失败后的最大回修轮数（amd64 → verify → amd64 → verify → 放弃）
+# arm 复验失败后允许的最大回修轮数：首轮修复之后最多再回修 2 轮，
+# 即 round 1/2/3 各做一次 arm64 复验（verify_count = 0/1/2），第三轮失败即终止。
 MAX_VERIFY_ROUNDS = 2
 
 # 增量上传 derived Dockerfile 的轮询间隔（秒）
@@ -126,10 +128,18 @@ def parse_env() -> dict:
         'arch': os.getenv('ARCH', 'arm64'),
         'mode': os.getenv('MODE', 'build'),
         'verify_count': int(os.getenv('VERIFY_COUNT', '0')),
-        # 链路标识，由链路起点 run 决定；空串表示本 run 就是起点（dispatch_phase 填）
-        'chain_id': os.getenv('CHAIN_ID', ''),
         'token': token,
     }
+
+
+def emit_output(**values) -> None:
+    """把阶段结果写进 $GITHUB_OUTPUT，供 workflow 的 job 门控读取。"""
+    gh_output = os.environ.get('GITHUB_OUTPUT', '')
+    if not gh_output:
+        return
+    with open(gh_output, 'a', encoding='utf-8') as f:
+        for key, value in values.items():
+            f.write(f'{key}={value}\n')
 
 
 def git(args: list, cwd: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -179,20 +189,6 @@ def _apply_derived_to_repo(target: str, derived: str) -> str:
     with open(target_abs, 'w', encoding='utf-8') as f:
         f.write(derived)
     return target_abs
-
-
-def _base_payload(env: dict) -> dict:
-    return {
-        'source_repo': env['source_repo'],
-        'source_platform': env['source_platform'],
-        'pr_number': env['pr_number'],
-        'pr_title': env['pr_title'],
-        'pr_head_sha': env['pr_head_sha'],
-        'fix_branch': env['fix_branch'],
-        'pr_base_branch': env['pr_base_branch'],
-        # 必须原样透传，否则下一次 dispatch 会被当成新链路起点
-        'chain_id': env['chain_id'],
-    }
 
 
 def build_mode(env: dict):
@@ -361,16 +357,7 @@ def build_mode(env: dict):
     ci_data.write_file(ci_data.build_log_path(pr, arch), build_log,
                        f"build-fix: build log PR #{pr} arch={arch}")
     log_stage('build-fix', '✅ derived Dockerfile + build log written to ci-fix-log')
-
-    if arch == 'arm64':
-        payload = _base_payload(env)
-        payload.update({'phase': 'build-fix', 'arch': 'amd64', 'verify_count': '0'})
-        dispatch_phase(payload)
-    else:
-        payload = _base_payload(env)
-        payload.update({'phase': 'verify-arm', 'arch': 'arm64', 'verify_count': str(env['verify_count'])})
-        dispatch_phase(payload)
-    log_stage('build-fix', '✅ done')
+    log_stage('build-fix', f'✅ done (round {env["verify_count"]}, arch={arch})')
 
 
 def verify_mode(env: dict):
@@ -404,20 +391,18 @@ def verify_mode(env: dict):
     ok = result is not None and result.returncode == 0
 
     if ok:
-        payload = _base_payload(env)
-        payload.update({'phase': 'code-fix'})
-        dispatch_phase(payload)
-        log_stage('build-fix', '✅ verify passed → code-fix')
+        emit_output(verify_passed='true')
+        log_stage('build-fix',
+                  f'✅ verify passed (round {env["verify_count"]}) → 交给 code-fix')
     elif env['verify_count'] < MAX_VERIFY_ROUNDS:
-        # arm 复验失败：回 amd64 修，要求架构中立
-        payload = _base_payload(env)
-        payload.update({
-            'phase': 'build-fix',
-            'arch': 'amd64',
-            'verify_count': str(env['verify_count'] + 1),
-        })
-        dispatch_phase(payload)
-        log_stage('build-fix', f"⚠️ verify failed → back to amd64 (round {env['verify_count'] + 1})")
+        # arm 复验失败：回 amd64 修，要求架构中立。
+        # 这里让 job 保持成功、只把结果写进 GITHUB_OUTPUT：下一轮的修复 job 由
+        # workflow 依据它门控，轮次因此能在 Actions 里显式看到（而不是隐式 dispatch）。
+        emit_output(verify_passed='false')
+        remaining = MAX_VERIFY_ROUNDS - env['verify_count']
+        log_stage('build-fix',
+                  f"⚠️ verify failed (round {env['verify_count']}) → 回到 amd64 再修"
+                  f"（剩余 {remaining} 轮回修预算）")
     else:
         # 默认**不**回帖：回帖是 outward-facing 动作，且落在别人的仓库上，不该是自动
         # 链路的默认行为。失败信号由 job 失败本身 + ci-fix-log 产物承载，已足够定位。

@@ -1,12 +1,17 @@
 name: Fix PR CI failures
 
-# 场景二：PR CI 失败自动修复链路（四阶段）。
+# 场景二：一次修复 = 一个 run，全程串行可读（仿 create_new_images.yml）：
 #
-# 一次修复会散成多条 run（链里有环，只能跑完再 dispatch），而 repository_dispatch
-# 不建立 run 之间的父子关系，Actions 列表里它们看上去互不相干。把 PR 号、阶段名和
-# chain_id 写进标题，就能一眼认出同一条链；chain_id 就是链路起点那个 run 的 id，
-# 可直接跳回起点。起点 run 自己还没有 chain_id，故回退成它自己的 run_id。
-run-name: "ci-fix PR#${{ github.event.client_payload.pr_number || github.event.inputs.pr_number || '?' }} · ${{ github.event.client_payload.phase || 'manual-trigger' }} · chain ${{ github.event.client_payload.chain_id || github.run_id }}"
+#   prepare → analyze → round-1 → [round-2] → [round-3] → code-fix
+#
+# 每一轮修复都是 Actions 里一个显式 job（Round N: fix/verify），复验失败会自动开
+# 下一轮、轮次和预算一眼可见；只有 Monitor 的跨周期重试才是新 run，第几次修复写在
+# run 标题的 attempt 上（Monitor 最多重试 6 次）。
+#
+# 入口：
+#   repository_dispatch  Monitor 轮询发现 ci_failed PR 后触发
+#   workflow_dispatch    人工指定仓库与 PR 号，手动跑一次完整修复
+run-name: "ci-fix PR#${{ github.event.client_payload.pr_number || github.event.inputs.pr_number || '?' }} · attempt ${{ github.event.client_payload.attempt || '1' }} · ${{ github.event.client_payload.source_repo || github.event.inputs.source_repo }}"
 
 on:
   workflow_dispatch:
@@ -18,17 +23,17 @@ on:
       pr_number:
         description: 'PR 编号'
         required: true
+        type: string
       source_platform:
         description: '平台：gitcode / github'
         required: false
         default: 'gitcode'
   repository_dispatch:
-    types: [run-ci-fix-phase]
+    types: [run-ci-fix]
 
 # 同一个 PR 的修复串行执行，避免并发冲突
 # workflow_dispatch 没有 client_payload，需回退到 inputs，否则手动触发会求值成
-# `ci-fix--` 而与其他手动触发挤在同一个组里排队，且与它自身 dispatch 出去的运行
-# （组名按 PR 号）分属两组，串行保护失效。
+# `ci-fix--` 而与其他手动触发挤在同一个组里排队。
 concurrency:
   group: ci-fix-${{ github.event.client_payload.source_repo || github.event.inputs.source_repo }}-${{ github.event.client_payload.pr_number || github.event.inputs.pr_number }}
   cancel-in-progress: false
@@ -57,18 +62,34 @@ env:
 
 jobs:
 
-  # ── 手动触发入口（workflow_dispatch）─────────────────────────────
-  manual-trigger:
-    name: Manual trigger
+  # ── 入口解析：两种入口统一成一份 PR 元数据 ──────────────────────
+  prepare:
+    name: Prepare repair attempt
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
-    if: github.event_name == 'workflow_dispatch'
+    outputs:
+      source_repo: ${{ steps.resolve.outputs.source_repo }}
+      source_platform: ${{ steps.resolve.outputs.source_platform }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      pr_title: ${{ steps.resolve.outputs.pr_title }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      fix_branch: ${{ steps.resolve.outputs.fix_branch }}
+      pr_base_branch: ${{ steps.resolve.outputs.pr_base_branch }}
+      fix_pr_number: ${{ steps.resolve.outputs.fix_pr_number }}
+      attempt: ${{ steps.resolve.outputs.attempt }}
     env:
-      SOURCE_REPO: ${{ github.event.inputs.source_repo }}
-      SOURCE_PLATFORM: ${{ github.event.inputs.source_platform }}
-      PR_NUMBER: ${{ github.event.inputs.pr_number }}
+      SOURCE_REPO: >-
+        ${{ github.event.client_payload.source_repo ||
+            github.event.inputs.source_repo }}
+      SOURCE_PLATFORM: >-
+        ${{ github.event.client_payload.source_platform ||
+            github.event.inputs.source_platform }}
+      PR_NUMBER: >-
+        ${{ github.event.client_payload.pr_number ||
+            github.event.inputs.pr_number }}
+      FIX_PR_NUMBER: ${{ github.event.client_payload.fix_pr_number || '0' }}
+      ATTEMPT: ${{ github.event.client_payload.attempt || '1' }}
       GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-      DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
     steps:
       - name: Check out workflow source
@@ -84,32 +105,28 @@ jobs:
           "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
             -r requirements.txt
 
-      - name: Dispatch ci-log-analysis
+      - name: Resolve PR metadata
+        id: resolve
         run: |
-          "${RUNNER_TEMP}/phase1-venv/bin/python" \
-            scripts/watch/manual_trigger.py
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/watch/resolve_pr.py
 
-  # ── 阶段 1: CI 日志分析 ──────────────────────────────────────────
+  # ── 阶段 1: CI 日志分析 ─────────────────────────────────────────
   ci-log-analysis:
-    name: CI log analysis
+    name: Analyze CI failure
+    needs: prepare
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 60
-    if: |
-      github.event.action == 'run-ci-fix-phase' &&
-      github.event.client_payload.phase == 'ci-log-analysis'
     env:
-      SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
-      SOURCE_PLATFORM: ${{ github.event.client_payload.source_platform || 'github' }}
-      PR_NUMBER: ${{ github.event.client_payload.pr_number }}
-      PR_TITLE: ${{ github.event.client_payload.pr_title }}
-      HEAD_SHA: ${{ github.event.client_payload.head_sha }}
-      FIX_BRANCH: ${{ github.event.client_payload.fix_branch }}
-      PR_BASE_BRANCH: ${{ github.event.client_payload.pr_base_branch }}
+      SOURCE_REPO: ${{ needs.prepare.outputs.source_repo }}
+      SOURCE_PLATFORM: ${{ needs.prepare.outputs.source_platform }}
+      PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+      PR_TITLE: ${{ needs.prepare.outputs.pr_title }}
+      HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+      FIX_BRANCH: ${{ needs.prepare.outputs.fix_branch }}
+      PR_BASE_BRANCH: ${{ needs.prepare.outputs.pr_base_branch }}
       # 重试时为 fix PR 编号，首次为 0；ci-log-analysis 用它从 fix PR 评论中查最新 build URL
-      FIX_PR_NUMBER: ${{ github.event.client_payload.fix_pr_number || '0' }}
-      CHAIN_ID: ${{ github.event.client_payload.chain_id || '' }}
+      FIX_PR_NUMBER: ${{ needs.prepare.outputs.fix_pr_number }}
       GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-      DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
 
     steps:
@@ -119,19 +136,19 @@ jobs:
           fetch-depth: 1
 
       - name: Checkout source repo (GitHub)
-        if: env.SOURCE_PLATFORM != 'gitcode'
+        if: needs.prepare.outputs.source_platform != 'gitcode'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          repository: ${{ github.event.client_payload.source_repo }}
+          repository: ${{ needs.prepare.outputs.source_repo }}
           token: ${{ secrets.DISPATCH_TOKEN }}
           fetch-depth: 1
           path: source-repo
 
       - name: Checkout source repo (GitCode)
-        if: env.SOURCE_PLATFORM == 'gitcode'
+        if: needs.prepare.outputs.source_platform == 'gitcode'
         run: |
           git clone --depth=1 \
-            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.SOURCE_REPO }}.git \
+            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ needs.prepare.outputs.source_repo }}.git \
             source-repo
 
       - name: Set up runner environment
@@ -171,7 +188,7 @@ jobs:
           "${RUNNER_TEMP}/phase1-venv/bin/python" \
             scripts/lib/discover_conventions.py source-repo source-conventions.md
 
-      - name: Run CI 日志分析
+      - name: Run CI log analysis
         env:
           OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
         run: |
@@ -182,320 +199,97 @@ jobs:
         if: failure()
         run: echo "⚠️ ci-log-analysis failed, check workflow logs"
 
-  # ── 阶段 2: 容器构建修复（arm64 首修 → amd64 续修）───────────────
-  build-fix-arm64:
-    name: Build fix (arm64)
-    runs-on: [self-hosted, Linux, ARM64, oe-image-arm64]
-    timeout-minutes: 240
-    if: |
-      github.event.action == 'run-ci-fix-phase' &&
-      github.event.client_payload.phase == 'build-fix' &&
-      github.event.client_payload.arch == 'arm64'
-    env:
-      SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
-      SOURCE_PLATFORM: ${{ github.event.client_payload.source_platform || 'github' }}
-      PR_NUMBER: ${{ github.event.client_payload.pr_number }}
-      PR_TITLE: ${{ github.event.client_payload.pr_title }}
-      PR_HEAD_SHA: ${{ github.event.client_payload.pr_head_sha }}
-      FIX_BRANCH: ${{ github.event.client_payload.fix_branch }}
-      PR_BASE_BRANCH: ${{ github.event.client_payload.pr_base_branch }}
-      ARCH: arm64
-      MODE: build
-      VERIFY_COUNT: ${{ github.event.client_payload.verify_count || '0' }}
-      CHAIN_ID: ${{ github.event.client_payload.chain_id || '' }}
-      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+  # ── 阶段 2/3: 修复轮次（每轮 = arm64 复验收口）──────────────────
+  round-1:
+    name: "Round 1: fix and verify"
+    needs: [prepare, ci-log-analysis]
+    uses: ./.github/workflows/_ci_fix_round.yml
+    with:
+      round: "1"
+      verify_count: "0"
+      include_arm64_fix: true
+      source_repo: ${{ needs.prepare.outputs.source_repo }}
+      source_platform: ${{ needs.prepare.outputs.source_platform }}
+      pr_number: ${{ needs.prepare.outputs.pr_number }}
+      pr_title: ${{ needs.prepare.outputs.pr_title }}
+      head_sha: ${{ needs.prepare.outputs.head_sha }}
+      fix_branch: ${{ needs.prepare.outputs.fix_branch }}
+      pr_base_branch: ${{ needs.prepare.outputs.pr_base_branch }}
+    secrets:
+      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
       DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
 
-    steps:
-      - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          fetch-depth: 1
-
-      - name: Checkout source repo (GitHub)
-        if: env.SOURCE_PLATFORM != 'gitcode'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          repository: ${{ github.event.client_payload.source_repo }}
-          token: ${{ secrets.DISPATCH_TOKEN }}
-          fetch-depth: 0
-          path: source-repo
-
-      - name: Checkout source repo (GitCode)
-        if: env.SOURCE_PLATFORM == 'gitcode'
-        run: |
-          git clone \
-            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.SOURCE_REPO }}.git \
-            source-repo
-
-      - name: Checkout PR head
-        run: |
-          cd source-repo
-          if [ "$SOURCE_PLATFORM" = "gitcode" ]; then
-            git fetch origin refs/merge-requests/${{ env.PR_NUMBER }}/head:pr-head 2>/dev/null || \
-              git fetch origin ${{ env.PR_HEAD_SHA }} 2>/dev/null || true
-            git checkout pr-head 2>/dev/null || git checkout ${{ env.PR_HEAD_SHA }}
-          else
-            git fetch origin pull/${{ env.PR_NUMBER }}/head
-            git checkout FETCH_HEAD
-          fi
-
-      # 容器修复阶段需要 Docker/buildx 与锁定工具链（opencode），由本仓既有的
-      # phase1-setup 统一准备：创建 phase1-venv、落地锁定工具、执行原生 Runner 自检。
-      - name: Set up toolchain and runner environment
-        id: tools
-        uses: ./.github/actions/phase1-setup
-        with:
-          arch: aarch64
-          preflight: "true"
-
-      - name: Install dependencies
-        run: |
-          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
-            -r requirements.txt
-
-      - name: Setup Claude Code account credentials
-        if: env.AI_RUNNER == 'claude-code-account'
-        env:
-          CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
-        run: |
-          mkdir -p ~/.claude
-          echo "$CLAUDE_CREDENTIALS_JSON" > ~/.claude/.credentials.json
-          chmod 600 ~/.claude/.credentials.json
-
-      - name: Install Claude Code CLI (non-opencode backends)
-        if: env.AI_RUNNER != 'opencode'
-        run: |
-          if ! command -v npm >/dev/null 2>&1; then
-            echo "::error::AI_RUNNER=$AI_RUNNER 需要 Claude Code CLI，但未找到 npm。请在该 runner 上先安装 Node.js：sudo dnf install -y nodejs npm"
-            exit 1
-          fi
-          npm install -g @anthropic-ai/claude-code
-          claude --version
-
-      - name: Load conventions
-        run: |
-          "${RUNNER_TEMP}/phase1-venv/bin/python" \
-            scripts/lib/discover_conventions.py source-repo source-conventions.md
-
-      - name: Run 容器构建修复
-        env:
-          OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
-        run: |
-          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/stages/build-fix.py
-
-      - name: Mark failed
-        if: failure()
-        run: echo "⚠️ build-fix-arm64 (${{ env.ARCH }}) failed, check workflow logs"
-
-  build-fix-amd64:
-    name: Build fix (amd64)
-    # 注册 runner 时 x86_64 的自动标签是 X64（不是 AMD64），写错会一直 pending 到超时
-    runs-on: [self-hosted, Linux, X64, oe-image-x86]
-    timeout-minutes: 240
-    if: |
-      github.event.action == 'run-ci-fix-phase' &&
-      github.event.client_payload.phase == 'build-fix' &&
-      github.event.client_payload.arch == 'amd64'
-    env:
-      SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
-      SOURCE_PLATFORM: ${{ github.event.client_payload.source_platform || 'github' }}
-      PR_NUMBER: ${{ github.event.client_payload.pr_number }}
-      PR_TITLE: ${{ github.event.client_payload.pr_title }}
-      PR_HEAD_SHA: ${{ github.event.client_payload.pr_head_sha }}
-      FIX_BRANCH: ${{ github.event.client_payload.fix_branch }}
-      PR_BASE_BRANCH: ${{ github.event.client_payload.pr_base_branch }}
-      ARCH: amd64
-      MODE: build
-      VERIFY_COUNT: ${{ github.event.client_payload.verify_count || '0' }}
-      CHAIN_ID: ${{ github.event.client_payload.chain_id || '' }}
-      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+  # 第 1 轮 arm64 复验失败 → 回修第 2 轮（预算 MAX_VERIFY_ROUNDS=2，共 3 轮）
+  round-2:
+    name: "Round 2: fix and verify"
+    needs: [prepare, ci-log-analysis, round-1]
+    if: ${{ needs.round-1.outputs.verify_passed == 'false' }}
+    uses: ./.github/workflows/_ci_fix_round.yml
+    with:
+      round: "2"
+      verify_count: "1"
+      include_arm64_fix: false
+      source_repo: ${{ needs.prepare.outputs.source_repo }}
+      source_platform: ${{ needs.prepare.outputs.source_platform }}
+      pr_number: ${{ needs.prepare.outputs.pr_number }}
+      pr_title: ${{ needs.prepare.outputs.pr_title }}
+      head_sha: ${{ needs.prepare.outputs.head_sha }}
+      fix_branch: ${{ needs.prepare.outputs.fix_branch }}
+      pr_base_branch: ${{ needs.prepare.outputs.pr_base_branch }}
+    secrets:
+      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
       DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
 
-    steps:
-      - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          fetch-depth: 1
-
-      - name: Checkout source repo (GitHub)
-        if: env.SOURCE_PLATFORM != 'gitcode'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          repository: ${{ github.event.client_payload.source_repo }}
-          token: ${{ secrets.DISPATCH_TOKEN }}
-          fetch-depth: 0
-          path: source-repo
-
-      - name: Checkout source repo (GitCode)
-        if: env.SOURCE_PLATFORM == 'gitcode'
-        run: |
-          git clone \
-            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.SOURCE_REPO }}.git \
-            source-repo
-
-      - name: Checkout PR head
-        run: |
-          cd source-repo
-          if [ "$SOURCE_PLATFORM" = "gitcode" ]; then
-            git fetch origin refs/merge-requests/${{ env.PR_NUMBER }}/head:pr-head 2>/dev/null || \
-              git fetch origin ${{ env.PR_HEAD_SHA }} 2>/dev/null || true
-            git checkout pr-head 2>/dev/null || git checkout ${{ env.PR_HEAD_SHA }}
-          else
-            git fetch origin pull/${{ env.PR_NUMBER }}/head
-            git checkout FETCH_HEAD
-          fi
-
-      - name: Set up toolchain and runner environment
-        id: tools
-        uses: ./.github/actions/phase1-setup
-        with:
-          arch: x86_64
-          preflight: "true"
-
-      - name: Install dependencies
-        run: |
-          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
-            -r requirements.txt
-
-      - name: Setup Claude Code account credentials
-        if: env.AI_RUNNER == 'claude-code-account'
-        env:
-          CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
-        run: |
-          mkdir -p ~/.claude
-          echo "$CLAUDE_CREDENTIALS_JSON" > ~/.claude/.credentials.json
-          chmod 600 ~/.claude/.credentials.json
-
-      - name: Install Claude Code CLI (non-opencode backends)
-        if: env.AI_RUNNER != 'opencode'
-        run: |
-          if ! command -v npm >/dev/null 2>&1; then
-            echo "::error::AI_RUNNER=$AI_RUNNER 需要 Claude Code CLI，但未找到 npm。请在该 runner 上先安装 Node.js：sudo dnf install -y nodejs npm"
-            exit 1
-          fi
-          npm install -g @anthropic-ai/claude-code
-          claude --version
-
-      - name: Load conventions
-        run: |
-          "${RUNNER_TEMP}/phase1-venv/bin/python" \
-            scripts/lib/discover_conventions.py source-repo source-conventions.md
-
-      - name: Run 容器构建修复
-        env:
-          OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
-        run: |
-          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/stages/build-fix.py
-
-      - name: Mark failed
-        if: failure()
-        run: echo "⚠️ build-fix-amd64 (${{ env.ARCH }}) failed, check workflow logs"
-
-  # ── 阶段 3: arm64 复验（确定性 docker build，无 AI）──────────────
-  verify-arm:
-    name: Verify arm64 build
-    runs-on: [self-hosted, Linux, ARM64, oe-image-arm64]
-    # 这是唯一一次权威的「从零 docker build」，且无 AI 可退让，因此它才是重型镜像
-    # （如 milvus：源码编译 conan 依赖 + C++ 核心）的真实瓶颈。120 分钟对小时级
-    # 冷构建必然不够——那种情况下 job 会被砍在构建中途，而 derived Dockerfile 本身
-    # 没问题，属于「预算不足」而非「修复失败」，白白浪费前面的 AI 攻坚。
-    timeout-minutes: 300
-    if: |
-      github.event.action == 'run-ci-fix-phase' &&
-      github.event.client_payload.phase == 'verify-arm'
-    env:
-      SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
-      SOURCE_PLATFORM: ${{ github.event.client_payload.source_platform || 'github' }}
-      PR_NUMBER: ${{ github.event.client_payload.pr_number }}
-      PR_TITLE: ${{ github.event.client_payload.pr_title }}
-      PR_HEAD_SHA: ${{ github.event.client_payload.pr_head_sha }}
-      FIX_BRANCH: ${{ github.event.client_payload.fix_branch }}
-      PR_BASE_BRANCH: ${{ github.event.client_payload.pr_base_branch }}
-      ARCH: arm64
-      MODE: verify
-      VERIFY_COUNT: ${{ github.event.client_payload.verify_count || '0' }}
-      CHAIN_ID: ${{ github.event.client_payload.chain_id || '' }}
-      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+  round-3:
+    name: "Round 3: fix and verify"
+    needs: [prepare, ci-log-analysis, round-2]
+    if: ${{ needs.round-2.outputs.verify_passed == 'false' }}
+    uses: ./.github/workflows/_ci_fix_round.yml
+    with:
+      round: "3"
+      verify_count: "2"
+      include_arm64_fix: false
+      source_repo: ${{ needs.prepare.outputs.source_repo }}
+      source_platform: ${{ needs.prepare.outputs.source_platform }}
+      pr_number: ${{ needs.prepare.outputs.pr_number }}
+      pr_title: ${{ needs.prepare.outputs.pr_title }}
+      head_sha: ${{ needs.prepare.outputs.head_sha }}
+      fix_branch: ${{ needs.prepare.outputs.fix_branch }}
+      pr_base_branch: ${{ needs.prepare.outputs.pr_base_branch }}
+    secrets:
+      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
       DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
 
-    steps:
-      - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          fetch-depth: 1
-
-      - name: Checkout source repo (GitHub)
-        if: env.SOURCE_PLATFORM != 'gitcode'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          repository: ${{ github.event.client_payload.source_repo }}
-          token: ${{ secrets.DISPATCH_TOKEN }}
-          fetch-depth: 0
-          path: source-repo
-
-      - name: Checkout source repo (GitCode)
-        if: env.SOURCE_PLATFORM == 'gitcode'
-        run: |
-          git clone \
-            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.SOURCE_REPO }}.git \
-            source-repo
-
-      - name: Checkout PR head
-        run: |
-          cd source-repo
-          if [ "$SOURCE_PLATFORM" = "gitcode" ]; then
-            git fetch origin refs/merge-requests/${{ env.PR_NUMBER }}/head:pr-head 2>/dev/null || \
-              git fetch origin ${{ env.PR_HEAD_SHA }} 2>/dev/null || true
-            git checkout pr-head 2>/dev/null || git checkout ${{ env.PR_HEAD_SHA }}
-          else
-            git fetch origin pull/${{ env.PR_NUMBER }}/head
-            git checkout FETCH_HEAD
-          fi
-
-      - name: Set up toolchain and runner environment
-        id: tools
-        uses: ./.github/actions/phase1-setup
-        with:
-          arch: aarch64
-          preflight: "true"
-
-      - name: Install dependencies
-        run: |
-          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
-            -r requirements.txt
-
-      - name: Run arm64 复验
-        env:
-          OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
-        run: |
-          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/stages/build-fix.py
-
-      - name: Mark failed
-        if: failure()
-        run: echo "⚠️ verify-arm failed, check workflow logs"
-
-  # ── 阶段 4: 应用修复 ────────────────────────────────────────────
+  # ── 阶段 4: 落回源码并提 Fix PR ─────────────────────────────────
   code-fix:
     name: Apply fix and open PR
+    # 任意一轮的 arm64 复验通过即可落回；三轮都失败/被跳过时不进入本阶段
+    needs: [prepare, ci-log-analysis, round-1, round-2, round-3]
+    if: >-
+      ${{ always() &&
+          (needs.round-1.outputs.verify_passed == 'true' ||
+           needs.round-2.outputs.verify_passed == 'true' ||
+           needs.round-3.outputs.verify_passed == 'true') }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
-    if: |
-      github.event.action == 'run-ci-fix-phase' &&
-      github.event.client_payload.phase == 'code-fix'
     env:
-      SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
-      SOURCE_PLATFORM: ${{ github.event.client_payload.source_platform || 'github' }}
-      PR_NUMBER: ${{ github.event.client_payload.pr_number }}
-      PR_TITLE: ${{ github.event.client_payload.pr_title }}
-      PR_HEAD_SHA: ${{ github.event.client_payload.pr_head_sha }}
-      FIX_BRANCH: ${{ github.event.client_payload.fix_branch }}
-      PR_BASE_BRANCH: ${{ github.event.client_payload.pr_base_branch }}
+      SOURCE_REPO: ${{ needs.prepare.outputs.source_repo }}
+      SOURCE_PLATFORM: ${{ needs.prepare.outputs.source_platform }}
+      PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+      PR_TITLE: ${{ needs.prepare.outputs.pr_title }}
+      PR_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+      FIX_BRANCH: ${{ needs.prepare.outputs.fix_branch }}
+      PR_BASE_BRANCH: ${{ needs.prepare.outputs.pr_base_branch }}
       GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-      DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
 
     steps:
@@ -518,7 +312,7 @@ jobs:
       # `owner/repo` 拼接，会拼出 `gitcode.com/https://gitcode.com/m0_....git`
       # 和 head `https::fix/4723`。与其要求配置方记住格式，不如消费侧先归一。
       - name: Normalize GITCODE_FORK_REPO
-        if: env.SOURCE_PLATFORM == 'gitcode'
+        if: needs.prepare.outputs.source_platform == 'gitcode'
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" - <<'EOF' >> "$GITHUB_ENV"
           import os, sys
@@ -528,19 +322,19 @@ jobs:
           EOF
 
       - name: Checkout source repo (GitHub)
-        if: env.SOURCE_PLATFORM != 'gitcode'
+        if: needs.prepare.outputs.source_platform != 'gitcode'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          repository: ${{ github.event.client_payload.source_repo }}
+          repository: ${{ needs.prepare.outputs.source_repo }}
           token: ${{ secrets.DISPATCH_TOKEN }}
           fetch-depth: 0
           path: source-repo
 
       - name: Checkout source repo (GitCode)
-        if: env.SOURCE_PLATFORM == 'gitcode'
+        if: needs.prepare.outputs.source_platform == 'gitcode'
         run: |
           git clone \
-            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.SOURCE_REPO }}.git \
+            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ needs.prepare.outputs.source_repo }}.git \
             source-repo
 
       - name: Setup fix branch
@@ -551,8 +345,8 @@ jobs:
 
           if [ "$SOURCE_PLATFORM" = "gitcode" ]; then
             # GitCode: 直接 fetch PR head ref
-            git fetch origin refs/merge-requests/${{ env.PR_NUMBER }}/head:pr-head 2>/dev/null || \
-              git fetch origin ${{ env.PR_HEAD_SHA }} 2>/dev/null || true
+            git fetch origin refs/merge-requests/${{ needs.prepare.outputs.pr_number }}/head:pr-head 2>/dev/null || \
+              git fetch origin ${{ needs.prepare.outputs.head_sha }} 2>/dev/null || true
 
             # fix 分支推送到 fork，需要用 fork remote 检查；若未配置 fork 则退回 origin
             FORK_REPO="${GITCODE_FORK_REPO:-}"
@@ -564,19 +358,19 @@ jobs:
               FIX_BRANCH_REMOTE="origin"
             fi
           else
-            git fetch origin pull/${{ env.PR_NUMBER }}/head
+            git fetch origin pull/${{ needs.prepare.outputs.pr_number }}/head
             FIX_BRANCH_REMOTE="origin"
           fi
 
-          if git ls-remote --exit-code --heads $FIX_BRANCH_REMOTE ${{ env.FIX_BRANCH }}; then
-            git fetch $FIX_BRANCH_REMOTE ${{ env.FIX_BRANCH }}
-            git checkout -b ${{ env.FIX_BRANCH }} $FIX_BRANCH_REMOTE/${{ env.FIX_BRANCH }}
+          if git ls-remote --exit-code --heads $FIX_BRANCH_REMOTE ${{ needs.prepare.outputs.fix_branch }}; then
+            git fetch $FIX_BRANCH_REMOTE ${{ needs.prepare.outputs.fix_branch }}
+            git checkout -b ${{ needs.prepare.outputs.fix_branch }} $FIX_BRANCH_REMOTE/${{ needs.prepare.outputs.fix_branch }}
           else
-            git checkout ${{ env.PR_HEAD_SHA }} 2>/dev/null || git checkout FETCH_HEAD
-            git checkout -b ${{ env.FIX_BRANCH }}
+            git checkout ${{ needs.prepare.outputs.head_sha }} 2>/dev/null || git checkout FETCH_HEAD
+            git checkout -b ${{ needs.prepare.outputs.fix_branch }}
           fi
 
-      - name: Run 应用修复
+      - name: Run code fix
         id: code_fix
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/stages/code-fix.py
@@ -609,9 +403,9 @@ jobs:
               https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${PUSH_REPO}.git
           else
             git remote set-url origin \
-              https://x-access-token:${{ secrets.DISPATCH_TOKEN }}@github.com/${{ env.SOURCE_REPO }}.git
+              https://x-access-token:${{ secrets.DISPATCH_TOKEN }}@github.com/${{ needs.prepare.outputs.source_repo }}.git
           fi
-          git push origin "+refs/heads/${{ env.FIX_BRANCH }}:refs/heads/${{ env.FIX_BRANCH }}"
+          git push origin "+refs/heads/${{ needs.prepare.outputs.fix_branch }}:refs/heads/${{ needs.prepare.outputs.fix_branch }}"
 
       - name: Create fix PR if not exists
         if: steps.code_fix.outputs.no_changes != 'true'
@@ -648,8 +442,8 @@ jobs:
           EOF
           else
             PR_EXISTS=$(gh pr list \
-              --repo ${{ env.SOURCE_REPO }} \
-              --head ${{ env.FIX_BRANCH }} \
+              --repo ${{ needs.prepare.outputs.source_repo }} \
+              --head ${{ needs.prepare.outputs.fix_branch }} \
               --state open \
               --json number \
               -q '.[0].number' 2>/dev/null || echo "")

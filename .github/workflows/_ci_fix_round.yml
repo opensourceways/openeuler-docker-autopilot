@@ -1,0 +1,372 @@
+name: CI fix - one repair round
+
+# 场景二的单轮修复（仿 _create_new_image_rounds.yml）：
+#   第 1 轮  arm64 首修 → amd64 续修 → arm64 确定性复验
+#   第 2/3 轮 amd64 回修（在 arm64 冻结版之上） → arm64 复验
+#
+# 复验失败**不让 job 失败**：结果写进 verify_passed，由调用方决定是否再开一轮。
+# 这样"修了几次"在 Actions 的 job 列表里直接可见（Round 1 / Round 2 / Round 3），
+# 而不是靠隐式 dispatch 把链路散到看不见的多个 run 里。
+
+on:
+  workflow_call:
+    inputs:
+      round:
+        description: "Repair round number"
+        required: true
+        type: string
+      verify_count:
+        description: >-
+          Repairs already spent, i.e. the verify_count handed to build-fix.py.
+          Round 1 exercises the initial fix; later rounds re-fix on top of the
+          frozen arm64 output.
+        required: true
+        type: string
+      include_arm64_fix:
+        description: "Whether this round starts with the arm64 first fix"
+        required: true
+        type: boolean
+      source_repo:
+        description: "Target repository (owner/repo)"
+        required: true
+        type: string
+      source_platform:
+        description: "gitcode / github"
+        required: true
+        type: string
+      pr_number:
+        description: "PR number"
+        required: true
+        type: string
+      pr_title:
+        description: "PR title"
+        required: true
+        type: string
+      head_sha:
+        description: "PR head SHA"
+        required: true
+        type: string
+      fix_branch:
+        description: "Fix branch name"
+        required: true
+        type: string
+      pr_base_branch:
+        description: "PR base branch"
+        required: true
+        type: string
+    secrets:
+      GITCODE_TOKEN:
+        required: false
+      DISPATCH_TOKEN:
+        required: false
+      AI_API_KEY:
+        required: false
+      DEEPSEEK_API_KEY:
+        required: false
+      CLAUDE_CREDENTIALS_JSON:
+        required: false
+    outputs:
+      verify_passed:
+        description: "true when the final Dockerfile builds from scratch on arm64"
+        value: ${{ jobs.verify-arm.outputs.verify_passed }}
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+  AI_RUNNER: ${{ vars.AI_RUNNER || 'opencode' }}
+  AI_MODEL: ${{ vars.AI_MODEL || 'deepseek/deepseek-v4-pro' }}
+  AI_TIMEOUT_MS: ${{ vars.AI_TIMEOUT_MS || '1800000' }}
+  OPENAI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
+  DEEPSEEK_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
+  OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || '' }}
+
+jobs:
+
+  # ── arm64 首修（仅第 1 轮）─────────────────────────────────────
+  arm64-fix:
+    name: "Round ${{ inputs.round }}: fix (aarch64)"
+    if: ${{ inputs.include_arm64_fix }}
+    runs-on: [self-hosted, Linux, ARM64, oe-image-arm64]
+    timeout-minutes: 240
+    env:
+      SOURCE_REPO: ${{ inputs.source_repo }}
+      SOURCE_PLATFORM: ${{ inputs.source_platform }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+      PR_TITLE: ${{ inputs.pr_title }}
+      PR_HEAD_SHA: ${{ inputs.head_sha }}
+      FIX_BRANCH: ${{ inputs.fix_branch }}
+      PR_BASE_BRANCH: ${{ inputs.pr_base_branch }}
+      ARCH: arm64
+      MODE: build
+      VERIFY_COUNT: ${{ inputs.verify_count }}
+      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
+
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+
+      - name: Checkout source repo (GitHub)
+        if: inputs.source_platform != 'gitcode'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ inputs.source_repo }}
+          token: ${{ secrets.DISPATCH_TOKEN }}
+          fetch-depth: 0
+          path: source-repo
+
+      - name: Checkout source repo (GitCode)
+        if: inputs.source_platform == 'gitcode'
+        run: |
+          git clone \
+            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ inputs.source_repo }}.git \
+            source-repo
+
+      - name: Checkout PR head
+        run: |
+          cd source-repo
+          if [ "$SOURCE_PLATFORM" = "gitcode" ]; then
+            git fetch origin refs/merge-requests/${{ inputs.pr_number }}/head:pr-head 2>/dev/null || \
+              git fetch origin ${{ inputs.head_sha }} 2>/dev/null || true
+            git checkout pr-head 2>/dev/null || git checkout ${{ inputs.head_sha }}
+          else
+            git fetch origin pull/${{ inputs.pr_number }}/head
+            git checkout FETCH_HEAD
+          fi
+
+      - name: Set up toolchain and runner environment
+        id: tools
+        uses: ./.github/actions/phase1-setup
+        with:
+          arch: aarch64
+          preflight: "true"
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
+      - name: Setup Claude Code account credentials
+        if: env.AI_RUNNER == 'claude-code-account'
+        env:
+          CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
+        run: |
+          mkdir -p ~/.claude
+          echo "$CLAUDE_CREDENTIALS_JSON" > ~/.claude/.credentials.json
+          chmod 600 ~/.claude/.credentials.json
+
+      - name: Install Claude Code CLI (non-opencode backends)
+        if: env.AI_RUNNER != 'opencode'
+        run: |
+          if ! command -v npm >/dev/null 2>&1; then
+            echo "::error::AI_RUNNER=$AI_RUNNER 需要 Claude Code CLI，但未找到 npm。请在该 runner 上先安装 Node.js：sudo dnf install -y nodejs npm"
+            exit 1
+          fi
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+
+      - name: Load conventions
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" \
+            scripts/lib/discover_conventions.py source-repo source-conventions.md
+
+      - name: Run container build fix (aarch64)
+        env:
+          OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/stages/build-fix.py
+
+      - name: Mark failed
+        if: failure()
+        run: echo "⚠️ round ${{ inputs.round }} arm64 fix failed, check workflow logs"
+
+  # ── amd64 续修／回修（每轮都跑）────────────────────────────────
+  # 第 1 轮在 arm64 冻结版之上继续修；第 2/3 轮在上一轮交付、但 arm64 复验失败的
+  # 版本上回修，修复必须架构中立或加架构守卫。
+  amd64-fix:
+    name: "Round ${{ inputs.round }}: fix (x86_64)"
+    needs: [arm64-fix]
+    if: >-
+      ${{ always() &&
+          (needs.arm64-fix.result == 'success' ||
+           needs.arm64-fix.result == 'skipped') }}
+    runs-on: [self-hosted, Linux, X64, oe-image-x86]
+    timeout-minutes: 240
+    env:
+      SOURCE_REPO: ${{ inputs.source_repo }}
+      SOURCE_PLATFORM: ${{ inputs.source_platform }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+      PR_TITLE: ${{ inputs.pr_title }}
+      PR_HEAD_SHA: ${{ inputs.head_sha }}
+      FIX_BRANCH: ${{ inputs.fix_branch }}
+      PR_BASE_BRANCH: ${{ inputs.pr_base_branch }}
+      ARCH: amd64
+      MODE: build
+      VERIFY_COUNT: ${{ inputs.verify_count }}
+      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
+
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+
+      - name: Checkout source repo (GitHub)
+        if: inputs.source_platform != 'gitcode'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ inputs.source_repo }}
+          token: ${{ secrets.DISPATCH_TOKEN }}
+          fetch-depth: 0
+          path: source-repo
+
+      - name: Checkout source repo (GitCode)
+        if: inputs.source_platform == 'gitcode'
+        run: |
+          git clone \
+            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ inputs.source_repo }}.git \
+            source-repo
+
+      - name: Checkout PR head
+        run: |
+          cd source-repo
+          if [ "$SOURCE_PLATFORM" = "gitcode" ]; then
+            git fetch origin refs/merge-requests/${{ inputs.pr_number }}/head:pr-head 2>/dev/null || \
+              git fetch origin ${{ inputs.head_sha }} 2>/dev/null || true
+            git checkout pr-head 2>/dev/null || git checkout ${{ inputs.head_sha }}
+          else
+            git fetch origin pull/${{ inputs.pr_number }}/head
+            git checkout FETCH_HEAD
+          fi
+
+      - name: Set up toolchain and runner environment
+        id: tools
+        uses: ./.github/actions/phase1-setup
+        with:
+          arch: x86_64
+          preflight: "true"
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
+      - name: Setup Claude Code account credentials
+        if: env.AI_RUNNER == 'claude-code-account'
+        env:
+          CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
+        run: |
+          mkdir -p ~/.claude
+          echo "$CLAUDE_CREDENTIALS_JSON" > ~/.claude/.credentials.json
+          chmod 600 ~/.claude/.credentials.json
+
+      - name: Install Claude Code CLI (non-opencode backends)
+        if: env.AI_RUNNER != 'opencode'
+        run: |
+          if ! command -v npm >/dev/null 2>&1; then
+            echo "::error::AI_RUNNER=$AI_RUNNER 需要 Claude Code CLI，但未找到 npm。请在该 runner 上先安装 Node.js：sudo dnf install -y nodejs npm"
+            exit 1
+          fi
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+
+      - name: Load conventions
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" \
+            scripts/lib/discover_conventions.py source-repo source-conventions.md
+
+      - name: Run container build fix (x86_64)
+        env:
+          OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/stages/build-fix.py
+
+      - name: Mark failed
+        if: failure()
+        run: echo "⚠️ round ${{ inputs.round }} amd64 fix failed, check workflow logs"
+
+  # ── arm64 复验（确定性 docker build，无 AI）─────────────────────
+  # 本轮唯一的权威判据，也是每一轮的收口：通过 → code-fix；失败且仍有预算 →
+  # verify_passed=false，调用方据此开下一轮；预算用尽 → job 失败终止链路。
+  verify-arm:
+    name: "Round ${{ inputs.round }}: verify (aarch64)"
+    needs: [amd64-fix]
+    if: ${{ always() && needs.amd64-fix.result == 'success' }}
+    runs-on: [self-hosted, Linux, ARM64, oe-image-arm64]
+    timeout-minutes: 300
+    outputs:
+      verify_passed: ${{ steps.verify.outputs.verify_passed }}
+    env:
+      SOURCE_REPO: ${{ inputs.source_repo }}
+      SOURCE_PLATFORM: ${{ inputs.source_platform }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+      PR_TITLE: ${{ inputs.pr_title }}
+      PR_HEAD_SHA: ${{ inputs.head_sha }}
+      FIX_BRANCH: ${{ inputs.fix_branch }}
+      PR_BASE_BRANCH: ${{ inputs.pr_base_branch }}
+      ARCH: arm64
+      MODE: verify
+      VERIFY_COUNT: ${{ inputs.verify_count }}
+      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
+
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+
+      - name: Checkout source repo (GitHub)
+        if: inputs.source_platform != 'gitcode'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ inputs.source_repo }}
+          token: ${{ secrets.DISPATCH_TOKEN }}
+          fetch-depth: 0
+          path: source-repo
+
+      - name: Checkout source repo (GitCode)
+        if: inputs.source_platform == 'gitcode'
+        run: |
+          git clone \
+            https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ inputs.source_repo }}.git \
+            source-repo
+
+      - name: Checkout PR head
+        run: |
+          cd source-repo
+          if [ "$SOURCE_PLATFORM" = "gitcode" ]; then
+            git fetch origin refs/merge-requests/${{ inputs.pr_number }}/head:pr-head 2>/dev/null || \
+              git fetch origin ${{ inputs.head_sha }} 2>/dev/null || true
+            git checkout pr-head 2>/dev/null || git checkout ${{ inputs.head_sha }}
+          else
+            git fetch origin pull/${{ inputs.pr_number }}/head
+            git checkout FETCH_HEAD
+          fi
+
+      - name: Set up toolchain and runner environment
+        id: tools
+        uses: ./.github/actions/phase1-setup
+        with:
+          arch: aarch64
+          preflight: "true"
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
+      - name: Run arm64 verification build
+        id: verify
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/stages/build-fix.py
+
+      - name: Mark failed
+        if: failure()
+        run: echo "⚠️ round ${{ inputs.round }} arm64 verify failed, check workflow logs"

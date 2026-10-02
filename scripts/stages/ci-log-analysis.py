@@ -3,8 +3,8 @@
 Stage 1: CI 日志分析
 
 输入: PR 信息 + CI 失败日志
-输出: $HOME/tech-design-data/ci-fix/<pr_number>/ci-analysis.md
-副作用: 评论 PR，dispatch code-fix 阶段
+输出: ci-fix-log 分支的 {pr_number}/ci-analysis.md（同时在本 run 内落一份工作副本）
+副作用: 无——后续阶段由 ci_fix_pipeline.yml 的 job 依赖推进
 """
 
 import os
@@ -17,7 +17,7 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.lib.ai_runner import run_agent
-from scripts.lib.stage_common import agent_prompt_file, log_stage, get_conventions_file, dispatch_phase
+from scripts.lib.stage_common import agent_prompt_file, log_stage, get_conventions_file
 from scripts.lib.ci_api import get_api
 from scripts.lib import ci_data
 
@@ -47,28 +47,8 @@ def parse_env() -> dict:
         'pr_base_branch': os.getenv('PR_BASE_BRANCH', 'main'),
         # 重试时为 fix PR 编号（CI 评论在 fix PR 上），首次为 0（评论在原始 PR 上）
         'fix_pr_number': int(os.getenv('FIX_PR_NUMBER', '0')),
-        # 链路标识，由链路起点 run 决定；空串表示本 run 就是起点（dispatch_phase 填）
-        'chain_id': os.getenv('CHAIN_ID', ''),
         'token': token,
-        'dispatch_token': os.getenv('GITHUB_TOKEN', ''),
     }
-
-
-def dispatch_build_fix(env: dict):
-    """推进到 build-fix 阶段（arm64 首修）。"""
-    dispatch_phase({
-        'phase': 'build-fix',
-        'arch': 'arm64',
-        'source_repo': env['source_repo'],
-        'source_platform': env['source_platform'],
-        'pr_number': env['pr_number'],
-        'pr_title': env['pr_title'],
-        'pr_head_sha': env['head_sha'],
-        'fix_branch': env['fix_branch'],
-        'pr_base_branch': env['pr_base_branch'],
-        # 原样透传链路标识
-        'chain_id': env['chain_id'],
-    })
 
 
 def main():
@@ -164,8 +144,8 @@ def main():
     except Exception as e:
         log_stage('ci-log-analysis', f'⚠️ ci-data write failed: {e}')
 
-    # 自动推进到 build-fix 阶段（analysis 已在 ci-data 分支，作为 build agent 的提示）
-    dispatch_build_fix(env)
+    # analysis 已落在 ci-fix-log 分支，作为后续 build agent 的提示；
+    # 阶段推进由 ci_fix_pipeline.yml 的 job 依赖负责
     log_stage('ci-log-analysis', '✅ done')
 
 

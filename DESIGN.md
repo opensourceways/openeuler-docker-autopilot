@@ -291,16 +291,23 @@ GitCode Issue 创建 [new-image 标签]
 ```
 目标仓 PR 获得 ci_failed 标签
   → monitor_ci_failed_prs.yml（cron 轮询 watchlist）→ 跳过规则过滤
-    → dispatch ci_fix_pipeline.yml（repository_dispatch，phase=ci-log-analysis）
-      → 阶段 1 诊断：PR diff + 失败架构的 Jenkins 日志 + 知识库 → ci-analysis.md（写入 ci-fix-log 分支）
-        → 阶段 2 构建修复（arm64 首修 → amd64 续修）：
-             起容器 → 逐条执行 Dockerfile 指令 → 失败即诊断并重试该条
-             → 跑通后反推 Dockerfile → docker build 从零验证
-          → 阶段 3 verify-arm：最终 Dockerfile 在 arm64 确定性复验（失败回 amd64 再修，最多 2 轮）
-            → 阶段 4 code-fix：最终 Dockerfile 作为最小 diff 落回源码 → commit → push → Fix PR
-              → Fix PR CI 通过 → 评论原始 PR 通知 reviewer 合并 + 写入知识库
-              → Fix PR CI 再失败 → 重新进入阶段 1（最多 6 次，超限关闭 Fix PR 并通知人工）
+    → dispatch ci_fix_pipeline.yml（repository_dispatch: run-ci-fix，attempt=N）
+      → prepare：两种入口统一解析 PR 元数据（标题 / head SHA / base 分支现查源仓库）
+        → 分析：PR diff + 失败架构的 Jenkins 日志 + 知识库 → ci-analysis.md（写入 ci-fix-log 分支）
+          → Round 1（_ci_fix_round.yml）：arm64 首修 → amd64 续修 → arm64 确定性复验
+            → 复验失败且仍有预算 → Round 2：amd64 回修（架构中立）→ arm64 复验
+              → 仍失败 → Round 3：同上（预算用尽即终止，run 标红并保留证据）
+                → 任一轮复验通过 → code-fix：最终 Dockerfile 作为最小 diff 落回源码
+                     → commit → push → Fix PR
+                       → Fix PR CI 通过 → 评论原始 PR 通知 reviewer 合并 + 写入知识库
+                       → Fix PR CI 再失败 → Monitor 重新 dispatch（attempt=N+1，最多 6 次，
+                          超限关闭 Fix PR 并通知人工）
 ```
+
+**一次修复 = 一个 run。** 阶段推进全部由 `needs:` 与 `verify_passed` 输出承担，
+轮次是显式 job（`Round 1/2/3: fix and verify`），修复了几次、还剩几轮预算在
+Actions 的 job 列表里直接可读；只有 Monitor 的跨周期重试是新 run，第几次写在 run
+标题的 `attempt` 上。
 
 **与其它场景的差异：**
 
@@ -848,7 +855,8 @@ openeuler-docker-images-workflow/
 │   │   ├── monitor_new_image_issues.yml # 场景一：扫描 GitCode issue 自动触发
 │   │   ├── _create_new_image_rounds.yml # 场景一：单轮验证-修复-决策组件
 │   │   ├── monitor_ci_failed_prs.yml  # 场景二：ci_failed PR 轮询（cron，间隔由 watchlist 控制）
-│   │   ├── ci_fix_pipeline.yml        # 场景二：四阶段修复链路（分析 → build-fix → 复验 → 落回）
+│   │   ├── ci_fix_pipeline.yml        # 场景二：修复主编排（prepare → 分析 → 3 轮修复 → 落回）
+│   │   ├── _ci_fix_round.yml          # 场景二：单轮修复组件（arm64 首修 → amd64 续修/回修 → arm64 复验）
 │   │   ├── sync_ci_poll_interval.yml  # 场景二：watchlist 变更时同步 cron
 │   │   ├── upgrade_upstream_versions.yml # 场景三：应用版本更新（anitya webhook 或 workflow_dispatch 触发）
 │   │   ├── upgrade_openeuler_versions.yml # 场景四：openEuler 大版本升级
@@ -873,7 +881,7 @@ openeuler-docker-images-workflow/
 │   │   ├── gate_diff.py               # "只能新增" 差分检查
 │   │   └── compose_pr.py              # PR 内容组装
 │   ├── stages/                        # 场景二：ci-log-analysis / build-fix / code-fix
-│   ├── watch/                         # 场景二：PR 轮询、手动触发、cron 同步
+│   ├── watch/                         # 场景二：PR 轮询、入口解析（resolve_pr）、cron 同步
 │   ├── lib/
 │   │   ├── generation_pipeline.py     # Creator/QA 生成期流水线
 │   │   ├── agent_runtime.py           # Agent 进程与结构化契约（场景一/三/四）
@@ -925,7 +933,7 @@ openeuler-docker-images-workflow/
 
 **约束**：
 - 同一 workflow 内 job 显示名必须唯一（round 编号 + 动作组合），`Round N:` 前缀只用于验证轮，修复 job 不得复用该前缀。
-- **job id 与显示名同构**：验证轮 `round-{n}`、修复 `fix-{n}`（场景 3/4 的 `verify`/`fix-r1` 与场景 1 的 `round1` 均已统一到该标准），其他 job 用 kebab-case。`needs.round-1` / `needs.fix-1` 引用随 id 同步。场景二按阶段名命名（`ci-log-analysis`、`build-fix-arm64`、`verify-arm`、`code-fix`），与 `client_payload.phase` 一一对应。
+- **job id 与显示名同构**：验证轮 `round-{n}`、修复 `fix-{n}`（场景 3/4 的 `verify`/`fix-r1` 与场景 1 的 `round1` 均已统一到该标准），其他 job 用 kebab-case。`needs.round-1` / `needs.fix-1` 引用随 id 同步。场景二沿用 `round-{n}` 表示修复轮次（`Round N: fix and verify`），另有 `prepare` / `ci-log-analysis` / `code-fix` 三个 kebab-case 阶段 job。
 - round 相关输入沿用 `round` / `next_round` / `max_rounds`；artifact 名保留 `phase1-` 前缀（跨 run 恢复契约，见 `resume` 机制）。以下内部标识属于跨 run 契约，**不随 job id 改名**：seed-decisions 目录（`phase1-seed-decisions/roundN`）、`phase1-decideN-` artifact、operation 值（`failure_issue_contract_test`）。
 
 ### 12.2 workflow 与 job/step 命名风格

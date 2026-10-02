@@ -49,21 +49,23 @@ def log(msg: str):
     print(f"[{ts}] {msg}", flush=True)
 
 
-def dispatch_ci_fix(repo: str, platform: str, pr: Dict, pr_base_branch: str,
-                    token: str, target_repo: str, fix_pr_number: int = 0) -> bool:
+def dispatch_ci_fix(repo: str, platform: str, pr: Dict, token: str, target_repo: str,
+                    attempt: int = 1, fix_pr_number: int = 0) -> bool:
+    """触发一次**完整**修复（ci_fix_pipeline.yml 单 run 跑完全链路）。
+
+    载荷只带定位信息：PR 标题 / head SHA / base 分支由 workflow 的 prepare job
+    现查源仓库，不在这里搬运。`attempt` 是第几次修复，会写进 run 标题——Monitor
+    最多重试 6 次，逐次可辨靠的就是它。
+    """
     payload = {
-        'event_type': 'run-ci-fix-phase',
+        'event_type': 'run-ci-fix',
         'client_payload': {
-            'phase': 'ci-log-analysis',
             'source_repo': repo,
             'source_platform': platform,
             'pr_number': pr['number'],
-            'pr_title': pr.get('title', ''),
-            'head_sha': pr['head']['sha'],
-            'fix_branch': f"fix/{pr['number']}",
-            'pr_base_branch': pr_base_branch,
             # 重试时传入 fix PR 编号，让 ci-log-analysis 从 fix PR 评论中查找最新 build URL
             'fix_pr_number': fix_pr_number,
+            'attempt': attempt,
         }
     }
     url = f"https://api.github.com/repos/{target_repo}/dispatches"
@@ -71,7 +73,7 @@ def dispatch_ci_fix(repo: str, platform: str, pr: Dict, pr_base_branch: str,
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
         if resp.status_code == 204:
-            log(f"  ✅ Dispatched ci-log-analysis for PR #{pr['number']}")
+            log(f"  ✅ Dispatched ci-fix attempt #{attempt} for PR #{pr['number']}")
             return True
         log(f"  ❌ Dispatch failed HTTP {resp.status_code}: {resp.text}")
         return False
@@ -189,7 +191,8 @@ def process_all():
                     log(f"    → Fix PR #{fix_pr['number']} was closed, re-dispatching")
                 else:
                     log(f"    → No fix PR, dispatching first attempt")
-                if dispatch_ci_fix(repo, platform, pr, pr_base, dispatch_token, target_repo):
+                if dispatch_ci_fix(repo, platform, pr, dispatch_token, target_repo,
+                                   attempt=1):
                     total_dispatched += 1
 
             elif fix_pr['state'] == 'open':
@@ -242,12 +245,9 @@ def process_all():
                             log(f"    ⚠️  Close/comment failed: {e}")
                     else:
                         log(f"    → Dispatching retry (attempt #{count + 1})")
-                        retry_pr = {
-                            'number': pr_number,
-                            'title': pr_title,
-                            'head': fix_pr['head'],
-                        }
-                        if dispatch_ci_fix(repo, platform, retry_pr, pr_base, dispatch_token, target_repo,
+                        if dispatch_ci_fix(repo, platform, {'number': pr_number},
+                                           dispatch_token, target_repo,
+                                           attempt=count + 1,
                                            fix_pr_number=fix_pr['number']):
                             total_dispatched += 1
 

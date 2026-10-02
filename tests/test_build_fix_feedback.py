@@ -27,6 +27,22 @@ VERIFY_FAILURE = """\
 """
 
 
+def _capture_outputs(monkeypatch, tmp_path) -> Path:
+    """把 $GITHUB_OUTPUT 指到临时文件——job 门控（是否开下一轮）读的就是它。"""
+    path = tmp_path / 'github-output'
+    path.touch()
+    monkeypatch.setenv('GITHUB_OUTPUT', str(path))
+    return path
+
+
+def _read_outputs(path: Path) -> dict:
+    return dict(
+        line.split('=', 1)
+        for line in path.read_text(encoding='utf-8').splitlines()
+        if '=' in line
+    )
+
+
 def _load_build_fix():
     """build-fix.py 文件名带连字符，不能按模块名导入，只能按路径加载。"""
     path = ROOT / 'scripts' / 'stages' / 'build-fix.py'
@@ -67,9 +83,8 @@ def harness(tmp_path, monkeypatch):
     monkeypatch.setattr(mod.ci_data, 'write_file', lambda *a, **k: None)
 
     captured = {}
-    dispatched = []
+    outputs = _capture_outputs(monkeypatch, tmp_path)
 
-    monkeypatch.setattr(mod, 'dispatch_phase', lambda payload: dispatched.append(payload))
     monkeypatch.setattr(mod.build_runner, 'container_name', lambda pr, arch: f'c-{pr}-{arch}')
     monkeypatch.setattr(mod.build_runner, 'docker_rm', lambda name: None)
     monkeypatch.setattr(mod.build_runner, 'base_image',
@@ -103,11 +118,10 @@ def harness(tmp_path, monkeypatch):
             'arch': 'amd64',
             'mode': 'build',
             'verify_count': verify_count,
-            'chain_id': '36677467180',
             'token': 'x',
         }
 
-    return mod, captured, dispatched, env
+    return mod, captured, outputs, env
 
 
 def test_verify_failure_reaches_the_agent_context(harness):
@@ -132,14 +146,30 @@ def test_first_round_has_no_verify_feedback(harness):
     assert 'arm64_verify_failure' not in captured['instruction']
 
 
-def test_later_round_still_dispatches_verify_arm(harness):
-    """回修轮次跑完后仍应把 verify_count 原样传给 verify-arm，否则轮次计数会归零、无限循环。"""
-    mod, _, dispatched, env = harness
-    mod.build_mode(env(verify_count=1))
+# ── 轮次推进：verify 结果写给 workflow，由 job 门控决定是否再开一轮 ──────────
 
-    assert len(dispatched) == 1
-    assert dispatched[0]['phase'] == 'verify-arm'
-    assert dispatched[0]['verify_count'] == '1'
+def test_failed_verify_opens_the_next_round_without_failing_the_job(harness):
+    """复验失败但仍有回修预算：job 保持成功，只交付 verify_passed=false。
+
+    轮次推进交给 ci_fix_pipeline.yml 的 job 门控——这样"修了几次"在 Actions 的
+    job 列表里直接可见（Round 1 / Round 2 / Round 3），而不是隐式 dispatch 出去。
+    """
+    mod, _, outputs, env = harness
+    mod.verify_mode({**env(verify_count=0), 'mode': 'verify'})
+
+    assert _read_outputs(outputs) == {'verify_passed': 'false'}
+
+
+def test_passed_verify_hands_the_fix_over_to_code_fix(harness, monkeypatch):
+    """复验通过：交付 verify_passed=true，workflow 据此进入 code-fix。"""
+    mod, _, outputs, env = harness
+    monkeypatch.setattr(mod.build_runner, 'docker_build',
+                        lambda target, ctx, **kw: subprocess.CompletedProcess(
+                            ['docker', 'build'], 0, 'ok', ''))
+
+    mod.verify_mode({**env(verify_count=0), 'mode': 'verify'})
+
+    assert _read_outputs(outputs) == {'verify_passed': 'true'}
 
 
 def test_verify_exhaustion_does_not_comment_by_default(harness, monkeypatch):
@@ -172,17 +202,14 @@ def test_verify_exhaustion_comments_when_explicitly_enabled(harness, monkeypatch
     assert commented[0][0] == 'openeuler/openeuler-docker-images'
 
 
-def test_chain_id_is_carried_into_next_dispatch(harness):
-    """回修轮次 dispatch 下一个阶段时必须带上原 chain_id。
+def test_exhausted_rounds_emit_no_result(harness):
+    """最后一轮复验失败即终止：不能写下 verify_passed，否则 workflow 会再开一轮。"""
+    mod, _, outputs, env = harness
 
-    带丢不会有任何报错——`dispatch_phase` 会把空值填成**当前 run 的 id**，
-    于是一条链在 Actions 列表里静默断成两条。这种故障只能靠测试拦住。
-    """
-    mod, _, dispatched, env = harness
-    mod.build_mode(env(verify_count=1))
+    with pytest.raises(RuntimeError, match='human intervention'):
+        mod.verify_mode({**env(verify_count=mod.MAX_VERIFY_ROUNDS), 'mode': 'verify'})
 
-    assert dispatched
-    assert dispatched[0]['chain_id'] == '36677467180'
+    assert _read_outputs(outputs) == {}
 
 
 def _touch_old(path, age: float = 10.0):
