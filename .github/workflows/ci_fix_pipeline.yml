@@ -190,6 +190,8 @@ jobs:
       - name: Set up runner environment
         id: tools
         uses: ./.github/actions/phase1-setup
+        with:
+          arch: x86_64
 
       - name: Install dependencies
         run: |
