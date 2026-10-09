@@ -227,8 +227,8 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | Job 类别 | 默认标签 | 覆盖方式 |
 |---------|---------|---------|
 | `prepare` / 日志分析 / `code-fix`（轻量） | `["self-hosted","Linux","X64"]` | 输入 `x64_runner_labels`，Variables `CI_FIX_X64_RUNNER_LABELS` |
-| amd64 修复（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-image-x86"]` | 输入 `amd64_runner_labels`，Variables `CI_FIX_AMD64_RUNNER_LABELS` |
-| arm64 首修 / 复验（**必须 arm64**） | `["self-hosted","Linux","ARM64","oe-image-arm64"]` | 输入 `arm64_runner_labels`，Variables `CI_FIX_ARM64_RUNNER_LABELS` |
+| amd64 修复（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-fix-amd64"]` | 输入 `amd64_runner_labels`，Variables `CI_FIX_AMD64_RUNNER_LABELS` |
+| arm64 首修 / 复验（**必须 arm64**） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` | 输入 `arm64_runner_labels`，Variables `CI_FIX_ARM64_RUNNER_LABELS` |
 | 监控 / cron 同步 | 同轻量 Job | Variables `CI_FIX_X64_RUNNER_LABELS`（监控另有输入 `runner_labels`） |
 
 例如把重活放到免费托管 Runner：`["ubuntu-latest"]`（x86）与 `["ubuntu-24.04-arm"]`（arm64，公开仓免费）。
@@ -267,8 +267,8 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二 Fix commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
 | `OPENAI_BASE_URL` | 自定义模型 API 代理地址 | _(空)_ |
 | `CI_FIX_X64_RUNNER_LABELS` | 场景二轻量 Job（prepare / 分析 / code-fix / 监控 / cron 同步）的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64"]` |
-| `CI_FIX_AMD64_RUNNER_LABELS` | 场景二 amd64 修复 Job 的 runner 标签（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-image-x86"]` |
-| `CI_FIX_ARM64_RUNNER_LABELS` | 场景二 arm64 首修 / 复验 Job 的 runner 标签（必须 arm64） | `["self-hosted","Linux","ARM64","oe-image-arm64"]` |
+| `CI_FIX_AMD64_RUNNER_LABELS` | 场景二 amd64 修复 Job 的 runner 标签（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-fix-amd64"]` |
+| `CI_FIX_ARM64_RUNNER_LABELS` | 场景二 arm64 首修 / 复验 Job 的 runner 标签（必须 arm64） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` |
 
 场景一的 Agent 模型默认取 `deepseek/deepseek-flash`（定义在 [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py)），可用 `OPENCODE_MODEL` / `OPENCODE_TIMEOUT` 覆盖；场景二默认取 `deepseek/deepseek-v4-pro`，用 `AI_MODEL` 覆盖。
 

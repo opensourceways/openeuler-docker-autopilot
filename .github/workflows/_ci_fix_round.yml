@@ -57,14 +57,14 @@ on:
       arm64_runner_labels:
         description: >-
           JSON array of runner labels for the arm64 jobs（首修 + 复验）,
-          e.g. '["self-hosted","Linux","ARM64","oe-image-arm64"]' or
+          e.g. '["self-hosted","Linux","ARM64","oe-fix-arm64"]' or
           '["ubuntu-24.04-arm"]'. 必须仍是 arm64——复验就是双架构保证本身。
         required: true
         type: string
       amd64_runner_labels:
         description: >-
           JSON array of runner labels for the amd64 repair job,
-          e.g. '["self-hosted","Linux","X64","oe-image-x86"]' or
+          e.g. '["self-hosted","Linux","X64","oe-fix-amd64"]' or
           '["ubuntu-latest"]'（需要 Docker 与 ≥4 CPU）。
         required: true
         type: string
