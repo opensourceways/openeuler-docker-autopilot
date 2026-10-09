@@ -22,7 +22,7 @@ from typing import Optional, Dict, Any
 
 DEFAULT_MODEL = os.getenv('AI_MODEL', 'claude-sonnet-4-6')
 DEFAULT_EXTRA_RAW = '--dangerously-skip-permissions'
-DEFAULT_TIMEOUT = int(os.getenv('AI_TIMEOUT_MS', '1800000'))
+DEFAULT_TIMEOUT = int(os.getenv('AI_TIMEOUT_MS', '10800000'))
 
 
 def log(msg: str):

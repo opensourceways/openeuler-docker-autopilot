@@ -94,7 +94,7 @@ env:
 
   AI_RUNNER: ${{ vars.AI_RUNNER || 'opencode' }}
   AI_MODEL: ${{ vars.AI_MODEL || 'deepseek/deepseek-v4-pro' }}
-  AI_TIMEOUT_MS: ${{ vars.AI_TIMEOUT_MS || '1800000' }}
+  AI_TIMEOUT_MS: ${{ vars.AI_TIMEOUT_MS || '10800000' }}
   OPENAI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
   DEEPSEEK_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
   OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || '' }}

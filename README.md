@@ -261,7 +261,7 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `GITCODE_BOT_USERNAME` | 交付阶段用于推送分支的 GitCode 账号名 | _(无)_ |
 | `AI_RUNNER` | 场景二 AI 后端：`opencode` / `claude-code-account` | `opencode` |
 | `AI_MODEL` | 场景二模型名 | `deepseek/deepseek-v4-pro` |
-| `AI_TIMEOUT_MS` | 场景二单次 Agent 调用超时（毫秒） | `1800000` |
+| `AI_TIMEOUT_MS` | 场景二单次 Agent 调用超时（毫秒） | `10800000` |
 | `GITCODE_FORK_REPO` | 场景二 fix 分支的推送去向（`owner/repo`）；留空则直推源仓库 | _(空)_ |
 | `PR_COMMENT_ON_FAILURE` | 场景二自动修复连续失败时是否回帖源 PR（回帖是 outward-facing 动作，故默认不回） | _(空)_ |
 | `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二 Fix commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
