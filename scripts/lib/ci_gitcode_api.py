@@ -23,6 +23,14 @@ _BUILD_ARCH_RE = re.compile(r'/(?:x86[-_]64|aarch64|arm64|armv7l?|s390x|ppc64(?:
 # 编排/触发层 job（不包含实际构建日志）
 _ORCHESTRATOR_RE = re.compile(r'/(?:trigger|gate|pre[-_]check)/')
 
+# openEuler 日志查看器（log-ci.openeuler.openatom.cn）的 build 页面 URL：
+#   https://<host>/job/<jobPath...>/<buildNumber>/
+# 查看器是前端 SPA，/consoleText 会被兜底成 index.html 外壳；真实纯文本日志
+# 由 /api/build/log/download?job=<jobPath>&build=<buildNumber> 提供。
+_LOG_VIEWER_URL_RE = re.compile(
+    r'^https?://(?P<host>[a-z0-9.-]*openeuler\.openatom\.cn)/job/(?P<job>.+)/(?P<build>\d+)$'
+)
+
 
 def _url_score(url: str) -> tuple:
     """对 Jenkins URL 打分，分数越高越接近实际构建 job。
@@ -307,6 +315,20 @@ def _extract_error_summary(lines: list) -> str:
     return '### Error lines (newest first)\n' + ''.join(reversed(collected))
 
 
+def _log_viewer_api_url(url: str) -> str:
+    """把 openEuler 日志查看器的 build 页面 URL 翻译成原始日志下载 API。
+
+    评论里给的是查看器页面（Vue SPA），其 /consoleText 会被前端路由兜底成
+    index.html 外壳而非日志；真实纯文本日志在 /api/build/log/download。
+    非查看器 URL 返回空字符串。
+    """
+    m = _LOG_VIEWER_URL_RE.match(url.rstrip('/'))
+    if not m:
+        return ''
+    return (f"https://{m.group('host')}/api/build/log/download"
+            f"?job={m.group('job')}&build={m.group('build')}")
+
+
 def _fetch_external_ci_log(target_url: str) -> str:
     """从外部 CI URL（如 Jenkins）拉取控制台日志。
 
@@ -314,16 +336,28 @@ def _fetch_external_ci_log(target_url: str) -> str:
     两者拼接，总长不超过 MAX_LOG_CHARS。
     对于超长构建日志（如 fbthrift Boost 编译），末尾 tail 可能仍在编译
     阶段，真正的依赖错误出现在中段；错误行摘要能补充这部分关键证据。
+
+    openEuler 查看器 URL 优先走下载 API；其余按 Jenkins 约定试 /consoleText。
     """
     base = target_url.rstrip('/')
+    candidates: List[str] = []
+    api_url = _log_viewer_api_url(base)
+    if api_url:
+        candidates.append(api_url)
     # Jenkins: /console 是 HTML，/consoleText 是纯文本
     text_url = (base[:-8] + '/consoleText') if base.endswith('/console') else (base + '/consoleText')
-    for url in [text_url, base]:
+    candidates += [text_url, base]
+    for url in candidates:
         try:
             resp = requests.get(url, timeout=60, allow_redirects=True)
             print(f"[ci-log] GET {url} → HTTP {resp.status_code}", flush=True)
             if resp.status_code == 200:
-                lines = resp.text.split('\n')
+                text = resp.text
+                # 查看器 SPA 会把未知路径兜底成 index.html；这类外壳不含日志。
+                if text.lstrip().lower().startswith(('<!doctype html', '<html')):
+                    print(f"[ci-log] GET {url} → HTML shell, skipped", flush=True)
+                    continue
+                lines = text.split('\n')
                 tail_text = '\n'.join(lines[-500:])
                 if len(tail_text) > _TAIL_BUDGET:
                     tail_text = tail_text[-_TAIL_BUDGET:]

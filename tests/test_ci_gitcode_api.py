@@ -17,6 +17,7 @@ from scripts.lib.ci_gitcode_api import (
     get_pr_detail,
     get_latest_failed_run,
     _fetch_external_ci_log,
+    _log_viewer_api_url,
     find_open_ci_successful_fix_pr,
 )
 
@@ -265,6 +266,64 @@ class TestFetchExternalCiLog:
         with patch('scripts.lib.ci_gitcode_api.requests.get', side_effect=side_effect):
             _fetch_external_ci_log('https://ci.example.com/job/test/5')
         assert any('consoleText' in u for u in captured)
+
+
+# ── openEuler 日志查看器（log-ci）URL → 下载 API ──────────────────────────────
+
+VIEWER_X86 = 'https://log-ci.openeuler.openatom.cn/job/multiarch/openeuler/x86-64/openeuler-docker-images/5131/'
+VIEWER_API = ('https://log-ci.openeuler.openatom.cn/api/build/log/download'
+              '?job=multiarch/openeuler/x86-64/openeuler-docker-images&build=5131')
+
+
+class TestLogViewerApiUrl:
+    def test_translates_viewer_url_to_download_api(self):
+        assert _log_viewer_api_url(VIEWER_X86) == VIEWER_API
+
+    def test_matches_without_trailing_slash(self):
+        assert _log_viewer_api_url(VIEWER_X86.rstrip('/')) == VIEWER_API
+
+    def test_old_domain_also_translated(self):
+        assert _log_viewer_api_url(
+            'https://ci.openeuler.openatom.cn/job/multiarch/openeuler/aarch64/openeuler-docker-images/5181'
+        ) == ('https://ci.openeuler.openatom.cn/api/build/log/download'
+              '?job=multiarch/openeuler/aarch64/openeuler-docker-images&build=5181')
+
+    def test_non_viewer_url_returns_empty(self):
+        assert _log_viewer_api_url('https://ci.example.com/job/test/1/console') == ''
+
+    def test_url_without_build_number_returns_empty(self):
+        assert _log_viewer_api_url(
+            'https://log-ci.openeuler.openatom.cn/job/multiarch/openeuler/x86-64/openeuler-docker-images/'
+        ) == ''
+
+
+class TestFetchExternalCiLogFromViewer:
+    def test_fetches_download_api_not_consoletext(self):
+        # 查看器 URL：首个请求必须是下载 API，且拿到纯文本日志
+        captured = []
+
+        def side_effect(url, **kwargs):
+            captured.append(url)
+            return _mock_http_200('Started by upstream\nerror: boom\nFinished: FAILURE\n')
+
+        with patch('scripts.lib.ci_gitcode_api.requests.get', side_effect=side_effect):
+            result = _fetch_external_ci_log(VIEWER_X86)
+        assert captured[0] == VIEWER_API
+        assert 'Finished: FAILURE' in result
+
+    def test_html_shell_rejected(self):
+        # 若所有端点都返回 SPA 外壳（index.html），不能当成日志
+        shell = '<!doctype html><html><head><title>Jenkins Log Viewer</title></head></html>'
+        with patch('scripts.lib.ci_gitcode_api.requests.get', return_value=_mock_http_200(shell)):
+            assert _fetch_external_ci_log(VIEWER_X86) == ''
+
+    def test_falls_back_to_consoletext_when_api_404(self):
+        m404 = MagicMock()
+        m404.status_code = 404
+        responses = [m404, _mock_http_200('real log\nFinished: FAILURE\n')]
+        with patch('scripts.lib.ci_gitcode_api.requests.get', side_effect=responses):
+            result = _fetch_external_ci_log(VIEWER_X86)
+        assert 'Finished: FAILURE' in result
 
 
 # ── find_open_ci_successful_fix_pr ────────────────────────────────────────────
