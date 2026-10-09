@@ -30,6 +30,11 @@ S390X    = 'https://ci.openeuler.openatom.cn/job/multiarch/job/openeuler/job/s39
 GATE     = 'https://ci.openeuler.openatom.cn/job/multiarch/job/openeuler/job/gate/job/openeuler-docker-images/300/console'
 SHALLOW  = 'https://ci.openeuler.openatom.cn/job/check/123/console'
 
+# 2026-10-09 起 CI 域名带 log- 前缀（PR #4964 实测），正则需同时兼容
+LOGCI_X86     = 'https://log-ci.openeuler.openatom.cn/job/multiarch/openeuler/x86-64/openeuler-docker-images/5131/'
+LOGCI_AARCH64 = 'https://log-ci.openeuler.openatom.cn/job/multiarch/openeuler/aarch64/openeuler-docker-images/5181/'
+LOGCI_TRIGGER = 'https://log-ci.openeuler.openatom.cn/job/multiarch/openeuler/trigger/openeuler-docker-images/5314/'
+
 
 # ── _url_score ────────────────────────────────────────────────────────────────
 
@@ -174,6 +179,20 @@ class TestFindJenkinsUrlInComments:
         )
         result = _find_jenkins_url_in_comments([_comment(body)])
         assert result == AARCH64
+
+    def test_logci_domain_build_url_detected(self):
+        # 回归：CI 域名带 log- 前缀（log-ci.openeuler.openatom.cn），PR #4964 实测；
+        # 旧正则只认 ci. 前缀，会把 build URL 全部漏掉导致“找不到日志”。
+        body = (
+            f'<tr><td>x86-64</td><td>FAILED</td>'
+            f'<td><a href={LOGCI_X86}>#5131</a></td></tr>\n'
+            f'<tr><td>aarch64</td><td>FAILED</td>'
+            f'<td><a href={LOGCI_AARCH64}>#5181</a></td></tr>\n'
+            f'trigger {LOGCI_TRIGGER}'
+        )
+        result = _find_jenkins_url_in_comments([_comment(body)])
+        assert result in (LOGCI_X86, LOGCI_AARCH64)
+        assert 'trigger' not in result
 
 
 # ── _fetch_external_ci_log ────────────────────────────────────────────────────

@@ -16,7 +16,7 @@ MAX_LOG_CHARS = 50_000
 MAX_DIFF_CHARS = 30_000
 
 # 匹配 openEuler Jenkins CI URL，停止于空白或 HTML/Markdown 分隔符
-_JENKINS_URL_RE = re.compile(r'https?://ci\.openeuler\.openatom\.cn/job/[^\s<>"\')\]\|]+')
+_JENKINS_URL_RE = re.compile(r'https?://[a-z0-9.-]*openeuler\.openatom\.cn/job/[^\s<>"\')\]\|]+')
 
 # 实际构建 job 的架构标识符（openEuler CI 路径中第三段）
 _BUILD_ARCH_RE = re.compile(r'/(?:x86[-_]64|aarch64|arm64|armv7l?|s390x|ppc64(?:le)?|riscv64)/')
