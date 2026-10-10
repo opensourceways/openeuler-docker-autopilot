@@ -734,6 +734,7 @@ RUN sed -i 's/#define HAS_RGBTOUVMATRIXROW_NEON/\/\/#define HAS_RGBTOUVMATRIXROW
 
 **历史案例**:
 - PR #2894: `Others/bisheng-jdk/README.md` — CI 失败为 infra-error（`eulerpublisher` 包缺少 `distroless` 模块），与 P
+- PR #5070: `` — 
 
 ---
 
