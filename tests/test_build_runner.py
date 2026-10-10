@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -11,6 +12,8 @@ from scripts.lib.build_runner import (
     find_dockerfile_target,
     render_diff,
     container_name,
+    docker_rm_by_label,
+    docker_rm_images_by_label,
 )
 
 
@@ -80,3 +83,49 @@ def test_render_diff():
 def test_container_name():
     assert container_name(2546, 'arm64') == 'ci-fix-2546-arm64'
     assert container_name(2546, 'amd64') == 'ci-fix-2546-amd64'
+
+
+def _completed(stdout=''):
+    m = MagicMock()
+    m.stdout = stdout
+    return m
+
+
+def test_docker_rm_by_label_removes_matching_containers():
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _completed('abc\ndef\n')
+
+    with patch('scripts.lib.build_runner.subprocess.run', side_effect=fake_run):
+        docker_rm_by_label('oe.ci-fix=1-1')
+    assert calls[0] == ['docker', 'ps', '-aq', '--filter', 'label=oe.ci-fix=1-1']
+    assert calls[1] == ['docker', 'rm', '-f', 'abc', 'def']
+
+
+def test_docker_rm_images_by_label_removes_deduped_matches():
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _completed('img2\nimg1\nimg1\n')
+
+    with patch('scripts.lib.build_runner.subprocess.run', side_effect=fake_run):
+        docker_rm_images_by_label('oe.ci-fix=1-1')
+    assert calls[0] == ['docker', 'images', '-aq', '--filter', 'label=oe.ci-fix=1-1']
+    assert calls[1] == ['docker', 'image', 'rm', '-f', 'img1', 'img2']
+
+
+def test_docker_rm_images_by_label_noop_without_label():
+    with patch('scripts.lib.build_runner.subprocess.run') as run:
+        docker_rm_images_by_label('')
+    run.assert_not_called()
+
+
+def test_docker_rm_images_by_label_noop_when_none_match():
+    with patch('scripts.lib.build_runner.subprocess.run',
+               return_value=_completed('')) as run:
+        docker_rm_images_by_label('oe.ci-fix=1-1')
+    # 只有一次列镜像调用，没有实际删除
+    assert run.call_count == 1

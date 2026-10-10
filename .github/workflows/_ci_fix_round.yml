@@ -204,12 +204,16 @@ jobs:
         if: failure()
         run: echo "⚠️ round ${{ inputs.round }} arm64 fix failed, check workflow logs"
 
-      - name: Cleanup run containers (aarch64)
+      - name: Cleanup run containers and images (aarch64)
         if: always()
         run: |
           ids=$(docker ps -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
           if [ -n "${ids}" ]; then
             docker rm -f ${ids} || true
+          fi
+          imgs=$(docker images -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
+          if [ -n "${imgs}" ]; then
+            docker image rm -f ${imgs} || true
           fi
 
   # ── amd64 续修／回修（每轮都跑）────────────────────────────────
@@ -318,12 +322,16 @@ jobs:
         if: failure()
         run: echo "⚠️ round ${{ inputs.round }} amd64 fix failed, check workflow logs"
 
-      - name: Cleanup run containers (x86_64)
+      - name: Cleanup run containers and images (x86_64)
         if: always()
         run: |
           ids=$(docker ps -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
           if [ -n "${ids}" ]; then
             docker rm -f ${ids} || true
+          fi
+          imgs=$(docker images -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
+          if [ -n "${imgs}" ]; then
+            docker image rm -f ${imgs} || true
           fi
 
   # ── arm64 复验（确定性 docker build，无 AI）─────────────────────
@@ -406,10 +414,14 @@ jobs:
         if: failure()
         run: echo "⚠️ round ${{ inputs.round }} arm64 verify failed, check workflow logs"
 
-      - name: Cleanup run containers (verify aarch64)
+      - name: Cleanup run containers and images (verify aarch64)
         if: always()
         run: |
           ids=$(docker ps -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
           if [ -n "${ids}" ]; then
             docker rm -f ${ids} || true
+          fi
+          imgs=$(docker images -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
+          if [ -n "${imgs}" ]; then
+            docker image rm -f ${imgs} || true
           fi

@@ -128,6 +128,27 @@ def docker_rm_by_label(label: str) -> None:
         pass
 
 
+def docker_rm_images_by_label(label: str) -> None:
+    """删除本 run 打上该标签的镜像，忽略失败。
+
+    镜像由 docker_shim 在 `docker build` 时注入 run 标签；这里只命中本 run 构建的
+    镜像，不会误删基础镜像或并发运行的其他 job 的镜像。
+    """
+    if not label:
+        return
+    try:
+        listed = subprocess.run(
+            ['docker', 'images', '-aq', '--filter', f'label={label}'],
+            capture_output=True, text=True, timeout=60,
+        )
+        ids = sorted(set(listed.stdout.split()))
+        if ids:
+            subprocess.run(['docker', 'image', 'rm', '-f', *ids],
+                           capture_output=True, text=True, timeout=300)
+    except Exception:
+        pass
+
+
 def docker_build(dockerfile_path: str, context: str,
                  timeout: int = DOCKER_BUILD_TIMEOUT) -> subprocess.CompletedProcess:
     """对指定 Dockerfile 执行 docker build（context 为仓库根目录，-f 指向 Dockerfile 相对路径）。

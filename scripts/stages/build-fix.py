@@ -381,6 +381,7 @@ def build_mode(env: dict):
         # 本 run，不会误伤并发运行的其他 job。
         build_runner.docker_rm(container)
         build_runner.docker_rm_by_label(fix_label)
+        build_runner.docker_rm_images_by_label(fix_label)
 
     if not os.path.exists(derived_file):
         if agent_error is not None:
@@ -429,12 +430,19 @@ def verify_mode(env: dict):
 
     _apply_derived_to_repo(target, derived)
 
+    # 让本次 verify 构建的镜像也带上 run 标签，便于收尾按标签回收
+    fix_label = _activate_docker_shim()
+
     log_stage('build-fix', f'verify: docker build -f {target} on {arch}')
     try:
         result = build_runner.docker_build(target, SOURCE_REPO_DIR)
     except Exception as e:
         result = None
         log_stage('build-fix', f'⚠️ docker build raised: {e}')
+    finally:
+        # verify 只校验能否从零构建成功，产物镜像无需保留——按 run 标签回收
+        build_runner.docker_rm_by_label(fix_label)
+        build_runner.docker_rm_images_by_label(fix_label)
 
     log_text = ''
     if result is not None:
