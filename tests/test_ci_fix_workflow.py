@@ -121,7 +121,9 @@ def test_round_component_fixes_both_arches_and_reports_the_round_result():
 
 
 ENV_READ = re.compile(r"os\.(?:getenv|environ\.get)\(\s*'([A-Z0-9_]+)'")
-RUNTIME_PROVIDED = {'GITHUB_OUTPUT', 'GITHUB_REPOSITORY', 'XDG_DATA_HOME', 'HOME'}
+# 由 runner / GitHub 运行时注入，无需（也无法）在 workflow 里声明
+RUNTIME_PROVIDED = {'GITHUB_OUTPUT', 'GITHUB_REPOSITORY', 'XDG_DATA_HOME', 'HOME',
+                    'PATH', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT'}
 # claude-code（API Key 模式）不在支持矩阵内：只支持 opencode 与
 # claude-code-account（凭证走 CLAUDE_CREDENTIALS_JSON 文件）
 UNSUPPORTED_BACKEND = {'ANTHROPIC_API_KEY', 'CLAUDE_CODE_BIN'}

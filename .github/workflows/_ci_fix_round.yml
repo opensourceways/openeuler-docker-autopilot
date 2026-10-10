@@ -99,6 +99,8 @@ env:
   DEEPSEEK_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
   OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || '' }}
   PR_COMMENT_ON_FAILURE: ${{ vars.PR_COMMENT_ON_FAILURE || '' }}
+  # 本 run 的容器标签：run_id+attempt 唯一，按标签清理可并发安全（见 docker_shim）
+  OE_CI_FIX_LABEL: oe.ci-fix=${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
 
@@ -201,6 +203,14 @@ jobs:
       - name: Mark failed
         if: failure()
         run: echo "⚠️ round ${{ inputs.round }} arm64 fix failed, check workflow logs"
+
+      - name: Cleanup run containers (aarch64)
+        if: always()
+        run: |
+          ids=$(docker ps -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
+          if [ -n "${ids}" ]; then
+            docker rm -f ${ids} || true
+          fi
 
   # ── amd64 续修／回修（每轮都跑）────────────────────────────────
   # 第 1 轮在 arm64 冻结版之上继续修；第 2/3 轮在上一轮交付、但 arm64 复验失败的
@@ -308,6 +318,14 @@ jobs:
         if: failure()
         run: echo "⚠️ round ${{ inputs.round }} amd64 fix failed, check workflow logs"
 
+      - name: Cleanup run containers (x86_64)
+        if: always()
+        run: |
+          ids=$(docker ps -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
+          if [ -n "${ids}" ]; then
+            docker rm -f ${ids} || true
+          fi
+
   # ── arm64 复验（确定性 docker build，无 AI）─────────────────────
   # 本轮唯一的权威判据，也是每一轮的收口：通过 → code-fix；失败且仍有预算 →
   # verify_passed=false，调用方据此开下一轮；预算用尽 → job 失败终止链路。
@@ -387,3 +405,11 @@ jobs:
       - name: Mark failed
         if: failure()
         run: echo "⚠️ round ${{ inputs.round }} arm64 verify failed, check workflow logs"
+
+      - name: Cleanup run containers (verify aarch64)
+        if: always()
+        run: |
+          ids=$(docker ps -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
+          if [ -n "${ids}" ]; then
+            docker rm -f ${ids} || true
+          fi

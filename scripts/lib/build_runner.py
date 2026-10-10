@@ -106,6 +106,28 @@ def docker_rm(name: str) -> None:
         pass
 
 
+def docker_rm_by_label(label: str) -> None:
+    """删除本 run 打上该标签的所有容器，忽略失败。
+
+    label 形如 `oe.ci-fix=<run_id>-<run_attempt>`（见 docker_shim）。
+    按标签而非名字清理：只命中本 run 创建的容器，不会误伤并发运行的其他
+    job（它们带的是各自的 run 标签）。
+    """
+    if not label:
+        return
+    try:
+        listed = subprocess.run(
+            ['docker', 'ps', '-aq', '--filter', f'label={label}'],
+            capture_output=True, text=True, timeout=60,
+        )
+        ids = listed.stdout.split()
+        if ids:
+            subprocess.run(['docker', 'rm', '-f', *ids],
+                           capture_output=True, text=True, timeout=120)
+    except Exception:
+        pass
+
+
 def docker_build(dockerfile_path: str, context: str,
                  timeout: int = DOCKER_BUILD_TIMEOUT) -> subprocess.CompletedProcess:
     """对指定 Dockerfile 执行 docker build（context 为仓库根目录，-f 指向 Dockerfile 相对路径）。

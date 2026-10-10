@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# docker 包装脚本（PATH 前置），用于给「本次 run」创建的容器自动打上 run 唯一标签，
+# 以便按标签做并发安全的清理。
+#
+# 背景：build-fix 的容器由 AI agent 自己 `docker run` 起，名字不可控（实测出现过
+# `ci-fix-<pr>-final` 这类脚本不认识的容器，超时后残留）。按名字/前缀删在共享 docker
+# daemon 上会误伤并发运行的其他 job，因此改为：本脚本对 `docker run` / `docker create`
+# 自动注入 `--label "$OE_CI_FIX_LABEL"`，清理时按该标签精确命中本 run 的容器。
+#
+# - 只对 run / create 注入 label，其它子命令原样透传。
+# - OE_CI_FIX_LABEL 形如 `oe.ci-fix=<run_id>-<run_attempt>`；未设置则完全透传。
+# - OE_DOCKER_REAL_BIN 指向真实 docker，避免递归调用自身。
+set -u
+
+label="${OE_CI_FIX_LABEL:-}"
+real="${OE_DOCKER_REAL_BIN:-/usr/bin/docker}"
+
+if [ -z "$label" ]; then
+  exec "$real" "$@"
+fi
+
+cmd="${1:-}"
+case "$cmd" in
+  run|create)
+    shift
+    exec "$real" "$cmd" --label "$label" "$@"
+    ;;
+  *)
+    exec "$real" "$@"
+    ;;
+esac

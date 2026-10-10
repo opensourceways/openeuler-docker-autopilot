@@ -15,6 +15,7 @@ verify 模式：
 """
 
 import os
+import shutil
 import sys
 import subprocess
 import threading
@@ -41,6 +42,52 @@ MAX_VERIFY_ROUNDS = 2
 
 # 增量上传 derived Dockerfile 的轮询间隔（秒）
 DERIVED_UPLOAD_INTERVAL = 20.0
+
+# docker 包装脚本目录：给本 run 的容器自动打 run 唯一标签，便于并发安全清理
+DOCKER_SHIM_DIR = os.path.join(PROJECT_ROOT, 'scripts', 'lib', 'docker_shim')
+
+
+def _fix_container_label() -> str:
+    """本 run 的容器标签值（`oe.ci-fix=<run_id>-<run_attempt>`）。
+
+    优先取 workflow 注入的 OE_CI_FIX_LABEL；本地/无 run 上下文时回退用
+    GITHUB_RUN_ID/GITHUB_RUN_ATTEMPT；都没有则返回空（退化为不按标签清理）。
+    """
+    label = os.getenv('OE_CI_FIX_LABEL', '').strip()
+    if label:
+        return label
+    run_id = os.getenv('GITHUB_RUN_ID', '').strip()
+    if not run_id:
+        return ''
+    attempt = os.getenv('GITHUB_RUN_ATTEMPT', '').strip() or '1'
+    return f'oe.ci-fix={run_id}-{attempt}'
+
+
+def _activate_docker_shim() -> str:
+    """把 docker 包装脚本前置到 PATH，并注入本 run 的容器标签。
+
+    返回标签值；缺少 run 上下文或 shim 缺失时返回空（不改变行为）。
+    agent 进程在 run_agent 内以 os.environ 拷贝启动，故在调用前设好即可让
+    agent 的每次 `docker run/create` 都带上标签。
+    """
+    label = _fix_container_label()
+    if not label:
+        return ''
+    shim = os.path.join(DOCKER_SHIM_DIR, 'docker')
+    if not os.path.isfile(shim):
+        return ''
+    real = shutil.which('docker')
+    if not real:
+        return ''
+    try:
+        os.chmod(shim, 0o755)
+    except OSError:
+        pass
+    os.environ['OE_CI_FIX_LABEL'] = label
+    os.environ['OE_DOCKER_REAL_BIN'] = real
+    if DOCKER_SHIM_DIR not in os.environ.get('PATH', '').split(os.pathsep):
+        os.environ['PATH'] = DOCKER_SHIM_DIR + os.pathsep + os.environ.get('PATH', '')
+    return label
 
 
 def _maybe_upload_derived(derived_file: str, state: dict, upload, settle: float = 1.0) -> bool:
@@ -248,6 +295,8 @@ def build_mode(env: dict):
         os.remove(derived_file)
 
     container = build_runner.container_name(pr, arch)
+    # 给本 run 的容器打标签，使 agent 自建、名字不可控的容器也能被清理
+    fix_label = _activate_docker_shim()
 
     context = {
         'pr': {
@@ -326,8 +375,12 @@ def build_mode(env: dict):
                                   settle=0)
         except Exception as e:
             log_stage('build-fix', f'⚠️ 收尾上传失败（不影响本轮）: {e}')
-        # 无论成败都清理容器，避免在自托管 runner 上残留
+        # 无论成败都清理容器，避免在自托管 runner 上残留：
+        # 先按精确名删（脚本命名的容器），再按 run 标签删（agent 自建、名字
+        # 不在预期内的容器，如历史遗留的 ci-fix-<pr>-final）。按标签删只命中
+        # 本 run，不会误伤并发运行的其他 job。
         build_runner.docker_rm(container)
+        build_runner.docker_rm_by_label(fix_label)
 
     if not os.path.exists(derived_file):
         if agent_error is not None:
