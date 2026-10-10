@@ -6,9 +6,14 @@ Tests for scripts/watch/process_pr_events.py
 - fix PR skip logic: title starts with 'fix:'
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
-from scripts.watch.process_pr_events import _is_prerelease
+from scripts.watch.process_pr_events import (
+    _is_prerelease,
+    _active_repair_pr_numbers,
+)
 
 
 class TestIsPrerelease:
@@ -108,3 +113,43 @@ class TestIsFixPrTitle:
     ])
     def test_non_fix_titles_are_not_skipped(self, title):
         assert _is_fix_pr_title(title) is False, f"Should not skip: {title}"
+
+
+# ── 在飞修复守卫（_active_repair_pr_numbers）──────────────────────────────────
+
+def _runs_response(runs):
+    m = MagicMock()
+    m.ok = True
+    m.json.return_value = {'workflow_runs': runs}
+    return m
+
+
+class TestActiveRepairPrNumbers:
+    def test_collects_only_queued_and_in_progress(self):
+        runs = [
+            {'status': 'queued', 'name': 'ci-fix PR#5071 · attempt 1 · openeuler/openeuler-docker-images'},
+            {'status': 'in_progress', 'name': 'ci-fix PR#5054 · attempt 1 · x'},
+            {'status': 'completed', 'name': 'ci-fix PR#3234 · attempt 1 · x'},
+            {'status': 'cancelled', 'name': 'ci-fix PR#9999 · attempt 1 · x'},
+        ]
+        with patch('scripts.watch.process_pr_events.requests.get',
+                   return_value=_runs_response(runs)):
+            assert _active_repair_pr_numbers('FdeCad/openeuler-docker-autopilot-main', 'tok') == {5071, 5054}
+
+    def test_ignores_runs_without_pr_number(self):
+        runs = [{'status': 'queued', 'name': 'Watch CI failed PRs'}]
+        with patch('scripts.watch.process_pr_events.requests.get',
+                   return_value=_runs_response(runs)):
+            assert _active_repair_pr_numbers('r', 'tok') == set()
+
+    def test_http_error_returns_empty(self):
+        m = MagicMock()
+        m.ok = False
+        m.status_code = 403
+        with patch('scripts.watch.process_pr_events.requests.get', return_value=m):
+            assert _active_repair_pr_numbers('r', 'tok') == set()
+
+    def test_exception_returns_empty(self):
+        with patch('scripts.watch.process_pr_events.requests.get',
+                   side_effect=Exception('boom')):
+            assert _active_repair_pr_numbers('r', 'tok') == set()

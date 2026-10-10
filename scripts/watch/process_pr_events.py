@@ -103,6 +103,37 @@ def _within_lookback(pr: Dict, cutoff: datetime) -> bool:
     return updated_at >= cutoff
 
 
+def _active_repair_pr_numbers(target_repo: str, token: str) -> set:
+    """本仓当前 queued/in_progress 的 ci-fix run 覆盖的源 PR 号集合。
+
+    fix PR 要到一轮修复跑完最后一步才生成，在那之前的整个窗口里 monitor 每轮
+    都会看到「No fix PR」。若无守卫，每轮都会对同一 PR 重发一次 → 队列里同一
+    PR 堆多条 run（实测 #5071 等被连发两次）。这里用 run 状态兜住：只要有在飞/
+    排队的 ci-fix run，就不再 dispatch。run 一旦结束（成功/失败/取消），集合
+    自然不再包含它，无需陈旧超时。
+    """
+    prs: set = set()
+    url = f"https://api.github.com/repos/{target_repo}/actions/runs"
+    headers = {'Authorization': f'token {token}',
+               'Accept': 'application/vnd.github.v3+json'}
+    try:
+        resp = requests.get(url, headers=headers,
+                            params={'event': 'repository_dispatch', 'per_page': 100},
+                            timeout=30)
+        if not resp.ok:
+            log(f"  ⚠️ 查询在飞修复 run 失败 HTTP {resp.status_code}，本轮跳过在飞守卫")
+            return prs
+        for run in (resp.json().get('workflow_runs') or []):
+            if run.get('status') not in ('queued', 'in_progress'):
+                continue
+            m = re.search(r'PR#(\d+)', run.get('name', ''))
+            if m:
+                prs.add(int(m.group(1)))
+    except Exception as e:
+        log(f"  ⚠️ 查询在飞修复 run 异常（本轮跳过在飞守卫）: {e}")
+    return prs
+
+
 def process_all():
     with open(WATCHLIST_FILE, 'r', encoding='utf-8') as f:
         watchlist = json.load(f)
@@ -127,6 +158,10 @@ def process_all():
     log("🔍 Starting PR monitoring cycle")
     log(f"   target_repo:  {target_repo}")
     log(f"   poll_interval: {poll_interval}m  max_events: {max_events}  lookback: {lookback_minutes}m")
+
+    # 在飞/排队的修复 run 覆盖的源 PR：这些 PR 已有修复在进行，别重复 dispatch
+    active_repairs = _active_repair_pr_numbers(target_repo, dispatch_token)
+    log(f"   在飞/排队的修复 PR 数: {len(active_repairs)}")
 
     total_dispatched = 0
 
@@ -192,6 +227,10 @@ def process_all():
                 head_sha = (pr.get('head') or {}).get('sha', '')
                 if head_sha and ci_data.is_retest_notified(pr_number, head_sha):
                     log("    → Skipping: 该 sha 已评论 /retest（infra-error），等待 CI 重跑")
+                    continue
+                # 已存在该 PR 的 queued/in_progress 修复 run：等它产出 fix PR，别重复 dispatch
+                if fix_pr is None and pr_number in active_repairs:
+                    log(f"    → Skipping: PR #{pr_number} 已有在飞/排队的修复 run")
                     continue
                 if fix_pr and fix_pr['state'] == 'closed':
                     log(f"    → Fix PR #{fix_pr['number']} was closed, re-dispatching")
