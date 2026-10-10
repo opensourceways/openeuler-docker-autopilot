@@ -169,6 +169,7 @@ RUN dnf install -y shadow python3-pip ...
 **历史案例**:
 - PR #2207: `Database/neo4j/2026.04.0` — 要求 >= 3.9.11，安装了 3.9.1 → 升级到 3.9.14
 - PR #2102: `Database/neo4j/2026.03.1` — 同类问题 → 升级到 3.9.14
+- PR #5071: `` — 
 
 ---
 
