@@ -144,6 +144,32 @@ def main():
     except Exception as e:
         log_stage('ci-log-analysis', f'⚠️ ci-data write failed: {e}')
 
+    # infra-error（与 Dockerfile 无关的 CI/编排层问题）：跳过修复，改为在 PR 下
+    # 评论 /retest 重试 CI。按 (PR, head_sha) 去重，避免每轮轮询重复评论。
+    skip_repair = 'false'
+    if ci_data.failure_type(analysis) == 'infra-error':
+        skip_repair = 'true'
+        log_stage('ci-log-analysis',
+                  '失败类型=infra-error，与 Dockerfile 无关 → 跳过修复，评论 /retest 重试 CI')
+        if (env['head_sha']
+                and not ci_data.is_retest_notified(env['pr_number'], env['head_sha'])):
+            try:
+                api.add_pr_comment(env['source_repo'], env['pr_number'],
+                                   '/retest', env['token'])
+                ci_data.mark_retest_notified(env['pr_number'], env['head_sha'])
+                log_stage('ci-log-analysis',
+                          f"✅ 已在 PR #{env['pr_number']} 评论 /retest"
+                          f"（sha={env['head_sha'][:8]}）")
+            except Exception as e:
+                log_stage('ci-log-analysis', f'⚠️ 评论 /retest 失败: {e}')
+        else:
+            log_stage('ci-log-analysis', '该 sha 已评论过 /retest，跳过重复评论')
+
+    gh_output = os.environ.get('GITHUB_OUTPUT', '')
+    if gh_output:
+        with open(gh_output, 'a', encoding='utf-8') as f:
+            f.write(f'skip_repair={skip_repair}\n')
+
     # analysis 已落在 ci-fix-log 分支，作为后续 build agent 的提示；
     # 阶段推进由 ci_fix_pipeline.yml 的 job 依赖负责
     log_stage('ci-log-analysis', '✅ done')

@@ -152,6 +152,9 @@ jobs:
     needs: prepare
     runs-on: ${{ fromJSON(needs.prepare.outputs.x64_runner_labels) }}
     timeout-minutes: 60
+    outputs:
+      # analyze 判定 infra-error（与 Dockerfile 无关）时置 true，跳过修复轮次
+      skip_repair: ${{ steps.analysis.outputs.skip_repair }}
     env:
       SOURCE_REPO: ${{ needs.prepare.outputs.source_repo }}
       SOURCE_PLATFORM: ${{ needs.prepare.outputs.source_platform }}
@@ -227,6 +230,7 @@ jobs:
             scripts/lib/discover_conventions.py source-repo source-conventions.md
 
       - name: Run CI log analysis
+        id: analysis
         env:
           OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
         run: |
@@ -241,6 +245,8 @@ jobs:
   round-1:
     name: "Round 1: fix and verify"
     needs: [prepare, ci-log-analysis]
+    # infra-error（与 Dockerfile 无关）：analyze 已评论 /retest，跳过全部修复轮次
+    if: ${{ needs.ci-log-analysis.outputs.skip_repair != 'true' }}
     uses: ./.github/workflows/_ci_fix_round.yml
     with:
       round: "1"

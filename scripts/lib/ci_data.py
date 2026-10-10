@@ -148,6 +148,32 @@ def mark_fix_notified(pr_number: int) -> None:
                f"fix-notified: PR #{pr_number}", branch=CI_FIX_BRANCH)
 
 
+def retest_path(pr_number: int, head_sha: str) -> str:
+    """按 PR + head_sha 记录「已评论 /retest」的标记（sha 变了即允许再次重试）。"""
+    return f"ci-fix-log/{pr_number}/retest-{head_sha[:12]}"
+
+
+def is_retest_notified(pr_number: int, head_sha: str) -> bool:
+    if not head_sha:
+        return False
+    return bool(read_file(retest_path(pr_number, head_sha), branch=CI_FIX_BRANCH))
+
+
+def mark_retest_notified(pr_number: int, head_sha: str) -> None:
+    write_file(retest_path(pr_number, head_sha), "retested",
+               f"retest-notified: PR #{pr_number} @ {head_sha[:12]}",
+               branch=CI_FIX_BRANCH)
+
+
+def failure_type(analysis: str) -> str:
+    """从分析报告提取「失败类型」字段并归一化（如 'infra-error'）。
+
+    兼容半角/全角冒号；取不到返回空字符串。
+    """
+    m = re.search(r'失败类型\s*[:：]\s*([A-Za-z0-9_-]+)', analysis or '')
+    return m.group(1).strip().lower() if m else ''
+
+
 # ── 共享知识库（main 分支）───────────────────────────────────────────────
 
 KNOWLEDGE_PATH = "docs/ci-failure-patterns.md"

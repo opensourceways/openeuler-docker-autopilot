@@ -12,6 +12,7 @@ PR 监控 — CI 失败自动修复触发器
   fix PR open + 无状态 label        → CI 尚未开始，跳过
   fix PR closed                    → 重新 dispatch
   fix PR merged                    → 已合并，跳过
+  infra-error（该 sha 已评论 /retest）→ 跳过，等待 CI 重跑（见 ci-log-analysis）
 """
 
 import os
@@ -186,6 +187,11 @@ def process_all():
                 # lookback 过滤：首次 dispatch 时检查 PR 是否在时间窗口内
                 if lookback_cutoff and not _within_lookback(pr, lookback_cutoff):
                     log(f"    → Skipping: updated_at outside lookback window ({lookback_minutes}m)")
+                    continue
+                # infra-error 已判过：该 sha 已评论 /retest，等 CI 重跑，别重复 dispatch
+                head_sha = (pr.get('head') or {}).get('sha', '')
+                if head_sha and ci_data.is_retest_notified(pr_number, head_sha):
+                    log("    → Skipping: 该 sha 已评论 /retest（infra-error），等待 CI 重跑")
                     continue
                 if fix_pr and fix_pr['state'] == 'closed':
                     log(f"    → Fix PR #{fix_pr['number']} was closed, re-dispatching")

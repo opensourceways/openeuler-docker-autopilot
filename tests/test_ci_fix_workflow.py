@@ -172,6 +172,34 @@ def test_every_job_declares_the_env_its_scripts_read():
             assert missing == set(), f'{wf_path.name}/{job_id} 未声明 {sorted(missing)}'
 
 
+def test_infra_error_skips_rounds_and_retests():
+    """analyze 判 infra-error → 评论 /retest 并跳过全部修复轮次。"""
+    jobs = _workflow(PIPELINE)['jobs']
+
+    analysis = jobs['ci-log-analysis']
+    assert 'skip_repair' in analysis['outputs']
+    assert 'steps.analysis.outputs.skip_repair' in _squash(
+        analysis['outputs']['skip_repair'])
+    # 该 output 的来源步骤必须有 id: analysis
+    assert 'analysis' in {s.get('id') for s in analysis['steps'] if isinstance(s, dict)}
+
+    # round-1 由 skip_repair 门控 → 后续轮次随 round-1 跳过而自动跳过
+    assert _squash(jobs['round-1']['if']) == \
+        "${{ needs.ci-log-analysis.outputs.skip_repair != 'true' }}"
+
+    # 监控侧按 (PR, head_sha) 去重：命中 retest 标记则不再 dispatch
+    monitor = (ROOT / 'scripts' / 'watch' / 'process_pr_events.py').read_text(encoding='utf-8')
+    assert 'is_retest_notified' in monitor
+
+
+def test_failure_type_is_parsed_and_normalised():
+    from scripts.lib import ci_data
+    assert ci_data.failure_type('- 失败类型: infra-error') == 'infra-error'
+    assert ci_data.failure_type('- 失败类型：Infra-Error') == 'infra-error'
+    assert ci_data.failure_type('失败类型: build-error\n') == 'build-error'
+    assert ci_data.failure_type('# CI 失败分析报告\n## 基本信息') == ''
+
+
 def test_monitor_dispatches_one_repair_attempt_per_run():
     assert 'run-ci-fix' in _trigger(_workflow(PIPELINE))['repository_dispatch']['types']
 
