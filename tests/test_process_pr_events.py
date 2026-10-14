@@ -118,6 +118,7 @@ class TestSkippedApp:
     @pytest.mark.parametrize("title,app", [
         ('【自动升级】milvus容器镜像升级至3.0.2版本.', 'milvus'),
         ('【自动升级】pyrosetta容器镜像升级至3.15版本.', 'pyrosetta'),
+        ('【自动升级】cloudwego容器镜像升级至0.6.0版本.', 'cloudwego'),
         ('【自动升级】MILVUS容器镜像升级至3.0.2版本.', 'milvus'),  # 大小写不敏感
         ('【自动升级】milvus升级至3.0.2版本.', 'milvus'),  # 无「容器镜像」
     ])
