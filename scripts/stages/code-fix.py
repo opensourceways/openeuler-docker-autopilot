@@ -22,6 +22,7 @@ sys.path.insert(0, PROJECT_ROOT)
 from scripts.lib.stage_common import log_stage
 from scripts.lib.ci_api import get_api
 from scripts.lib import ci_data
+from scripts.lib import doc_links
 
 WORK_BASE = os.path.join(PROJECT_ROOT, 'ci-fix-log')
 SOURCE_REPO_DIR = os.path.join(PROJECT_ROOT, 'source-repo')
@@ -167,6 +168,15 @@ def main():
 
     # 清理 build 阶段可能残留的 AI 工具产物
     _cleanup_ai_artifacts(SOURCE_REPO_DIR)
+
+    # 提交前：把本次 PR 新增文档行里的 gitee 地址改写为 gitcode
+    try:
+        fixed_docs = doc_links.fix_changed_docs(
+            SOURCE_REPO_DIR, f"origin/{env['pr_base_branch']}")
+        if fixed_docs:
+            log_stage('code-fix', f'🔗 rewrote gitee→gitcode in: {fixed_docs}')
+    except Exception as e:
+        log_stage('code-fix', f'⚠️ doc link rewrite failed (non-fatal): {e}')
 
     # 只暂存原始 PR 涉及的文件，严禁暂存任何其他文件
     pr_files_set = set(pr_files)

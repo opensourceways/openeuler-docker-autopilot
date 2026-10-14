@@ -662,6 +662,15 @@ jobs:
             --base-sha "${base_sha}" \
             > "${RUNNER_TEMP}/candidate/reports/gates.json"
 
+      - name: Fix gitee links in changed docs
+        run: |
+          base_sha="$(
+            tr -d '\n' < "${RUNNER_TEMP}/package-base-sha.txt"
+          )"
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/lib/doc_links.py \
+            --repo "${RUNNER_TEMP}/phase1-target" \
+            --base "${base_sha}"
+
       - name: Seal immutable candidate bundle
         run: |
           base_sha="$(
