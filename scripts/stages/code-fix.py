@@ -121,7 +121,7 @@ def _extract_fix_summary(build_log: str, pr_number: int) -> str:
             stripped = line.strip()
             if stripped and not stripped.startswith('#'):
                 return stripped
-    return f'自动容器构建修复 PR #{pr_number} 的 CI 失败'
+    return f'Automated container-build fix for CI failure in PR #{pr_number}'
 
 
 def main():
