@@ -356,11 +356,7 @@ jobs:
           "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
             -r requirements.txt
 
-      # Variable `GITCODE_FORK_REPO` 实际被填成了完整 URL
-      # （https://gitcode.com/m0_46560176/openeuler-docker-images），而本 job 里
-      # 三处消费点（git remote add fork、git remote set-url、Fix PR head）都按
-      # `owner/repo` 拼接，会拼出 `gitcode.com/https://gitcode.com/m0_....git`
-      # 和 head `https::fix/4723`。与其要求配置方记住格式，不如消费侧先归一。
+
       - name: Normalize GITCODE_FORK_REPO
         if: needs.prepare.outputs.source_platform == 'gitcode'
         run: |
