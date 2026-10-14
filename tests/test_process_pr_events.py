@@ -3,6 +3,7 @@ Tests for scripts/watch/process_pr_events.py
 
 覆盖范围：
 - _is_prerelease: PR 标题预发布版本检测
+- _is_auto_upgrade: 仅监控标题含【自动升级】的 PR
 - fix PR skip logic: title starts with 'fix:'
 """
 
@@ -12,6 +13,7 @@ import pytest
 
 from scripts.watch.process_pr_events import (
     _is_prerelease,
+    _is_auto_upgrade,
     _active_repair_pr_numbers,
 )
 
@@ -83,6 +85,29 @@ class TestIsPrerelease:
     def test_title_with_alpha_in_description_not_version(self):
         # alpha 出现在描述中但不是版本标记（没有 -. 前缀）
         assert _is_prerelease('升级 alpha 通道的软件包') is False
+
+
+# ── 自动升级标题过滤（仅监控含【自动升级】的 PR）──────────────────────────────
+
+class TestIsAutoUpgrade:
+    @pytest.mark.parametrize("title", [
+        '【自动升级】etcd容器镜像升级至3.6.11版本.',
+        '【自动升级】openfoam容器镜像升级至20260907版本.',
+        '【自动升级】pkg升级至1.0.0-rc1版本.',  # 预发布与否由此后单独判断
+    ])
+    def test_auto_upgrade_titles_are_kept(self, title):
+        assert _is_auto_upgrade(title) is True, f"Expected auto-upgrade: {title}"
+
+    @pytest.mark.parametrize("title", [
+        'docs: add automated new-image request guide',
+        'update readme.md',
+        '【轻量级 PR】：update: 更新文件 README.md',
+        'fix: etcd 3.6.11 (fix #2534)',
+        '升级 nginx 容器镜像',
+        '',
+    ])
+    def test_other_titles_are_skipped(self, title):
+        assert _is_auto_upgrade(title) is False, f"Should skip: {title}"
 
 
 # ── fix PR skip（标题以 fix: 开头）────────────────────────────────────────────

@@ -3,6 +3,7 @@
 PR 监控 — CI 失败自动修复触发器
 
 轮询 watchlist 中的仓库，检测带有 ci_failed label 的 PR，
+仅处理标题含【自动升级】标记的 PR（人工提交的 PR 不在自动修复范围），
 根据 fix/<pr-number> PR 的存在状态决定动作：
 
   fix PR 不存在                    → dispatch ci-log-analysis（首次修复）
@@ -43,6 +44,15 @@ _PRERELEASE_RE = re.compile(
 def _is_prerelease(title: str) -> bool:
     """判断 PR 标题是否包含预发布版本标记（alpha/beta/rc 等），是则跳过自动修复。"""
     return bool(_PRERELEASE_RE.search(title))
+
+
+# 仅监控自动升级类 PR：人工 PR（文档/README 改动等）不属于自动修复链路
+_AUTO_UPGRADE_MARKER = '【自动升级】'
+
+
+def _is_auto_upgrade(title: str) -> bool:
+    """判断 PR 标题是否为自动升级类（含【自动升级】标记），否则 Monitor 跳过。"""
+    return _AUTO_UPGRADE_MARKER in (title or '')
 
 
 def log(msg: str):
@@ -204,6 +214,10 @@ def process_all():
 
             pr_title = pr.get('title', '')
             log(f"\n  🔎 PR #{pr_number}: {pr_title[:60]}")
+
+            if not _is_auto_upgrade(pr_title):
+                log(f"    → Skipping: 标题不含 {_AUTO_UPGRADE_MARKER}（仅监控自动升级 PR）")
+                continue
 
             if _is_prerelease(pr_title):
                 log(f"    → Skipping: pre-release version in title (alpha/beta/rc/etc.)")
