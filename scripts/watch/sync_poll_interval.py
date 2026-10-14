@@ -17,6 +17,8 @@ WORKFLOW = ROOT / '.github' / 'workflows' / 'monitor_ci_failed_prs.yml'
 def interval_to_cron(minutes: int) -> str:
     if minutes <= 0:
         raise ValueError(f"poll_interval_minutes must be > 0, got {minutes}")
+    if minutes >= 1440:
+        return '0 0 * * *'       # 每天 UTC 0:00（北京时间 8:00）触发一次
     if minutes >= 60:
         return '0 * * * *'       # 整点触发
     return f'*/{minutes} * * * *'

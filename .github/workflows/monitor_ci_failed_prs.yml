@@ -3,12 +3,13 @@ name: Watch CI failed PRs
 # 场景二（PR CI 失败自动修复）的入口：按 config/watchlist.json 轮询目标仓库中
 # 带 ci_failed 标签的 PR，读取其 Fix PR 状态并决定是否 dispatch 修复链路。
 #
-# cron 间隔与 poll_interval_minutes 保持同步：
+# cron 与 poll_interval_minutes 保持同步：
 #   config/watchlist.json 变更 → sync_ci_poll_interval.yml 自动改写下面的 cron。
+# 当前为每天触发一次：UTC 0:00 = 北京时间 8:00。
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '0 0 * * *'
   workflow_dispatch:
     inputs:
       test_repo:
