@@ -4,6 +4,7 @@ Tests for scripts/watch/process_pr_events.py
 覆盖范围：
 - _is_prerelease: PR 标题预发布版本检测
 - _is_auto_upgrade: 仅监控标题含【自动升级】的 PR
+- _skipped_app: 跳过 milvus / pyrosetta 等指定软件
 - fix PR skip logic: title starts with 'fix:'
 """
 
@@ -14,6 +15,7 @@ import pytest
 from scripts.watch.process_pr_events import (
     _is_prerelease,
     _is_auto_upgrade,
+    _skipped_app,
     _active_repair_pr_numbers,
 )
 
@@ -108,6 +110,29 @@ class TestIsAutoUpgrade:
     ])
     def test_other_titles_are_skipped(self, title):
         assert _is_auto_upgrade(title) is False, f"Should skip: {title}"
+
+
+# ── 跳过指定软件（milvus / pyrosetta）────────────────────────────────────────
+
+class TestSkippedApp:
+    @pytest.mark.parametrize("title,app", [
+        ('【自动升级】milvus容器镜像升级至3.0.2版本.', 'milvus'),
+        ('【自动升级】pyrosetta容器镜像升级至3.15版本.', 'pyrosetta'),
+        ('【自动升级】MILVUS容器镜像升级至3.0.2版本.', 'milvus'),  # 大小写不敏感
+        ('【自动升级】milvus升级至3.0.2版本.', 'milvus'),  # 无「容器镜像」
+    ])
+    def test_skipped_apps_are_detected(self, title, app):
+        assert _skipped_app(title) == app
+
+    @pytest.mark.parametrize("title", [
+        '【自动升级】openfoam容器镜像升级至20260907版本.',
+        '【自动升级】nginx升级至1.0.0版本.',
+        '【自动升级】rosetta容器镜像升级至1.0.0版本.',  # 不能因子串误伤
+        'docs: update readme',
+        '',
+    ])
+    def test_other_apps_are_not_skipped(self, title):
+        assert _skipped_app(title) == ''
 
 
 # ── fix PR skip（标题以 fix: 开头）────────────────────────────────────────────

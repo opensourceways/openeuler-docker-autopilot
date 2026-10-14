@@ -3,8 +3,8 @@
 PR 监控 — CI 失败自动修复触发器
 
 轮询 watchlist 中的仓库，检测带有 ci_failed label 的 PR，
-仅处理标题含【自动升级】标记的 PR（人工提交的 PR 不在自动修复范围），
-根据 fix/<pr-number> PR 的存在状态决定动作：
+仅处理标题含【自动升级】标记的 PR（人工提交的 PR 不在自动修复范围；milvus /
+pyrosetta 两个软件也跳过），根据 fix/<pr-number> PR 的存在状态决定动作：
 
   fix PR 不存在                    → dispatch ci-log-analysis（首次修复）
   fix PR open + ci_successful      → 通知原始 PR fix 已通过 CI（一次性，加 fix_notified 标记）
@@ -49,10 +49,25 @@ def _is_prerelease(title: str) -> bool:
 # 仅监控自动升级类 PR：人工 PR（文档/README 改动等）不属于自动修复链路
 _AUTO_UPGRADE_MARKER = '【自动升级】'
 
+# 明确跳过的软件：这些应用的自动升级 PR 不触发修复
+SKIPPED_APPS = {'milvus', 'pyrosetta'}
+
+# 从自动升级标题里取软件名：'【自动升级】milvus容器镜像升级至3.0.2版本.' → 'milvus'
+_AUTO_UPGRADE_APP_RE = re.compile(r'【自动升级】\s*(.+?)\s*(?:容器镜像)?升级至')
+
 
 def _is_auto_upgrade(title: str) -> bool:
     """判断 PR 标题是否为自动升级类（含【自动升级】标记），否则 Monitor 跳过。"""
     return _AUTO_UPGRADE_MARKER in (title or '')
+
+
+def _skipped_app(title: str) -> str:
+    """返回标题所属、且在跳过列表里的软件名；未命中返回空串。"""
+    match = _AUTO_UPGRADE_APP_RE.search(title or '')
+    if not match:
+        return ''
+    app = match.group(1).strip().lower()
+    return app if app in SKIPPED_APPS else ''
 
 
 def log(msg: str):
@@ -217,6 +232,11 @@ def process_all():
 
             if not _is_auto_upgrade(pr_title):
                 log(f"    → Skipping: 标题不含 {_AUTO_UPGRADE_MARKER}（仅监控自动升级 PR）")
+                continue
+
+            skipped_app = _skipped_app(pr_title)
+            if skipped_app:
+                log(f"    → Skipping: 软件 {skipped_app} 在跳过列表（不自动修复）")
                 continue
 
             if _is_prerelease(pr_title):
