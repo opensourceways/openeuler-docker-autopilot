@@ -34,7 +34,7 @@ jobs:
     # 自动轮询走 Variables CI_FIX_X64_RUNNER_LABELS
     runs-on: >-
       ${{ fromJSON(inputs.runner_labels || vars.CI_FIX_X64_RUNNER_LABELS ||
-          '["self-hosted","Linux","X64"]') }}
+          '["ubuntu-latest"]') }}
     timeout-minutes: 15
 
     steps:

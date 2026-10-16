@@ -248,7 +248,8 @@ def test_runner_labels_are_configurable_and_stay_arch_safe():
     for path, job_id in ((MONITOR, 'monitor'), (SYNC, 'sync')):
         runner = _squash(_workflow(path)['jobs'][job_id]['runs-on'])
         assert 'vars.CI_FIX_X64_RUNNER_LABELS' in runner
-        assert 'self-hosted' in runner
+        # 轻量 Job 默认跑 GitHub 托管 Runner（与自托管构建 Job 分道）
+        assert 'ubuntu-latest' in runner
     assert 'inputs.runner_labels' in _squash(_workflow(MONITOR)['jobs']['monitor']['runs-on'])
 
 

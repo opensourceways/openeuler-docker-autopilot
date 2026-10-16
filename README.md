@@ -226,10 +226,14 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 
 | Job 类别 | 默认标签 | 覆盖方式 |
 |---------|---------|---------|
-| `prepare` / 日志分析 / `code-fix`（轻量） | `["self-hosted","Linux","X64"]` | 输入 `x64_runner_labels`，Variables `CI_FIX_X64_RUNNER_LABELS` |
+| `prepare` / 日志分析 / `code-fix`（轻量） | `["ubuntu-latest"]`（GitHub 托管） | 输入 `x64_runner_labels`，Variables `CI_FIX_X64_RUNNER_LABELS` |
 | amd64 修复（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-fix-amd64"]` | 输入 `amd64_runner_labels`，Variables `CI_FIX_AMD64_RUNNER_LABELS` |
 | arm64 首修 / 复验（**必须 arm64**） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` | 输入 `arm64_runner_labels`，Variables `CI_FIX_ARM64_RUNNER_LABELS` |
 | 监控 / cron 同步 | 同轻量 Job | Variables `CI_FIX_X64_RUNNER_LABELS`（监控另有输入 `runner_labels`） |
+
+**轻量 Job 跑在 GitHub 托管 Runner 上（`ubuntu-latest`）。** 一个自托管 runner 实例同时只跑一个 Job，轻量 Job（`prepare` / 分析 / `code-fix` / 监控）若与 amd64 构建 Job 共用同一实例，一个耗时 40 分钟的 `amd64-fix` 会把其他 PR 的 `prepare` 全堵在后面。改为托管 Runner 后两者天然分道、互不阻塞。托管 Runner 上 `/opt` 不可写，工具链缓存自动降级到 Job 临时目录（[`phase1-setup`](.github/actions/phase1-setup/action.yml) 已处理），代价是每个 Job 重新下载一次工具链。
+
+> ⚠️ **私有仓库的托管 Runner 会消耗额度**：本仓是 private，GitHub 托管 Runner 按分钟计入套餐额度（免费版 2000 分钟/月，超出自付）。其中「日志分析」会跑 AI Agent，可能占用较长时间。若想省额度，把 `CI_FIX_X64_RUNNER_LABELS` 指回自托管标签（如 `["self-hosted","Linux","X64"]`）即可，代码默认值只作兜底。
 
 例如把重活放到免费托管 Runner：`["ubuntu-latest"]`（x86）与 `["ubuntu-24.04-arm"]`（arm64，公开仓免费）。
 
@@ -266,7 +270,7 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `PR_COMMENT_ON_FAILURE` | 场景二自动修复连续失败时是否回帖源 PR（回帖是 outward-facing 动作，故默认不回） | _(空)_ |
 | `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二 Fix commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
 | `OPENAI_BASE_URL` | 自定义模型 API 代理地址 | _(空)_ |
-| `CI_FIX_X64_RUNNER_LABELS` | 场景二轻量 Job（prepare / 分析 / code-fix / 监控 / cron 同步）的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64"]` |
+| `CI_FIX_X64_RUNNER_LABELS` | 场景二轻量 Job（prepare / 分析 / code-fix / 监控 / cron 同步）的 runner 标签，JSON 数组 | `["ubuntu-latest"]` |
 | `CI_FIX_AMD64_RUNNER_LABELS` | 场景二 amd64 修复 Job 的 runner 标签（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-fix-amd64"]` |
 | `CI_FIX_ARM64_RUNNER_LABELS` | 场景二 arm64 首修 / 复验 Job 的 runner 标签（必须 arm64） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` |
 

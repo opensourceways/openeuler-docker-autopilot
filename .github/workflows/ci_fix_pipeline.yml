@@ -30,11 +30,13 @@ on:
         default: 'gitcode'
       # 三类 job 的 runner 标签都可覆盖（JSON 数组，留空则用 Variable / 默认值）。
       # 架构相关的 job 只能换"哪台 arm64/x64 机器"，不能换架构——复验就是双架构保证本身。
+      # 轻量 job 默认跑 GitHub 托管 Runner（`ubuntu-latest`），与自托管的 amd64 构建 job
+      # 分道，避免被耗时构建阻塞；如需改回自托管，覆盖输入或 Variables 即可。
       x64_runner_labels:
         description: 'prepare / 分析 / code-fix 的 runner 标签，JSON 数组'
         required: false
         type: string
-        default: '["self-hosted","Linux","X64"]'
+        default: '["ubuntu-latest"]'
       amd64_runner_labels:
         description: 'amd64 修复 job 的 runner 标签（需 Docker + ≥4 CPU），JSON 数组'
         required: false
@@ -87,7 +89,7 @@ jobs:
     # env），改默认值时三处要一起改——它们分别对应手动入口、自动入口与校验。
     runs-on: >-
       ${{ fromJSON(inputs.x64_runner_labels || vars.CI_FIX_X64_RUNNER_LABELS ||
-          '["self-hosted","Linux","X64"]') }}
+          '["ubuntu-latest"]') }}
     timeout-minutes: 15
     outputs:
       source_repo: ${{ steps.resolve.outputs.source_repo }}
@@ -120,7 +122,7 @@ jobs:
       # Variables，都没有 → 与 dispatch 表单相同的默认值。
       X64_RUNNER_LABELS: >-
         ${{ inputs.x64_runner_labels || vars.CI_FIX_X64_RUNNER_LABELS ||
-            '["self-hosted","Linux","X64"]' }}
+            '["ubuntu-latest"]' }}
       AMD64_RUNNER_LABELS: >-
         ${{ inputs.amd64_runner_labels || vars.CI_FIX_AMD64_RUNNER_LABELS ||
             '["self-hosted","Linux","X64","oe-fix-amd64"]' }}
