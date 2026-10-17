@@ -1107,7 +1107,7 @@ def test_shared_stage_steps_live_in_one_composite_action_each():
 
     # Every shared step body exists exactly once, inside its action.
     for fragment in (
-        "python3 -m venv",
+        "-m venv",
         "scripts/bootstrap_tools.py",
         "scripts/runner_preflight.py",
         "target-apply-patch",
@@ -1115,11 +1115,22 @@ def test_shared_stage_steps_live_in_one_composite_action_each():
         assert fragment not in workflow_text
 
     setup = _action_text("phase1-setup")
-    assert "python3 -m venv" in setup
+    assert "-m venv" in setup
     assert "scripts/bootstrap_tools.py" in setup
     assert "scripts/runner_preflight.py" in setup
     assert "target-apply-patch" in _action_text("phase1-replay")
     assert "target-create-patch" in _action_text("phase1-emit-patch")
+
+
+def test_setup_python_is_pinned_to_the_lock_file_abi():
+    """锁文件的哈希按 CPython 3.11 生成；托管 Runner 的默认 python3 会随镜像漂移，
+    换解释器就会选到另一套平台轮子，--require-hashes 直接失败
+    （对应 2026-10-17 monitor_ci_failed_prs 那次 run 的失败）。"""
+    setup = _action_text("phase1-setup")
+
+    assert "python-version: '3.11'" in setup
+    # 只在 GitHub 托管 Runner 上安装；自托管 Runner 的 python3 本来就是 3.11。
+    assert "runner.environment == 'github-hosted'" in setup
 
 
 def _delegated_setup_step(job):
