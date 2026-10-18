@@ -407,6 +407,13 @@ jobs:
 
       - name: Run arm64 verification build
         id: verify
+        # 自托管 runner 上的持久 BuildKit 层缓存（跨 run 复用）：同一 PR 下一轮/下一天
+        # 重新复验同一份 derived Dockerfile 时前缀层直接命中，不再重编 conan 依赖。
+        # 目录取 runner.workspace（`_work`）下、git checkout 之外的位置，不会被清理；
+        # 托管 runner 是一次性环境，设了没意义，所以只加在 arm64 复验这一步上。
+        # 清理：docker buildx prune -f --filter until=168h，或直接删该目录。
+        env:
+          CI_FIX_BUILD_CACHE_DIR: ${{ vars.CI_FIX_BUILD_CACHE_DIR || format('{0}/ci-fix-buildkit-cache', runner.workspace) }}
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/stages/build-fix.py
 

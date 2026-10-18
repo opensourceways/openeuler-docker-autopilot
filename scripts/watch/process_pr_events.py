@@ -14,6 +14,14 @@ pyrosetta / cloudwego 等软件也跳过），根据 fix/<pr-number> PR 的存�
   fix PR closed                    → 重新 dispatch
   fix PR merged                    → 已合并，跳过
   infra-error（该 sha 已评论 /retest）→ 跳过，等待 CI 重跑（见 ci-log-analysis）
+
+重试预算按 **run 计数**，不按 Fix PR 计：run 标题里的 `PR#<n>` 是本仓自己写的，
+不依赖 Fix PR 是否存在。旧实现只认 Fix PR（`ci_failed` 标签 + 分支 commit 数），
+而 Fix PR 要链路最后一步才生成——于是「修不成功 → 没有 Fix PR → 每次都算第一次」
+自我循环，护栏形同不存在（实测 #5164 连续两天各烧一次约 15h，两次 run 标题都还
+是 attempt 1）。现在同一 PR 的历史 run 数达到 MAX_RETRIES 即停止自动重试：默认只记
+日志与 `exhausted` 标记，Variable `PR_COMMENT_ON_FAILURE` 为真时才在源 PR 上留一次
+人工提示。要再自动跑一次，用手动触发 ci_fix_pipeline。
 """
 
 import os
@@ -33,6 +41,13 @@ from scripts.lib import ci_data
 
 WATCHLIST_FILE = os.path.join(PROJECT_ROOT, 'config', 'watchlist.json')
 MAX_RETRIES = 6
+
+# run 列表分页：Monitor 每天一批，一页 100 条只覆盖约两天，而「同一 PR 一共跑过几次」
+# 要跨周期成立，所以多翻几页（5 页 = 500 条 run）。
+RUN_LIST_PAGES = 5
+# 只认 ci_fix_pipeline.yml 的 run-name（`ci-fix PR#<n> · attempt <k> · <repo>`），
+# 避免别的 repository_dispatch 工作流标题里恰好带 PR# 也被算进来。
+_RUN_PR_RE = re.compile(r'^ci-fix PR#(\d+)')
 
 
 _PRERELEASE_RE = re.compile(
@@ -128,35 +143,84 @@ def _within_lookback(pr: Dict, cutoff: datetime) -> bool:
     return updated_at >= cutoff
 
 
-def _active_repair_pr_numbers(target_repo: str, token: str) -> set:
-    """本仓当前 queued/in_progress 的 ci-fix run 覆盖的源 PR 号集合。
+def _ci_fix_run_stats(target_repo: str, token: str) -> Optional[tuple]:
+    """本仓 ci-fix run 的统计：({源 PR 号: 历史 run 次数}, {在飞/排队的源 PR 号})。
 
-    fix PR 要到一轮修复跑完最后一步才生成，在那之前的整个窗口里 monitor 每轮
-    都会看到「No fix PR」。若无守卫，每轮都会对同一 PR 重发一次 → 队列里同一
-    PR 堆多条 run（实测 #5071 等被连发两次）。这里用 run 状态兜住：只要有在飞/
-    排队的 ci-fix run，就不再 dispatch。run 一旦结束（成功/失败/取消），集合
-    自然不再包含它，无需陈旧超时。
+    次数只看 run 标题里的 `PR#<n>`（ci_fix_pipeline 的 run-name 自己写的），因此
+    不依赖 Fix PR 是否存在——**修不成功、从未生成 Fix PR 的 PR 同样会被数到**，
+    这正是旧的「按 Fix PR / 分支 commit 计数」漏掉的情形。
+
+    两个用途：
+      「在飞/排队」→ fix PR 生成前的整个窗口里 monitor 都会看到「No fix PR」，
+      没有这个守卫就会对同一 PR 连发多条 run（实测 #5071 等被连发两次）。
+      「历史次数」→ 跨周期预算：跑满 MAX_RETRIES 次仍没成功就停手转人工。
+
+    查询失败返回 None：调用方据此跳过本轮 dispatch。宁可晚一天跑，也不要在查不到
+    历史时对同一条 PR 无限重派——那正是这次要修掉的病。
     """
-    prs: set = set()
+    counts: Dict[int, int] = {}
+    active: set = set()
     url = f"https://api.github.com/repos/{target_repo}/actions/runs"
     headers = {'Authorization': f'token {token}',
                'Accept': 'application/vnd.github.v3+json'}
     try:
-        resp = requests.get(url, headers=headers,
-                            params={'event': 'repository_dispatch', 'per_page': 100},
-                            timeout=30)
-        if not resp.ok:
-            log(f"  ⚠️ 查询在飞修复 run 失败 HTTP {resp.status_code}，本轮跳过在飞守卫")
-            return prs
-        for run in (resp.json().get('workflow_runs') or []):
-            if run.get('status') not in ('queued', 'in_progress'):
-                continue
-            m = re.search(r'PR#(\d+)', run.get('name', ''))
-            if m:
-                prs.add(int(m.group(1)))
+        for page in range(1, RUN_LIST_PAGES + 1):
+            resp = requests.get(url, headers=headers,
+                                params={'event': 'repository_dispatch',
+                                        'per_page': 100, 'page': page},
+                                timeout=30)
+            if not resp.ok:
+                log(f"  ⚠️ 查询历史修复 run 失败 HTTP {resp.status_code}")
+                return None
+            runs = resp.json().get('workflow_runs') or []
+            for run in runs:
+                m = _RUN_PR_RE.search(run.get('name') or '')
+                if not m:
+                    continue
+                pr_number = int(m.group(1))
+                counts[pr_number] = counts.get(pr_number, 0) + 1
+                if run.get('status') in ('queued', 'in_progress'):
+                    active.add(pr_number)
+            if len(runs) < 100:
+                break
     except Exception as e:
-        log(f"  ⚠️ 查询在飞修复 run 异常（本轮跳过在飞守卫）: {e}")
-    return prs
+        log(f"  ⚠️ 查询历史修复 run 异常: {e}")
+        return None
+    return counts, active
+
+
+def _escalate_to_human(repo: str, api, pr_number: int, runs_done: int,
+                       write_token: str, reason: str) -> None:
+    """跑满 run 预算仍未成功：停止自动重试，并按策略决定是否回帖源 PR。
+
+    回帖是 outward-facing 动作、且落在别人的仓库上，沿用 build-fix 的约定：只有
+    Variable `PR_COMMENT_ON_FAILURE` 为真才回帖，默认只留日志与 `exhausted` 标记。
+    标记只用于「已提示过」去重；**停止重试本身靠 run 计数**，不依赖标记是否写得成。
+    """
+    if ci_data.is_exhausted(pr_number):
+        log(f"    → 已跑满 {runs_done} 次自动修复且已提示过人工，跳过 dispatch")
+        return
+    if os.getenv('PR_COMMENT_ON_FAILURE', '').strip().lower() not in ('1', 'true', 'yes'):
+        log(f"    🛑 连续 {runs_done} 次修复未成功，停止自动重试"
+            f"（未回帖：PR_COMMENT_ON_FAILURE 未开启；原因：{reason}）。"
+            f"证据见 ci-fix-log 分支 ci-fix-log/{pr_number}/")
+        return
+    message = (
+        f"🤖 自动修复已尝试 {runs_done} 次仍未成功（{reason}），停止自动重试。\n\n"
+        f"诊断与构建证据保留在 `ci-fix-log` 分支的 `ci-fix-log/{pr_number}/` 下，"
+        "以及历次 run 的日志里，请人工处理。"
+    )
+    try:
+        api.add_pr_comment(repo, pr_number, message, write_token)
+    except Exception as e:
+        log(f"    ⚠️ 人工提示评论失败（本轮仍不 dispatch，下轮重试）: {e}")
+        return
+    try:
+        ci_data.mark_exhausted(pr_number, runs_done, reason)
+    except Exception as e:
+        log(f"    ⚠️ 写 exhausted 标记失败（非致命，下轮会重复提示一次）: {e}")
+    log(f"    🛑 连续 {runs_done} 次修复未成功，已回帖提示人工（原因：{reason}）")
+
 
 
 def process_all():
@@ -184,9 +248,14 @@ def process_all():
     log(f"   target_repo:  {target_repo}")
     log(f"   poll_interval: {poll_interval}m  max_events: {max_events}  lookback: {lookback_minutes}m")
 
-    # 在飞/排队的修复 run 覆盖的源 PR：这些 PR 已有修复在进行，别重复 dispatch
-    active_repairs = _active_repair_pr_numbers(target_repo, dispatch_token)
-    log(f"   在飞/排队的修复 PR 数: {len(active_repairs)}")
+    # 本仓 ci-fix run 的两项统计：历史次数（跨周期预算）+ 在飞/排队集合（防连发）
+    run_stats = _ci_fix_run_stats(target_repo, dispatch_token)
+    if run_stats is None:
+        log("⚠️ 无法统计历史修复 run，本轮不 dispatch（避免重复重派）")
+        return
+    run_counts, active_repairs = run_stats
+    log(f"   在飞/排队的修复 PR 数: {len(active_repairs)}；"
+        f"历史 run 覆盖 {len(run_counts)} 个源 PR")
 
     total_dispatched = 0
 
@@ -252,6 +321,10 @@ def process_all():
             if fix_pr is None:
                 fix_pr = api.find_open_ci_successful_fix_pr(repo, pr_number, token)
 
+            # 该 PR 已跑过的 ci-fix run 次数（含在飞/排队）：跨周期预算的唯一依据，
+            # 也是 run 标题里 attempt 的来源。修不成功→没有 Fix PR 的循环，靠它兜住。
+            runs_done = run_counts.get(pr_number, 0)
+
             if fix_pr is None or fix_pr['state'] == 'closed':
                 # lookback 过滤：首次 dispatch 时检查 PR 是否在时间窗口内
                 if lookback_cutoff and not _within_lookback(pr, lookback_cutoff):
@@ -266,12 +339,18 @@ def process_all():
                 if fix_pr is None and pr_number in active_repairs:
                     log(f"    → Skipping: PR #{pr_number} 已有在飞/排队的修复 run")
                     continue
+                # 预算用尽：不再 dispatch，留一次人工提示就收手
+                if runs_done >= MAX_RETRIES:
+                    _escalate_to_human(repo, api, pr_number, runs_done, write_token,
+                                       'Fix PR 已关闭' if fix_pr else '未生成 Fix PR')
+                    continue
                 if fix_pr and fix_pr['state'] == 'closed':
-                    log(f"    → Fix PR #{fix_pr['number']} was closed, re-dispatching")
+                    log(f"    → Fix PR #{fix_pr['number']} was closed, "
+                        f"re-dispatching (attempt #{runs_done + 1})")
                 else:
-                    log(f"    → No fix PR, dispatching first attempt")
+                    log(f"    → No fix PR, dispatching attempt #{runs_done + 1}")
                 if dispatch_ci_fix(repo, platform, pr, dispatch_token, target_repo,
-                                   attempt=1):
+                                   attempt=runs_done + 1):
                     total_dispatched += 1
 
             elif fix_pr['state'] == 'open':
@@ -322,11 +401,16 @@ def process_all():
                             )
                         except Exception as e:
                             log(f"    ⚠️  Close/comment failed: {e}")
+                    elif runs_done >= MAX_RETRIES:
+                        # 分支 commit 数还没到 6，但这个 PR 的 run 总数已经到了：
+                        # run 计数是更早、更硬的信号，同样转人工而不是再来一轮
+                        _escalate_to_human(repo, api, pr_number, runs_done, write_token,
+                                           f'Fix PR #{fix_pr["number"]} CI 仍失败')
                     else:
-                        log(f"    → Dispatching retry (attempt #{count + 1})")
+                        log(f"    → Dispatching retry (attempt #{runs_done + 1})")
                         if dispatch_ci_fix(repo, platform, {'number': pr_number},
                                            dispatch_token, target_repo,
-                                           attempt=count + 1,
+                                           attempt=runs_done + 1,
                                            fix_pr_number=fix_pr['number']):
                             total_dispatched += 1
 

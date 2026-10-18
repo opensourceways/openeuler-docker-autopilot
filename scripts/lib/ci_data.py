@@ -165,6 +165,22 @@ def mark_retest_notified(pr_number: int, head_sha: str) -> None:
                branch=CI_FIX_BRANCH)
 
 
+def exhausted_path(pr_number: int) -> str:
+    """「已跑满自动修复预算、转人工」标记（Monitor 据此不再 dispatch）。"""
+    return f"ci-fix-log/{pr_number}/exhausted"
+
+
+def is_exhausted(pr_number: int) -> bool:
+    return bool(read_file(exhausted_path(pr_number), branch=CI_FIX_BRANCH))
+
+
+def mark_exhausted(pr_number: int, runs_done: int, reason: str) -> None:
+    write_file(exhausted_path(pr_number),
+               f"runs={runs_done}\nreason={reason}\n",
+               f"exhausted: PR #{pr_number} after {runs_done} ci-fix run(s)",
+               branch=CI_FIX_BRANCH)
+
+
 def failure_type(analysis: str) -> str:
     """从分析报告提取「失败类型」字段并归一化（如 'infra-error'）。
 

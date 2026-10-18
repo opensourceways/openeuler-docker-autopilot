@@ -16,7 +16,9 @@ from scripts.watch.process_pr_events import (
     _is_prerelease,
     _is_auto_upgrade,
     _skipped_app,
-    _active_repair_pr_numbers,
+    _ci_fix_run_stats,
+    _escalate_to_human,
+    MAX_RETRIES,
 )
 
 
@@ -166,7 +168,7 @@ class TestIsFixPrTitle:
         assert _is_fix_pr_title(title) is False, f"Should not skip: {title}"
 
 
-# ── 在飞修复守卫（_active_repair_pr_numbers）──────────────────────────────────
+# ── 修复 run 统计（_ci_fix_run_stats：历史次数 + 在飞集合）────────────────────
 
 def _runs_response(runs):
     m = MagicMock()
@@ -175,32 +177,126 @@ def _runs_response(runs):
     return m
 
 
-class TestActiveRepairPrNumbers:
-    def test_collects_only_queued_and_in_progress(self):
+class TestCiFixRunStats:
+    def test_counts_every_run_and_tracks_only_in_flight(self):
+        """次数含已完成（跨周期预算），在飞集合只认 queued/in_progress。"""
         runs = [
-            {'status': 'queued', 'name': 'ci-fix PR#5071 · attempt 1 · openeuler/openeuler-docker-images'},
-            {'status': 'in_progress', 'name': 'ci-fix PR#5054 · attempt 1 · x'},
-            {'status': 'completed', 'name': 'ci-fix PR#3234 · attempt 1 · x'},
-            {'status': 'cancelled', 'name': 'ci-fix PR#9999 · attempt 1 · x'},
+            {'status': 'completed', 'name': 'ci-fix PR#5164 · attempt 1 · x'},
+            {'status': 'completed', 'name': 'ci-fix PR#5164 · attempt 1 · x'},
+            {'status': 'queued', 'name': 'ci-fix PR#5071 · attempt 3 · x'},
+            {'status': 'in_progress', 'name': 'ci-fix PR#5054 · attempt 2 · x'},
+            {'status': 'cancelled', 'name': 'ci-fix PR#3234 · attempt 1 · x'},
         ]
         with patch('scripts.watch.process_pr_events.requests.get',
                    return_value=_runs_response(runs)):
-            assert _active_repair_pr_numbers('FdeCad/openeuler-docker-autopilot-main', 'tok') == {5071, 5054}
+            counts, active = _ci_fix_run_stats('FdeCad/openeuler-docker-autopilot-main', 'tok')
+        assert counts == {5164: 2, 5071: 1, 5054: 1, 3234: 1}
+        assert active == {5071, 5054}
+
+    def test_counts_runs_that_never_produced_a_fix_pr(self):
+        """这正是旧实现漏掉的：修复不成功 → 没有 Fix PR，但 run 次数照样要数到。"""
+        runs = [{'status': 'completed', 'name': 'ci-fix PR#5164 · attempt 1 · x'}
+                for _ in range(MAX_RETRIES)]
+        with patch('scripts.watch.process_pr_events.requests.get',
+                   return_value=_runs_response(runs)):
+            counts, _ = _ci_fix_run_stats('r', 'tok')
+        assert counts[5164] == MAX_RETRIES
 
     def test_ignores_runs_without_pr_number(self):
         runs = [{'status': 'queued', 'name': 'Watch CI failed PRs'}]
         with patch('scripts.watch.process_pr_events.requests.get',
                    return_value=_runs_response(runs)):
-            assert _active_repair_pr_numbers('r', 'tok') == set()
+            counts, active = _ci_fix_run_stats('r', 'tok')
+        assert counts == {} and active == set()
 
-    def test_http_error_returns_empty(self):
+    def test_only_counts_runs_named_by_the_ci_fix_pipeline(self):
+        """其它工作流的标题里恰好带 PR# 不算数，只认 `ci-fix PR#<n>`。"""
+        runs = [
+            {'status': 'completed', 'name': 'ci-fix PR#5164 · attempt 1 · x'},
+            {'status': 'completed', 'name': 'upgrade PR#5164 · something'},
+            {'status': 'completed', 'name': 'new-image PR#5164'},
+        ]
+        with patch('scripts.watch.process_pr_events.requests.get',
+                   return_value=_runs_response(runs)):
+            counts, active = _ci_fix_run_stats('r', 'tok')
+        assert counts == {5164: 1} and active == set()
+
+    def test_paginates_until_a_short_page(self):
+        """一页 100 条 ≈ 两天，跨周期预算必须多翻几页才数得准。"""
+        pages = []
+
+        def fake_get(url, headers=None, params=None, timeout=None):
+            pages.append(params['page'])
+            if params['page'] == 1:
+                return _runs_response([
+                    {'status': 'completed', 'name': f'ci-fix PR#{9000 + i} · attempt 1 · x'}
+                    for i in range(100)
+                ])
+            return _runs_response([
+                {'status': 'completed', 'name': 'ci-fix PR#5164 · attempt 1 · x'},
+            ])
+
+        with patch('scripts.watch.process_pr_events.requests.get', side_effect=fake_get):
+            counts, _ = _ci_fix_run_stats('r', 'tok')
+        assert pages == [1, 2]
+        assert counts[5164] == 1
+
+    def test_http_error_returns_none(self):
+        """查不到历史就返回 None：调用方据此跳过本轮，绝不因为查不到而无限重派。"""
         m = MagicMock()
         m.ok = False
         m.status_code = 403
         with patch('scripts.watch.process_pr_events.requests.get', return_value=m):
-            assert _active_repair_pr_numbers('r', 'tok') == set()
+            assert _ci_fix_run_stats('r', 'tok') is None
 
-    def test_exception_returns_empty(self):
+    def test_exception_returns_none(self):
         with patch('scripts.watch.process_pr_events.requests.get',
                    side_effect=Exception('boom')):
-            assert _active_repair_pr_numbers('r', 'tok') == set()
+            assert _ci_fix_run_stats('r', 'tok') is None
+
+
+# ── 跑满预算 → 转人工（_escalate_to_human）────────────────────────────────────
+
+class TestEscalateToHuman:
+    def test_comments_once_and_marks_exhausted(self, monkeypatch):
+        monkeypatch.setenv('PR_COMMENT_ON_FAILURE', 'true')
+        api = MagicMock()
+        with patch('scripts.watch.process_pr_events.ci_data') as data:
+            data.is_exhausted.return_value = False
+            _escalate_to_human('openeuler/openeuler-docker-images', api, 5164,
+                               MAX_RETRIES, 'tok', '未生成 Fix PR')
+        api.add_pr_comment.assert_called_once()
+        repo, pr_number, message, _token = api.add_pr_comment.call_args[0]
+        assert pr_number == 5164 and '5164' in message and str(MAX_RETRIES) in message
+        data.mark_exhausted.assert_called_once_with(5164, MAX_RETRIES, '未生成 Fix PR')
+
+    def test_does_not_comment_by_default(self, monkeypatch):
+        """回帖是 outward-facing 动作，默认关闭：只停手 + 留日志，标记也不写。"""
+        monkeypatch.delenv('PR_COMMENT_ON_FAILURE', raising=False)
+        api = MagicMock()
+        with patch('scripts.watch.process_pr_events.ci_data') as data:
+            data.is_exhausted.return_value = False
+            _escalate_to_human('r', api, 5164, MAX_RETRIES, 'tok', '未生成 Fix PR')
+        api.add_pr_comment.assert_not_called()
+        data.mark_exhausted.assert_not_called()
+
+    def test_second_cycle_does_not_comment_again(self, monkeypatch):
+        """Monitor 每天轮询一次，标记在就不再重复评论同一条 PR。"""
+        monkeypatch.setenv('PR_COMMENT_ON_FAILURE', 'true')
+        api = MagicMock()
+        with patch('scripts.watch.process_pr_events.ci_data') as data:
+            data.is_exhausted.return_value = True
+            _escalate_to_human('r', api, 5164, MAX_RETRIES, 'tok', '未生成 Fix PR')
+        api.add_pr_comment.assert_not_called()
+        data.mark_exhausted.assert_not_called()
+
+    def test_comment_failure_still_blocks_dispatch(self, monkeypatch):
+        """评论失败也不 dispatch（下轮会再试评论），且不写标记。"""
+        monkeypatch.setenv('PR_COMMENT_ON_FAILURE', 'true')
+        api = MagicMock()
+        api.add_pr_comment.side_effect = Exception('403')
+        with patch('scripts.watch.process_pr_events.ci_data') as data:
+            data.is_exhausted.return_value = False
+            _escalate_to_human('r', api, 5164, MAX_RETRIES, 'tok', '未生成 Fix PR')
+        data.mark_exhausted.assert_not_called()
+

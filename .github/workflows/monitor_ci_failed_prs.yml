@@ -74,6 +74,9 @@ jobs:
         env:
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          # 跑满 run 预算（MAX_RETRIES）后是否回帖源 PR 提示人工。回帖是
+          # outward-facing 动作，默认关闭；开关与 build-fix 阶段共用同一个 Variable。
+          PR_COMMENT_ON_FAILURE: ${{ vars.PR_COMMENT_ON_FAILURE || '' }}
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" \
             scripts/watch/process_pr_events.py

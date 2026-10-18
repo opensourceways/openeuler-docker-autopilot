@@ -118,6 +118,9 @@ Fix PR CI 结果
   ├─ ci_processing   ─→ 等待，下次轮询再判断
   ├─ ci_failed（< 6）─→ 重新 dispatch（attempt+1，对 Fix PR 追加 commit 重试）
   └─ ci_failed（≥ 6）─→ 关闭 Fix PR，通知人工介入
+
+跨周期预算（按 run 计数，与 Fix PR 是否存在无关）：
+  同一 PR 的历史 ci-fix run ≥ 6 ─→ 停止自动重试，在源 PR 留一次性人工提示
 ```
 
 ### 核心能力
@@ -132,7 +135,7 @@ Fix PR CI 结果
 | **双架构原生验证** | x86_64 与 aarch64 各自独立产出构建与测试结论，一个架构通过不代表整体通过 |
 | **健康驱动的就绪判定** | 有 `HEALTHCHECK` 时等待 `healthy`，没有时完整观察 120 秒容器行为；`EXPOSE` 端口不参与就绪调度 |
 | **有界自动修复** | Fixer 依据结构化失败证据做最小范围修复，超出轮次上限即停止并保留证据 |
-| **PR CI 失败自动修复** | 轮询带 `ci_failed` 标签的 PR，按 Fix PR 状态决策：不存在则首次修复、CI 再失败则追加 commit 重试，超过 6 次自动关闭并通知人工 |
+| **PR CI 失败自动修复** | 轮询带 `ci_failed` 标签的 PR，按 Fix PR 状态决策：不存在则首次修复、CI 再失败则追加 commit 重试；同一 PR 的历史 run 数达到 6 次（含没跑出 Fix PR 的那些）即停止自动重试并转人工 |
 | **容器内逐条执行式修复** | 不在文本上盲改：在自托管 Runner 的容器里逐条执行 Dockerfile 指令、失败即修，跑通后反推 Dockerfile 并用 `docker build` 验证 |
 | **精准日志抓取** | 从 PR 评论表格逐行解析 FAILED 行，只取实际失败架构的构建 job 日志、排除 trigger/编排层；日志与 `ci_failed` 状态矛盾时主动标记「证据不足」而不是猜根因 |
 | **CI 失败知识库** | [`docs/ci-failure-patterns.md`](docs/ci-failure-patterns.md) 按失败模式归档，修复通过 CI 后自动追加案例，下次诊断自动参考 |
@@ -231,6 +234,10 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | arm64 首修 / 复验（**必须 arm64**） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` | 输入 `arm64_runner_labels`，Variables `CI_FIX_ARM64_RUNNER_LABELS` |
 | 监控 / cron 同步 | 同轻量 Job | Variables `CI_FIX_X64_RUNNER_LABELS`（监控另有输入 `runner_labels`） |
 
+**arm64 复验使用持久 BuildKit 层缓存。** 复验是对 derived Dockerfile 的从零 `docker build`，重型镜像（例如 bolt：conan 从源码编 34 个依赖，x86_64 上实测单个编译层就要 4427.6s）每次都从头编，很容易撞 `BUILD_DOCKER_TIMEOUT`（默认 7200s）。因此 `verify-arm` 会带 `CI_FIX_BUILD_CACHE_DIR` 走 `buildx --load` + `type=local, mode=max` 把层缓存留在自托管机器上：同一 PR 下一轮 / 下一天复验同一份 derived Dockerfile 时前缀层直接命中，不同 PR 之间同 base、同版本的层也能复用。缓存目录默认在 `<runner.workspace>/ci-fix-buildkit-cache`（checkout 之外，不会被清理）；builder 不存在时会自动创建一个 docker-container builder，创建/启动失败则**自动退回普通 `docker build`**（缓存是加速手段，不能让它在环境不满足时把构建弄失败）。磁盘占用按需清理：`docker buildx prune -f --filter until=168h`，或直接删缓存目录。
+
+> ⚠️ 缓存只覆盖 `docker build` 的层。Dockerfile 内部的 conan / pip 下载与源码编译要复用，需要在 Dockerfile 里用 `RUN --mount=type=cache`（属于源仓库的改动，不在本仓控制范围内）。
+
 **轻量 Job 跑在 GitHub 托管 Runner 上（`ubuntu-latest`）。** 一个自托管 runner 实例同时只跑一个 Job，轻量 Job（`prepare` / 分析 / `code-fix` / 监控）若与 amd64 构建 Job 共用同一实例，一个耗时 40 分钟的 `amd64-fix` 会把其他 PR 的 `prepare` 全堵在后面。改为托管 Runner 后两者天然分道、互不阻塞。托管 Runner 上 `/opt` 不可写，工具链缓存自动降级到 Job 临时目录（[`phase1-setup`](.github/actions/phase1-setup/action.yml) 已处理），代价是每个 Job 重新下载一次工具链。
 
 > ⚠️ **私有仓库的托管 Runner 会消耗额度**：本仓是 private，GitHub 托管 Runner 按分钟计入套餐额度（免费版 2000 分钟/月，超出自付）。其中「日志分析」会跑 AI Agent，可能占用较长时间。若想省额度，把 `CI_FIX_X64_RUNNER_LABELS` 指回自托管标签（如 `["self-hosted","Linux","X64"]`）即可，代码默认值只作兜底。
@@ -267,12 +274,14 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `AI_MODEL` | 场景二模型名 | `deepseek/deepseek-v4-pro` |
 | `AI_TIMEOUT_MS` | 场景二单次 Agent 调用超时（毫秒） | `10800000` |
 | `GITCODE_FORK_REPO` | 场景二 fix 分支的推送去向（`owner/repo`）；留空则直推源仓库 | _(空)_ |
-| `PR_COMMENT_ON_FAILURE` | 场景二自动修复连续失败时是否回帖源 PR（回帖是 outward-facing 动作，故默认不回） | _(空)_ |
+| `PR_COMMENT_ON_FAILURE` | 场景二自动修复连续失败时是否回帖源 PR（回帖是 outward-facing 动作，故默认不回；覆盖位置：arm64 复验三轮失败、Monitor 跑满 6 个 run 停手） | _(空)_ |
 | `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二 Fix commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
 | `OPENAI_BASE_URL` | 自定义模型 API 代理地址 | _(空)_ |
 | `CI_FIX_X64_RUNNER_LABELS` | 场景二轻量 Job（prepare / 分析 / code-fix / 监控 / cron 同步）的 runner 标签，JSON 数组 | `["ubuntu-latest"]` |
 | `CI_FIX_AMD64_RUNNER_LABELS` | 场景二 amd64 修复 Job 的 runner 标签（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-fix-amd64"]` |
 | `CI_FIX_ARM64_RUNNER_LABELS` | 场景二 arm64 首修 / 复验 Job 的 runner 标签（必须 arm64） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` |
+| `CI_FIX_BUILD_CACHE_DIR` | arm64 复验的持久 BuildKit 层缓存目录（自托管机器上的路径，跨 run 复用；留空则退化为不缓存的 `docker build`） | `<runner.workspace>/ci-fix-buildkit-cache` |
+| `CI_FIX_BUILDKIT_BUILDER` | 缓存用的 buildx builder 名（不存在则自动创建 docker-container builder） | `oe-ci-fix` |
 
 场景一的 Agent 模型默认取 `deepseek/deepseek-flash`（定义在 [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py)），可用 `OPENCODE_MODEL` / `OPENCODE_TIMEOUT` 覆盖；场景二默认取 `deepseek/deepseek-v4-pro`，用 `AI_MODEL` 覆盖。
 
@@ -345,7 +354,7 @@ create_new_images.yml  (operation = scenario_one)
 
 | Fix PR 状态 | 动作 |
 |-------------|------|
-| 不存在 | dispatch 一次完整修复（`run-ci-fix`，首次 attempt=1） |
+| 不存在 | dispatch 一次完整修复（`run-ci-fix`，`attempt = 该 PR 的历史 run 数 + 1`） |
 | open + `ci_successful` | 评论原始 PR 通知 reviewer 合并（一次性），并把本次修复模式写入知识库 |
 | open + `ci_processing` | CI 运行中，跳过等待 |
 | open + `ci_failed`，commit 次数 < 6 | 重新 dispatch，对 Fix PR 追加 commit 重试 |
@@ -353,6 +362,14 @@ create_new_images.yml  (operation = scenario_one)
 | open + 无状态标签 | CI 尚未开始，跳过 |
 | closed | 重新 dispatch（可能被人工关闭后需重试） |
 | merged | 已合并，跳过 |
+
+**跨周期预算按 run 计数，不按 Fix PR 计。** run 标题里的 `PR#<n>` 由本仓自己写入，所以
+「修不成功 → 没跑出 Fix PR → 每次都算第一次」这种自我循环也能被数到：同一 PR 的历史
+ci-fix run 数达到 `MAX_RETRIES`（6）就停止自动重试——默认只留日志，把
+`PR_COMMENT_ON_FAILURE` 设为 true 时会在源 PR 上回帖提示人工，并在 `ci-fix-log` 分支写
+`ci-fix-log/<pr>/exhausted` 标记（有标记就不再重复评论）。要再自动跑一次，直接手动触发
+**Fix PR CI Fix Pipeline**；`attempt` 也改为按 run 数推进，run 标题不再出现连着的两个
+`attempt 1`。
 
 **跳过规则：** 预发布版本（标题含 `-alpha` / `-beta` / `-rc` / `-preview` / `-dev` / `-snapshot` / `-nightly`）与工作流自身创建的 Fix PR（标题以 `fix:` 开头）不触发修复。
 
@@ -381,7 +398,7 @@ code-fix                  最终 Dockerfile 作为最小 diff 落回源码 → c
 | Round 1 | arm64 → x86 → arm64 | arm64 首修（容器内逐条执行、失败即修）→ amd64 续修 → arm64 从零 `docker build` 复验 |
 | Round 2 / 3 | x86 → arm64 | 在 arm64 冻结版之上回修（修复必须架构中立或加架构守卫）→ arm64 复验 |
 
-**轮次怎么推进：** 复验把 `verify_passed` 交给 workflow——失败且仍有预算时开下一轮（job 名字里直接写着第几轮），预算用尽（`MAX_VERIFY_ROUNDS=2`，合计 3 轮）时该轮 job 失败、链路终止并保留证据。跨周期的重试另计：Monitor 对同一条 PR 最多重试 6 次，每次是一个新 run，是第几次修复写在 run 标题的 `attempt` 上（`ci-fix PR#1234 · attempt 3 · <repo>`）。
+**轮次怎么推进：** 复验把 `verify_passed` 交给 workflow——失败且仍有预算时开下一轮（job 名字里直接写着第几轮），预算用尽（`MAX_VERIFY_ROUNDS=2`，合计 3 轮）时该轮 job 失败、链路终止并保留证据。跨周期的重试另计：Monitor 对同一条 PR 最多派 6 个 run（按 run 计数，见 4.1），是第几次修复写在 run 标题的 `attempt` 上（`ci-fix PR#1234 · attempt 3 · <repo>`）；跑满 6 次即停止自动重试并在源 PR 上提示人工。
 
 **日志抓取策略：** 从 PR 评论表格逐行（`<tr>`）解析，排除 `/trigger/`、`/gate/`、`/pre-check/` 编排层 URL，只取同行带 FAILED 标记的架构构建 URL，并按架构标识加权评分；日志取末尾 500 行（失败几乎总在尾部）。重试时 CI 结果表格出现在 Fix PR 评论中，会自动切换到 Fix PR 编号查询。若日志末尾是 `Finished: SUCCESS` 却仍带 `ci_failed` 标签，说明拉到的是编排层日志，诊断报告会标记「证据不足」而不是猜根因。
 

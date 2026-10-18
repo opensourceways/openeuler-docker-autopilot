@@ -14,7 +14,10 @@ from scripts.lib.build_runner import (
     container_name,
     docker_rm_by_label,
     docker_rm_images_by_label,
+    build_command,
+    ensure_build_cache,
 )
+import scripts.lib.build_runner as build_runner
 
 
 def test_parse_dockerfile_basic():
@@ -129,3 +132,83 @@ def test_docker_rm_images_by_label_noop_when_none_match():
         docker_rm_images_by_label('oe.ci-fix=1-1')
     # 只有一次列镜像调用，没有实际删除
     assert run.call_count == 1
+
+
+# ── 持久 BuildKit 层缓存（可选，仅自托管 runner）─────────────────────────────
+
+def test_build_command_without_cache_is_plain_docker_build():
+    """没配缓存目录时命令与改造前逐字一致。"""
+    assert build_command('AI/mlflow/3.12.0/Dockerfile') == [
+        'docker', 'build', '-f', 'AI/mlflow/3.12.0/Dockerfile', '.']
+
+
+def test_build_command_with_cache_uses_buildx_local_cache():
+    cmd = build_command('Dockerfile', '/work/ci-fix-buildkit-cache', 'oe-ci-fix')
+    assert cmd[:3] == ['docker', 'buildx', 'build']
+    assert '--load' in cmd
+    assert 'type=local,src=/work/ci-fix-buildkit-cache' in cmd
+    assert ('type=local,dest=/work/ci-fix-buildkit-cache,mode=max,ignore-error=true' in cmd)
+    assert cmd[cmd.index('--builder') + 1] == 'oe-ci-fix'
+    assert cmd[-3:] == ['-f', 'Dockerfile', '.']
+
+
+def test_build_command_without_builder_flag_when_name_empty():
+    cmd = build_command('Dockerfile', '/cache')
+    assert '--builder' not in cmd
+
+
+def test_ensure_build_cache_disabled_without_dir(monkeypatch):
+    monkeypatch.setattr(build_runner, 'BUILD_CACHE_DIR', '')
+    monkeypatch.setattr(build_runner, '_CACHE_READY', None)
+    assert ensure_build_cache() is False
+
+
+def test_ensure_build_cache_falls_back_when_buildx_unusable(monkeypatch, tmp_path):
+    """buildx/builder 不可用 → 返回 False，调用方退回普通 docker build。"""
+    monkeypatch.setattr(build_runner, 'BUILD_CACHE_DIR', str(tmp_path / 'cache'))
+    monkeypatch.setattr(build_runner, '_CACHE_READY', None)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        m = MagicMock()
+        m.returncode = 1
+        m.stderr = 'docker: unknown command: buildx'
+        return m
+
+    monkeypatch.setattr(build_runner.subprocess, 'run', fake_run)
+    assert ensure_build_cache() is False
+    assert calls[0] == ['docker', 'buildx', 'inspect', 'oe-ci-fix']
+    assert calls[1][:3] == ['docker', 'buildx', 'create']
+    # 探测结果被记住，不会每次 docker_build 都重新 bootstrap（inspect+create 各一次）
+    assert ensure_build_cache() is False
+    assert len(calls) == 2
+
+
+def test_docker_build_uses_cache_command_when_ready(monkeypatch, tmp_path):
+    monkeypatch.setattr(build_runner, 'BUILD_CACHE_DIR', str(tmp_path))
+    monkeypatch.setattr(build_runner, '_CACHE_READY', True)
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen['cmd'] = cmd
+        return _completed('')
+
+    monkeypatch.setattr(build_runner.subprocess, 'run', fake_run)
+    build_runner.docker_build('Dockerfile', str(tmp_path))
+    assert 'buildx' in seen['cmd']
+    assert any(a.startswith('type=local,src=') for a in seen['cmd'])
+
+
+def test_docker_build_stays_plain_when_cache_not_ready(monkeypatch, tmp_path):
+    monkeypatch.setattr(build_runner, 'BUILD_CACHE_DIR', str(tmp_path))
+    monkeypatch.setattr(build_runner, '_CACHE_READY', False)
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen['cmd'] = cmd
+        return _completed('')
+
+    monkeypatch.setattr(build_runner.subprocess, 'run', fake_run)
+    build_runner.docker_build('Dockerfile', str(tmp_path))
+    assert seen['cmd'] == ['docker', 'build', '-f', 'Dockerfile', '.']

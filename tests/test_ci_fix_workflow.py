@@ -200,6 +200,35 @@ def test_failure_type_is_parsed_and_normalised():
     assert ci_data.failure_type('# CI 失败分析报告\n## 基本信息') == ''
 
 
+def test_monitor_retry_budget_is_keyed_on_runs_not_fix_pr(monkeypatch):
+    """跑满预算的判据必须来自 run 计数，而不是「Fix PR 是否存在」。
+
+    修复始终不成功的 PR 永远不会生成 Fix PR，按 Fix PR 计数就等于没有护栏。
+    """
+    from scripts.lib import ci_data
+
+    written = {}
+    monkeypatch.setattr(ci_data, 'read_file',
+                        lambda path, branch=None: written.get(path, ''))
+    monkeypatch.setattr(ci_data, 'write_file',
+                        lambda path, content, message, branch=None: written.__setitem__(path, content))
+
+    assert ci_data.is_exhausted(5164) is False
+    ci_data.mark_exhausted(5164, 6, '未生成 Fix PR')
+    assert written[ci_data.exhausted_path(5164)].startswith('runs=6')
+    assert '未生成 Fix PR' in written[ci_data.exhausted_path(5164)]
+    assert ci_data.is_exhausted(5164) is True
+    # 标记落在 ci-fix-log 分支的 per-PR 目录下，与其它状态文件同级
+    assert ci_data.exhausted_path(5164) == 'ci-fix-log/5164/exhausted'
+
+    monitor = (ROOT / 'scripts' / 'watch' / 'process_pr_events.py').read_text(encoding='utf-8')
+    assert '_ci_fix_run_stats' in monitor
+    assert 'is_exhausted' in monitor
+    # attempt 由 run 次数推进（attempt = runs_done + 1），不再是写死的 1
+    assert 'attempt=runs_done + 1' in monitor
+    assert 'attempt=1' not in monitor
+
+
 def test_monitor_dispatches_one_repair_attempt_per_run():
     assert 'run-ci-fix' in _trigger(_workflow(PIPELINE))['repository_dispatch']['types']
 
