@@ -11,6 +11,10 @@ opencode 调用统一封装 - Python 版本
   4. 进程组 SIGKILL: 确保子进程被清理
   5. 超时必须向上抛出: 绝不能被兜底 except 吞掉，否则调用方只看到「产物不存在」
   6. prompt 落盘支持 replay
+
+模型/服务商: 模型名写成 `provider/model`。对于自建或第三方 OpenAI 兼容端点
+（如阿里云百炼），用 OPENAI_BASE_URL + AI_PROVIDER_ID 注入自定义 provider 配置
+（见 _config_content）；内置 provider（deepseek / anthropic / openai ...）不需要。
 """
 
 import os
@@ -24,7 +28,11 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-DEFAULT_MODEL = os.getenv('AI_MODEL', 'deepseek/deepseek-v4-pro')
+DEFAULT_MODEL = os.getenv('AI_MODEL', 'bailian/qwen3-coder-plus')
+# 自定义 OpenAI 兼容服务商（如阿里云百炼）：模型名前缀即 provider id。
+# 仅当模型前缀命中 AI_PROVIDER_ID 且 OPENAI_BASE_URL 非空时，才注入自定义 provider
+# 配置；否则沿用 opencode 内置 provider（deepseek / anthropic / openai ...）。
+DEFAULT_PROVIDER_ID = os.getenv('AI_PROVIDER_ID', 'bailian')
 DEFAULT_AGENT = 'build'
 DEFAULT_EXTRA_RAW = '--dangerously-skip-permissions'
 DEFAULT_TIMEOUT = int(os.getenv('AI_TIMEOUT_MS', '10800000'))
@@ -57,6 +65,36 @@ def opencode_log_tail(max_lines: int = 40) -> str:
                '\n'.join(lines[-max_lines:])
     except Exception as e:  # 日志缺失不应掩盖原始错误
         return f'（读取 opencode 日志失败: {e}）'
+
+
+def _config_content(model: str, base_url: str, provider_id: str) -> str:
+    """为自定义 OpenAI 兼容服务商生成 opencode 配置内容（V1 schema）。
+
+    形如 `bailian/qwen3-coder-plus` + baseURL → 声明该 provider
+    （npm=@ai-sdk/openai-compatible、options.baseURL、models）。密钥用
+    `{env:OPENAI_API_KEY}` 引用，避免把明文写进配置内容。
+
+    模型前缀不是 provider_id、或 baseURL 为空时返回空串，表示沿用 opencode
+    内置 provider（deepseek / anthropic / openai ...），不注入任何自定义配置。
+    """
+    prefix, sep, model_id = (model or '').partition('/')
+    if not (base_url and provider_id and sep and prefix == provider_id and model_id):
+        return ''
+    config = {
+        '$schema': 'https://opencode.ai/config.json',
+        'provider': {
+            provider_id: {
+                'npm': '@ai-sdk/openai-compatible',
+                'name': provider_id,
+                'options': {
+                    'baseURL': base_url,
+                    'apiKey': '{env:OPENAI_API_KEY}',
+                },
+                'models': {model_id: {'name': model_id}},
+            }
+        },
+    }
+    return json.dumps(config, separators=(',', ':'), ensure_ascii=False)
 
 
 def run_opencode(
@@ -186,7 +224,16 @@ def run_opencode(
     base_url = os.environ.get('OPENAI_BASE_URL', '')
     log(f'    api:     key={("***" + api_key[-4:]) if len(api_key) > 4 else "NOT SET"}, base_url={base_url or "default"}')
     log(f'    replay:  cd {work_dir} && cat {prompt_dump_file} | {opencode_bin} {" ".join(opencode_args)}')
-    
+
+    # 自定义 OpenAI 兼容服务商（如阿里云百炼）：把 provider 注入子进程的
+    # OPENCODE_CONFIG_CONTENT，否则 `bailian/<model>` 无法解析到任何 provider。
+    child_env = os.environ.copy()
+    provider_config = _config_content(
+        model, base_url, os.environ.get('AI_PROVIDER_ID', DEFAULT_PROVIDER_ID))
+    if provider_config:
+        child_env['OPENCODE_CONFIG_CONTENT'] = provider_config
+        log(f'    provider: {model.split("/", 1)[0]} → 自定义 baseURL（OpenAI 兼容）')
+
     t0 = time.time()
     
     # 写 log file header
@@ -212,7 +259,7 @@ def run_opencode(
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=os.environ.copy(),
+            env=child_env,
             start_new_session=True,  # 创建新进程组
         )
     except Exception as e:

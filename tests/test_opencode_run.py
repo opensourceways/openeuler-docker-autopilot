@@ -8,6 +8,7 @@
      才一次性返回，构建类任务几十分钟的日志全是空白。
 """
 
+import json
 import os
 import shutil
 import sys
@@ -19,7 +20,7 @@ from pathlib import Path
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
-from scripts.lib.opencode_run import run_opencode  # noqa: E402
+from scripts.lib.opencode_run import run_opencode, _config_content  # noqa: E402
 
 # 需要 bash + stdbuf（run_opencode 用它们组装命令行）
 _NEEDS_POSIX = shutil.which('bash') is not None and shutil.which('stdbuf') is not None
@@ -150,6 +151,33 @@ class TestRunOpencode(unittest.TestCase):
         body = Path(os.path.join(self.tmp, logs[0])).read_text(encoding='utf-8')
         self.assertIn('LINE-1\n', body, 'log file 丢了首行')
         self.assertIn('LINE-300', body, 'log file 丢了末行')
+
+
+class TestConfigContent(unittest.TestCase):
+    """自定义 OpenAI 兼容服务商（阿里云百炼）的 provider 注入。"""
+
+    BASE = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+
+    def test_custom_provider_is_declared(self):
+        content = _config_content('bailian/qwen3-coder-plus', self.BASE, 'bailian')
+        config = json.loads(content)
+        provider = config['provider']['bailian']
+        self.assertEqual(provider['npm'], '@ai-sdk/openai-compatible')
+        self.assertEqual(provider['options']['baseURL'], self.BASE)
+        # 密钥走 env 引用，配置内容里不出现明文
+        self.assertEqual(provider['options']['apiKey'], '{env:OPENAI_API_KEY}')
+        self.assertIn('qwen3-coder-plus', provider['models'])
+
+    def test_no_injection_without_base_url(self):
+        self.assertEqual(_config_content('bailian/qwen3-coder-plus', '', 'bailian'), '')
+
+    def test_no_injection_for_builtin_provider(self):
+        """模型前缀不是自定义 provider id（如内置 deepseek）时不注入。"""
+        self.assertEqual(
+            _config_content('deepseek/deepseek-chat', self.BASE, 'bailian'), '')
+
+    def test_no_injection_when_model_has_no_prefix(self):
+        self.assertEqual(_config_content('qwen3-coder-plus', self.BASE, 'bailian'), '')
 
 
 if __name__ == '__main__':

@@ -93,11 +93,14 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
   AI_RUNNER: ${{ vars.AI_RUNNER || 'opencode' }}
-  AI_MODEL: ${{ vars.AI_MODEL || 'deepseek/deepseek-v4-pro' }}
+  # 服务商：阿里云百炼（DashScope OpenAI 兼容模式），provider id 为 bailian
+  AI_MODEL: ${{ vars.AI_MODEL || 'bailian/qwen3-coder-plus' }}
+  AI_PROVIDER_ID: ${{ vars.AI_PROVIDER_ID || 'bailian' }}
   AI_TIMEOUT_MS: ${{ vars.AI_TIMEOUT_MS || '10800000' }}
   OPENAI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
   DEEPSEEK_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
-  OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || '' }}
+  OPENAI_BASE_URL: >-
+    ${{ vars.OPENAI_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1' }}
   PR_COMMENT_ON_FAILURE: ${{ vars.PR_COMMENT_ON_FAILURE || '' }}
   # 本 run 的容器标签：run_id+attempt 唯一，按标签清理可并发安全（见 docker_shim）
   OE_CI_FIX_LABEL: oe.ci-fix=${{ github.run_id }}-${{ github.run_attempt }}

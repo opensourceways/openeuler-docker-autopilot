@@ -255,9 +255,9 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | Secret | 用途 | 必需 |
 |--------|------|------|
 | `GITCODE_TOKEN` | GitCode 读写：读 Issue/PR、克隆目标仓、推送分支、创建 PR、评论与打标签；场景二读 CI 日志同样依赖它 | 必填 |
-| `DEEPSEEK_API_KEY` | Agent 模型调用（经 opencode，走 `https://api.deepseek.com/anthropic`） | 除 `pipeline_smoke` 外必填 |
+| `AI_API_KEY` | 场景二的模型 Key（当前服务商为阿里云百炼，填 DashScope API Key）；留空时自动回退使用 `DEEPSEEK_API_KEY` | 场景二必填 |
+| `DEEPSEEK_API_KEY` | 场景一 / 三 / 四的 DeepSeek Key（经 opencode，走 `https://api.deepseek.com/anthropic`）；场景二未配 `AI_API_KEY` 时也回退用它 | 除 `pipeline_smoke` 外必填 |
 | `DISPATCH_TOKEN` | 场景二专用：触发本仓 `repository_dispatch`、读写 `ci-fix-log` 数据分支、checkout 源仓库、推送 fix 分支、创建 Fix PR（GitHub PAT，需 `repo` + `workflow` scope） | 场景二必填 |
-| `AI_API_KEY` | 场景二的模型 Key；留空时自动回退使用 `DEEPSEEK_API_KEY` | 可选 |
 | `CLAUDE_CREDENTIALS_JSON` | `AI_RUNNER=claude-code-account` 时的 Claude.ai OAuth 凭证 | 可选 |
 
 > `pipeline_smoke` 确定性收敛、绝不触发修复，因此调用方**不向它传递 API Key**——这是一条被工作流签名固化的约束，也是验证部署是否正确最省成本的方式。
@@ -271,19 +271,24 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `MAX_PARALLEL_IMAGES` | 场景三 / 四 Matrix 并行的镜像数上限 | `4` |
 | `GITCODE_BOT_USERNAME` | 交付阶段用于推送分支的 GitCode 账号名 | _(无)_ |
 | `AI_RUNNER` | 场景二 AI 后端：`opencode` / `claude-code-account` | `opencode` |
-| `AI_MODEL` | 场景二模型名 | `deepseek/deepseek-v4-pro` |
+| `AI_MODEL` | 场景二模型名（`provider/model`） | `bailian/qwen3-coder-plus` |
+| `AI_PROVIDER_ID` | 自定义 OpenAI 兼容服务商的 provider id（与模型名前缀一致） | `bailian` |
 | `AI_TIMEOUT_MS` | 场景二单次 Agent 调用超时（毫秒） | `10800000` |
 | `GITCODE_FORK_REPO` | 场景二 fix 分支的推送去向（`owner/repo`）；留空则直推源仓库 | _(空)_ |
 | `PR_COMMENT_ON_FAILURE` | 场景二自动修复连续失败时是否回帖源 PR（回帖是 outward-facing 动作，故默认不回；覆盖位置：arm64 复验三轮失败、Monitor 跑满 6 个 run 停手） | _(空)_ |
 | `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二 Fix commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
-| `OPENAI_BASE_URL` | 自定义模型 API 代理地址 | _(空)_ |
+| `OPENAI_BASE_URL` | 模型 API 地址（OpenAI 兼容） | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | `CI_FIX_X64_RUNNER_LABELS` | 场景二轻量 Job（prepare / 分析 / code-fix / 监控 / cron 同步）的 runner 标签，JSON 数组 | `["ubuntu-latest"]` |
 | `CI_FIX_AMD64_RUNNER_LABELS` | 场景二 amd64 修复 Job 的 runner 标签（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-fix-amd64"]` |
 | `CI_FIX_ARM64_RUNNER_LABELS` | 场景二 arm64 首修 / 复验 Job 的 runner 标签（必须 arm64） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` |
 | `CI_FIX_BUILD_CACHE_DIR` | arm64 复验的持久 BuildKit 层缓存目录（自托管机器上的路径，跨 run 复用；留空则退化为不缓存的 `docker build`） | `<runner.workspace>/ci-fix-buildkit-cache` |
 | `CI_FIX_BUILDKIT_BUILDER` | 缓存用的 buildx builder 名（不存在则自动创建 docker-container builder） | `oe-ci-fix` |
 
-场景一的 Agent 模型默认取 `deepseek/deepseek-flash`（定义在 [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py)），可用 `OPENCODE_MODEL` / `OPENCODE_TIMEOUT` 覆盖；场景二默认取 `deepseek/deepseek-v4-pro`，用 `AI_MODEL` 覆盖。
+场景一的 Agent 模型默认取 `deepseek/deepseek-flash`（定义在 [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py)），可用 `OPENCODE_MODEL` / `OPENCODE_TIMEOUT` 覆盖。
+
+场景二默认走**阿里云百炼**（DashScope OpenAI 兼容模式）：`AI_MODEL=bailian/qwen3-coder-plus`、`OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`、Key 放 `AI_API_KEY`。`bailian` 不是 opencode 内置 provider，[`opencode_run.py`](scripts/lib/opencode_run.py) 会按 `AI_PROVIDER_ID` + `OPENAI_BASE_URL` 在 `OPENCODE_CONFIG_CONTENT` 里声明一个自定义 provider（`npm=@ai-sdk/openai-compatible`），Key 以 `{env:OPENAI_API_KEY}` 引用、不落明文。
+
+换成其它 OpenAI 兼容服务商：改 `OPENAI_BASE_URL` + `AI_MODEL`（`<provider_id>/<model>`）+ `AI_PROVIDER_ID` 三者一致即可。若要用 opencode 内置 provider（如 `deepseek/…`、`anthropic/…`），把 `AI_MODEL` 前缀改成对应内置 id 即可——前缀与 `AI_PROVIDER_ID` 不一致时不会注入自定义 provider，会走 opencode 内置配置。
 
 ### 2.4 冒烟验证
 
