@@ -271,7 +271,7 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `MAX_PARALLEL_IMAGES` | 场景三 / 四 Matrix 并行的镜像数上限 | `4` |
 | `GITCODE_BOT_USERNAME` | 交付阶段用于推送分支的 GitCode 账号名 | _(无)_ |
 | `AI_RUNNER` | 场景二 AI 后端：`opencode` / `claude-code-account` | `opencode` |
-| `AI_MODEL` | 场景二模型名（`provider/model`） | `bailian/qwen3-coder-plus` |
+| `AI_MODEL` | 场景二模型名（`provider/model`）；`deepseek-v4.1-flash-1017` 是百炼上的 DeepSeek V4.1 Flash 1017 版本 | `bailian/deepseek-v4.1-flash-1017` |
 | `AI_PROVIDER_ID` | 自定义 OpenAI 兼容服务商的 provider id（与模型名前缀一致） | `bailian` |
 | `AI_TIMEOUT_MS` | 场景二单次 Agent 调用超时（毫秒） | `10800000` |
 | `GITCODE_FORK_REPO` | 场景二 fix 分支的推送去向（`owner/repo`）；留空则直推源仓库 | _(空)_ |
@@ -286,7 +286,7 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 
 场景一的 Agent 模型默认取 `deepseek/deepseek-flash`（定义在 [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py)），可用 `OPENCODE_MODEL` / `OPENCODE_TIMEOUT` 覆盖。
 
-场景二默认走**阿里云百炼**（DashScope OpenAI 兼容模式）：`AI_MODEL=bailian/qwen3-coder-plus`、`OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`、Key 放 `AI_API_KEY`。`bailian` 不是 opencode 内置 provider，[`opencode_run.py`](scripts/lib/opencode_run.py) 会按 `AI_PROVIDER_ID` + `OPENAI_BASE_URL` 在 `OPENCODE_CONFIG_CONTENT` 里声明一个自定义 provider（`npm=@ai-sdk/openai-compatible`），Key 以 `{env:OPENAI_API_KEY}` 引用、不落明文。
+场景二默认走**阿里云百炼**（DashScope OpenAI 兼容模式）：`AI_MODEL=bailian/deepseek-v4.1-flash-1017`、`OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`、Key 放 `AI_API_KEY`。`bailian` 不是 opencode 内置 provider，[`opencode_run.py`](scripts/lib/opencode_run.py) 会按 `AI_PROVIDER_ID` + `OPENAI_BASE_URL` 在 `OPENCODE_CONFIG_CONTENT` 里声明一个自定义 provider（`npm=@ai-sdk/openai-compatible`），Key 以 `{env:OPENAI_API_KEY}` 引用、不落明文。
 
 换成其它 OpenAI 兼容服务商：改 `OPENAI_BASE_URL` + `AI_MODEL`（`<provider_id>/<model>`）+ `AI_PROVIDER_ID` 三者一致即可。若要用 opencode 内置 provider（如 `deepseek/…`、`anthropic/…`），把 `AI_MODEL` 前缀改成对应内置 id 即可——前缀与 `AI_PROVIDER_ID` 不一致时不会注入自定义 provider，会走 opencode 内置配置。
 

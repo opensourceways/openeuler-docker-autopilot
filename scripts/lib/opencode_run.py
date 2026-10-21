@@ -28,7 +28,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-DEFAULT_MODEL = os.getenv('AI_MODEL', 'bailian/qwen3-coder-plus')
+DEFAULT_MODEL = os.getenv('AI_MODEL', 'bailian/deepseek-v4.1-flash-1017')
 # 自定义 OpenAI 兼容服务商（如阿里云百炼）：模型名前缀即 provider id。
 # 仅当模型前缀命中 AI_PROVIDER_ID 且 OPENAI_BASE_URL 非空时，才注入自定义 provider
 # 配置；否则沿用 opencode 内置 provider（deepseek / anthropic / openai ...）。
@@ -70,7 +70,7 @@ def opencode_log_tail(max_lines: int = 40) -> str:
 def _config_content(model: str, base_url: str, provider_id: str) -> str:
     """为自定义 OpenAI 兼容服务商生成 opencode 配置内容（V1 schema）。
 
-    形如 `bailian/qwen3-coder-plus` + baseURL → 声明该 provider
+    形如 `bailian/deepseek-v4.1-flash-1017` + baseURL → 声明该 provider
     （npm=@ai-sdk/openai-compatible、options.baseURL、models）。密钥用
     `{env:OPENAI_API_KEY}` 引用，避免把明文写进配置内容。
 
