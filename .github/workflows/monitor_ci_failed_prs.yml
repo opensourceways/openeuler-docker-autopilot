@@ -1,0 +1,86 @@
+name: Watch CI failed PRs
+
+# 场景二（PR CI 失败自动修复）的入口：按 config/watchlist.json 轮询目标仓库中
+# 带 ci_failed 标签的 PR，读取其 Fix PR 状态并决定是否 dispatch 修复链路。
+#
+# cron 与 poll_interval_minutes 保持同步：
+#   config/watchlist.json 变更 → sync_ci_poll_interval.yml 自动改写下面的 cron。
+# 当前为每天触发一次：UTC 0:00 = 北京时间 8:00。
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      test_repo:
+        description: '测试特定仓库 (owner/repo)'
+        required: false
+        type: string
+      runner_labels:
+        description: '本次运行使用的 runner 标签（JSON 数组），留空用 Variables / 默认值'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  monitor:
+    name: Scan ci_failed PRs
+    # 与场景二其它 job 共用一组标签配置：手动运行可临时覆盖，
+    # 自动轮询走 Variables CI_FIX_X64_RUNNER_LABELS
+    runs-on: >-
+      ${{ fromJSON(inputs.runner_labels || vars.CI_FIX_X64_RUNNER_LABELS ||
+          '["ubuntu-latest"]') }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up runner environment
+        uses: ./.github/actions/phase1-setup
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
+      - name: Debug GitCode API
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" - <<'EOF'
+          import os, requests, json
+          token = os.getenv('GITCODE_TOKEN', '')
+          print(f"GITCODE_TOKEN: {'set (' + str(len(token)) + ' chars)' if token else 'NOT SET'}")
+          url = "https://gitcode.com/api/v5/repos/openeuler/openeuler-docker-images/pulls"
+          params = {'state': 'open', 'per_page': 20}
+          if token:
+              params['access_token'] = token
+          r = requests.get(url, params=params, timeout=15)
+          print(f"API status: {r.status_code}")
+          prs = r.json() if r.ok else []
+          print(f"Open PRs returned: {len(prs)}")
+          for pr in prs:
+              labels = [l.get('name') for l in (pr.get('labels') or [])]
+              print(f"  PR #{pr.get('number')}: labels={labels}")
+          EOF
+
+      - name: Process PR events
+        env:
+          DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          # 跑满 run 预算（MAX_RETRIES）后是否回帖源 PR 提示人工。回帖是
+          # outward-facing 动作，默认关闭；开关与 build-fix 阶段共用同一个 Variable。
+          PR_COMMENT_ON_FAILURE: ${{ vars.PR_COMMENT_ON_FAILURE || '' }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" \
+            scripts/watch/process_pr_events.py
+
+      - name: Report status
+        if: always()
+        run: echo "✅ PR monitoring cycle completed"

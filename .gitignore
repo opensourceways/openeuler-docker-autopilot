@@ -5,3 +5,7 @@ __pycache__/
 
 docs/analysis
 docs/runbooks
+
+# 场景二本地运行产物（诊断报告与源仓库工作区）
+ci-fix-log/
+source-repo/

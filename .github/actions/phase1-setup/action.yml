@@ -29,10 +29,25 @@ outputs:
 runs:
   using: composite
   steps:
+    # Python 解释器版本是这份锁文件的隐式契约：--require-hashes 会让 pip 逐字节校验
+    # 选中的那个轮子，而"选哪个轮子"取决于解释器 ABI（3.11 选 cp311、3.12 选 cp312）。
+    # GitHub 托管 Runner 的默认 python3 会随镜像漂移（ubuntu-24.04 已经是 3.12），
+    # 所以这里显式钉住 3.11，与 .github/python-phase1.lock.txt 保持一致；
+    # 自托管 Runner 的 python3 本来就是 3.11，跳过 setup-python，不额外依赖下载源。
+    - name: Set up pinned Python
+      id: python
+      if: ${{ runner.environment == 'github-hosted' }}
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: '3.11'
+
     - name: Create locked Python environment
       shell: bash
+      env:
+        PYTHON: ${{ steps.python.outputs.python-path || 'python3' }}
       run: |
-        python3 -m venv "${RUNNER_TEMP}/phase1-venv"
+        "${PYTHON}" -c 'import sys; assert sys.version_info[:2] == (3, 11), "lock file is pinned to CPython 3.11, got " + sys.version'
+        "${PYTHON}" -m venv "${RUNNER_TEMP}/phase1-venv"
         "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
           --require-hashes \
           -r .github/python-phase1.lock.txt
@@ -44,8 +59,17 @@ runs:
       env:
         ARCH: ${{ inputs.arch }}
       run: |
+        # 自托管 Runner 用 /opt 下的持久缓存（跨 job 复用）；GitHub 托管 Runner 上
+        # /opt 归 root 所有、不可写，这里自动降级到 job 临时目录——缓存只在本次 job
+        # 内有效，代价是每个 job 重新下载工具链，但不用 sudo、不用改 Runner。
+        default_cache=/opt/oe-image-tools
+        cache_root="${default_cache}"
+        if ! mkdir -p "${default_cache}" 2>/dev/null || [ ! -w "${default_cache}" ]; then
+          cache_root="${RUNNER_TEMP}/oe-image-tools"
+          echo "::warning::${default_cache} 不可写，工具链缓存改用 ${cache_root}（仅本 job 有效）"
+        fi
         "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/bootstrap_tools.py \
-          --cache-root /opt/oe-image-tools \
+          --cache-root "${cache_root}" \
           --arch "${ARCH}" \
           --output-json "${RUNNER_TEMP}/toolchain.json" \
           --github-output "${GITHUB_OUTPUT}"

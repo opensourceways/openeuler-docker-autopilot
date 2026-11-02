@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# docker 包装脚本（PATH 前置），用于给「本次 run」创建的容器与镜像自动打上 run 唯一
+# 标签，以便按标签做并发安全的清理。
+#
+# 背景：build-fix 的容器/镜像由 AI agent 自己 `docker run/build` 起，名字不可控
+# （实测出现过 `ci-fix-<pr>-final` 这类脚本不认识的容器，超时后残留）。按名字/前缀
+# 删在共享 docker daemon 上会误伤并发运行的其他 job，因此改为：本脚本对
+# `docker run` / `create` / `build` 自动注入 `--label "$OE_CI_FIX_LABEL"`，清理时按
+# 该标签精确命中本 run 的容器与镜像。
+#
+# - 只对 run / create / build（含 `buildx build`）注入 label，其它子命令原样透传。
+# - OE_CI_FIX_LABEL 形如 `oe.ci-fix=<run_id>-<run_attempt>`；未设置则完全透传。
+# - OE_DOCKER_REAL_BIN 指向真实 docker，避免递归调用自身。
+set -u
+
+label="${OE_CI_FIX_LABEL:-}"
+real="${OE_DOCKER_REAL_BIN:-/usr/bin/docker}"
+
+if [ -z "$label" ]; then
+  exec "$real" "$@"
+fi
+
+cmd="${1:-}"
+if [ "$#" -gt 0 ]; then
+  shift
+fi
+
+case "$cmd" in
+  run|create|build)
+    exec "$real" "$cmd" --label "$label" "$@"
+    ;;
+  buildx)
+    # `docker buildx build ...`：label 要插在嵌套的 build 之后
+    if [ "${1:-}" = "build" ]; then
+      shift
+      exec "$real" buildx build --label "$label" "$@"
+    fi
+    exec "$real" buildx "$@"
+    ;;
+  *)
+    exec "$real" "$cmd" "$@"
+    ;;
+esac

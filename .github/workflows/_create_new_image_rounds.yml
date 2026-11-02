@@ -54,7 +54,7 @@ jobs:
     timeout-minutes: 180
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up tooling
         id: tools
@@ -64,7 +64,7 @@ jobs:
           preflight: "true"
 
       - name: Download round candidate
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-patch${{ inputs.round }}-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-input
@@ -113,7 +113,7 @@ jobs:
 
       - name: Upload round evidence (x86_64)
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-round${{ inputs.round }}-x86_64-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-round/
@@ -126,7 +126,7 @@ jobs:
     timeout-minutes: 180
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up tooling
         id: tools
@@ -136,7 +136,7 @@ jobs:
           preflight: "true"
 
       - name: Download round candidate
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-patch${{ inputs.round }}-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-input
@@ -185,7 +185,7 @@ jobs:
 
       - name: Upload round evidence (aarch64)
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-round${{ inputs.round }}-aarch64-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-round/
@@ -203,7 +203,7 @@ jobs:
       terminal_status: ${{ steps.judge.outputs.terminal_status }}
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up tooling
         id: tools
@@ -212,19 +212,19 @@ jobs:
           arch: x86_64
 
       - name: Download round candidate
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-patch${{ inputs.round }}-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-input
 
       - name: Download round evidence (x86_64)
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-round${{ inputs.round }}-x86_64-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-x86
 
       - name: Download round evidence (aarch64)
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-round${{ inputs.round }}-aarch64-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-arm
@@ -281,7 +281,7 @@ jobs:
 
       - name: Upload converged candidate
         if: ${{ steps.judge.outputs.converged == 'true' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-converged-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-converged/
@@ -292,7 +292,7 @@ jobs:
         if: >-
           ${{ steps.judge.outputs.converged != 'true' &&
               steps.judge.outputs.terminal_status == '' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-patch${{ inputs.next_round }}-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-next/
@@ -309,7 +309,7 @@ jobs:
 
       - name: Download terminal generation evidence
         if: ${{ steps.judge.outputs.terminal_status != '' }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-generation-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-terminal-generation
@@ -317,7 +317,7 @@ jobs:
       - name: Download round 1 decision evidence
         if: >-
           ${{ steps.judge.outputs.terminal_status != '' && inputs.round > 1 }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-decide1-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-terminal/decisions/round1
@@ -325,7 +325,7 @@ jobs:
       - name: Download round 2 decision evidence
         if: >-
           ${{ steps.judge.outputs.terminal_status != '' && inputs.round > 2 }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-decide2-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-terminal/decisions/round2
@@ -333,7 +333,7 @@ jobs:
       - name: Download round 3 decision evidence
         if: >-
           ${{ steps.judge.outputs.terminal_status != '' && inputs.round > 3 }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-decide3-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-terminal/decisions/round3
@@ -358,7 +358,7 @@ jobs:
 
       - name: Upload needs-human-review evidence
         if: ${{ steps.judge.outputs.terminal_status == 'needs-human-review' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-needs-human-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-terminal/
@@ -367,7 +367,7 @@ jobs:
 
       - name: Upload hard-stop evidence
         if: ${{ steps.judge.outputs.terminal_status == 'hard-stop' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-hard-stop-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-terminal/
@@ -376,7 +376,7 @@ jobs:
 
       - name: Upload round decision evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-decide${{ inputs.round }}-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-decide/

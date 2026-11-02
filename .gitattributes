@@ -1,0 +1,4 @@
+# Shell 脚本必须以 LF 结尾：CRLF 会让 shebang（#!/usr/bin/env bash）在 Linux 上失效。
+# 仓库默认 core.autocrlf=true，这里显式锁定，避免换行符被改写。
+*.sh text eol=lf
+scripts/lib/docker_shim/docker text eol=lf

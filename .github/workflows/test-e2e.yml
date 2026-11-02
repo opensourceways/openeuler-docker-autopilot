@@ -37,7 +37,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, oe-image-x86]
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check prerequisites
         run: |
           echo "::group::Python version"
@@ -77,7 +77,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, oe-image-x86]
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Python dependencies
         run: pip install pyyaml
 
@@ -125,7 +125,7 @@ jobs:
       ANTHROPIC_AUTH_TOKEN: ${{ secrets.DEEPSEEK_API_KEY }}
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install opencode
         run: curl -fsSL https://opencode.ai/install | bash
@@ -155,7 +155,7 @@ jobs:
     if: always() && !failure()
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build Dockerfile (if generated)
         run: |

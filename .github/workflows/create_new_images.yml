@@ -109,7 +109,7 @@ jobs:
       base_sha: ${{ steps.base.outputs.sha }}
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up native runner (x86_64)
         id: tools
@@ -233,7 +233,7 @@ jobs:
             "${RUNNER_TEMP}/phase1-patch1/"
 
       - name: Upload round 1 candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-patch1-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-patch1/
@@ -242,7 +242,7 @@ jobs:
 
       - name: Upload generation artifact
         if: ${{ always() && steps.base.outputs.sha != '' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-generation-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-prepare/
@@ -272,7 +272,7 @@ jobs:
           esac
 
       - name: Download source generation evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-generation-${{ inputs.source_run_id }}
           path: ${{ runner.temp }}/phase1-seed-generation
@@ -281,7 +281,7 @@ jobs:
           run-id: ${{ inputs.source_run_id }}
 
       - name: Republish generation evidence for this run
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-generation-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-seed-generation/
@@ -290,7 +290,7 @@ jobs:
 
       - name: Download source round candidate
         if: ${{ inputs.resume_from != 'package' }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: >-
             phase1-patch${{ inputs.resume_from }}-${{ inputs.source_run_id }}
@@ -301,7 +301,7 @@ jobs:
 
       - name: Republish candidate for this run
         if: ${{ inputs.resume_from != 'package' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-patch${{ inputs.resume_from }}-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-seed/
@@ -314,7 +314,7 @@ jobs:
           ${{ inputs.resume_from != 'package' &&
               inputs.resume_from != '1' }}
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-decide1-${{ inputs.source_run_id }}
           path: ${{ runner.temp }}/phase1-seed-decisions/round1
@@ -339,7 +339,7 @@ jobs:
         if: >-
           ${{ inputs.resume_from != 'package' &&
               inputs.resume_from != '1' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-decide1-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-seed-decisions/round1/
@@ -351,7 +351,7 @@ jobs:
         if: >-
           ${{ inputs.resume_from == '3' || inputs.resume_from == '4' }}
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-decide2-${{ inputs.source_run_id }}
           path: ${{ runner.temp }}/phase1-seed-decisions/round2
@@ -374,7 +374,7 @@ jobs:
       - name: Republish round 2 decision evidence
         if: >-
           ${{ inputs.resume_from == '3' || inputs.resume_from == '4' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-decide2-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-seed-decisions/round2/
@@ -385,7 +385,7 @@ jobs:
         id: source_decision3
         if: ${{ inputs.resume_from == '4' }}
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-decide3-${{ inputs.source_run_id }}
           path: ${{ runner.temp }}/phase1-seed-decisions/round3
@@ -406,7 +406,7 @@ jobs:
 
       - name: Republish round 3 decision evidence
         if: ${{ inputs.resume_from == '4' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-decide3-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-seed-decisions/round3/
@@ -415,7 +415,7 @@ jobs:
 
       - name: Download source converged candidate
         if: ${{ inputs.resume_from == 'package' }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-converged-${{ inputs.source_run_id }}
           path: ${{ runner.temp }}/phase1-seed-converged
@@ -425,7 +425,7 @@ jobs:
 
       - name: Republish converged candidate for this run
         if: ${{ inputs.resume_from == 'package' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-converged-${{ github.run_id }}
           path: ${{ runner.temp }}/phase1-seed-converged/
@@ -434,7 +434,7 @@ jobs:
 
       - name: Download source round decision evidence
         if: ${{ inputs.resume_from == 'package' }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: phase1-decide*-${{ inputs.source_run_id }}
           merge-multiple: true
@@ -445,7 +445,7 @@ jobs:
 
       - name: Republish round decision evidence for this run
         if: ${{ inputs.resume_from == 'package' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # Matches the phase1-decide*- pattern packaging already globs.
           name: phase1-decideseed-${{ github.run_id }}
@@ -558,7 +558,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up tooling
         id: tools
@@ -567,19 +567,19 @@ jobs:
           arch: x86_64
 
       - name: Download generation evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-generation-${{ github.run_id }}
           path: ${{ runner.temp }}/generation
 
       - name: Download converged round candidate
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-converged-${{ github.run_id }}
           path: ${{ runner.temp }}/converged
 
       - name: Download round decision evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: phase1-decide*-${{ github.run_id }}
           merge-multiple: true
@@ -662,6 +662,15 @@ jobs:
             --base-sha "${base_sha}" \
             > "${RUNNER_TEMP}/candidate/reports/gates.json"
 
+      - name: Fix gitee links in changed docs
+        run: |
+          base_sha="$(
+            tr -d '\n' < "${RUNNER_TEMP}/package-base-sha.txt"
+          )"
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/lib/doc_links.py \
+            --repo "${RUNNER_TEMP}/phase1-target" \
+            --base "${base_sha}"
+
       - name: Seal immutable candidate bundle
         run: |
           base_sha="$(
@@ -710,7 +719,7 @@ jobs:
 
       - name: Upload immutable candidate
         if: ${{ inputs.operation != 'resume' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: >-
             phase1-${{ inputs.operation == 'pipeline_smoke' &&
@@ -721,7 +730,7 @@ jobs:
 
       - name: Upload resumed diagnostic candidate
         if: ${{ inputs.operation == 'resume' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: phase1-resume-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/candidate/
@@ -780,7 +789,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up tooling
         uses: ./.github/actions/phase1-setup
@@ -806,7 +815,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up tooling
         uses: ./.github/actions/phase1-setup
@@ -847,14 +856,14 @@ jobs:
           esac
 
       - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up tooling
         uses: ./.github/actions/phase1-setup
 
       - name: Download same-run candidate
         if: ${{ inputs.operation != 'fork_pr' }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/candidate
@@ -867,7 +876,7 @@ jobs:
         id: validated_candidate
         if: ${{ inputs.operation == 'fork_pr' }}
         continue-on-error: ${{ inputs.allow_diagnostic_candidate }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-candidate-${{ inputs.validated_run_id }}
           path: ${{ runner.temp }}/candidate
@@ -880,7 +889,7 @@ jobs:
           ${{ inputs.operation == 'fork_pr' &&
               inputs.allow_diagnostic_candidate &&
               steps.validated_candidate.outcome != 'success' }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-resume-candidate-${{ inputs.validated_run_id }}
           path: ${{ runner.temp }}/candidate
@@ -974,12 +983,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out workflow source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download prepare failure evidence
         if: ${{ needs.prepare.result == 'failure' }}
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-generation-${{ github.run_id }}
           path: ${{ runner.temp }}/needs-human
@@ -994,7 +1003,7 @@ jobs:
                needs.round-3.outputs.terminal_status == 'needs-human-review') ||
               (needs.round-4.result == 'success' &&
                needs.round-4.outputs.terminal_status == 'needs-human-review') }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: phase1-needs-human-${{ github.run_id }}
           path: ${{ runner.temp }}/needs-human

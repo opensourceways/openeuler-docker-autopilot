@@ -27,9 +27,23 @@ openEuler社区有如下两种分类：
 2. 当某个应用已存在应用容器镜像，且应用上游发布了新的版本，我希望你能提交 PR 来完成应用新版本的镜像发布，同上，也需要符合仓库规范，只能按规则新增一个目录，而不是修改已有镜像目录文件
 3. 当 openEuler 发布新版本时，我希望你能够基于新的 openEuler 版本更新所有已有的应用容器镜像，你只能按规则新增一个目录，而不是修改已有镜像目录文件
 
+## 补充目标：PR CI 失败自动修复（场景二）
+
+在上述三个目标之外，还有一类高频重复劳动：**已经提出的版本升级 PR 因构建环境、依赖、编译参数变化导致 CI 失败**，需要维护者人工翻日志、定位根因、修改 Dockerfile 再重提，单条 PR 平均 15–30 分钟。
+
+该能力不新增镜像目录，而是修复已经存在的 PR，因此作为**场景二**纳入本系统，原有目标二、三在文档中顺延为场景三、四：
+
+1. 目标仓 PR 被打上 `ci_failed` 标签后，自动抓取**实际失败架构**的 CI 日志与 PR diff，由 AI 产出结构化诊断报告（日志与状态矛盾时标记"证据不足"，不猜根因）；
+2. 修复不依赖文本盲改：在自托管 Runner 的容器内逐条执行 Dockerfile 指令、失败即修，跑通后反推 Dockerfile 并用 `docker build` 验证；
+3. 反推出的 Dockerfile 回到 arm64 做确定性复验，再以最小 diff 落回源码，提交或复用 Fix PR；
+4. Fix PR 的 CI 若再次失败，自动追加 commit 重试（最多 6 次），超限关闭 Fix PR 并通知人工介入；
+5. 每次修复通过 CI 后，把失败模式沉淀进知识库（`docs/ci-failure-patterns.md`），供后续诊断参考。
+
+实现移植自 [docker-images-workflow](https://github.com/FdeCad/docker-images-workflow)，仅适配本仓的 Runner 标签、锁定工具链与凭据约定。默认**不启用**（`config/watchlist.json` 的 `enabled: false`），需显式开启后才会对目标仓 PR 动手。
+
 ## 实施阶段
 
-三个目标共享同一套底层能力（编排、生成、构建、测试、门禁、PR 产出），差异只在触发输入与调度方式，因此按目标分阶段交付：先完成目标一，再依次是目标二、目标三。
+目标一至三共享同一套底层能力（编排、生成、构建、测试、门禁、PR 产出），差异只在触发输入与调度方式，因此按目标分阶段交付：先完成目标一，再依次是目标二、目标三。补充目标（场景二）是独立链路，与上述能力不重叠，已完成集成。
 
 第一阶段的写入目标限定为测试仓；生产仓需显式配置开启，配置缺失或错误时一律解析为测试仓。
 
@@ -86,3 +100,5 @@ openEuler社区有如下两种分类：
 5. openEuler 应用容器镜像升级：https://github.com/opensourceways/easysoftware-autoupgrade/tree/release/bugfix-appupdate
 
 6. openEuler 应用的上游版本监控：https://easysoftware-monitoring.test.osinfra.cn/ ， 以及源码实现：https://github.com/opensourceways/anitya ， 其中 easysoftware-autoupgrade 的版本监控调的就是这个服务
+
+7. PR CI 失败自动修复工作流（场景二来源）：https://github.com/FdeCad/docker-images-workflow
