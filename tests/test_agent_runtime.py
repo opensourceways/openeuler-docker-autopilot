@@ -1243,6 +1243,34 @@ def test_image_qa_role_is_unsupported(tmp_path):
         )
 
 
+def test_testgen_creator_role_is_accepted(tmp_path):
+    from scripts.lib.agent_runtime import run_agent
+
+    executable = _executable(tmp_path)
+    workspace = tmp_path / "target"
+    workspace.mkdir()
+    payload = {
+        "success": True,
+        "files_created": ["Database/kvrocks/tests/test.sh"],
+        "test_script_path": "Database/kvrocks/tests/test.sh",
+        "summary": "Generated a KunpengTest-conformant test.sh.",
+    }
+    event = {"type": "text", "part": {"text": json.dumps(payload)}}
+    runner = RecordingRunner(_completed(stdout=json.dumps(event) + "\n"))
+
+    result = run_agent(
+        executable=executable,
+        role="testgen_creator",
+        prompt="Generate the functional test script.",
+        workspace=workspace,
+        api_key="deepseek-secret",
+        required_keys=("success", "files_created", "test_script_path", "summary"),
+        runner=runner,
+    )
+
+    assert result.payload == payload
+
+
 def test_image_contract_rejects_fixed_identity_without_semantic_review(
     tmp_path,
 ):

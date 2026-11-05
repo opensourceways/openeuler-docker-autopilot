@@ -103,8 +103,11 @@ easysoftware 的 SMTP 邮件通知改为 GitHub Actions workflow 通知 + PR/Iss
 | 一 | 场景一：新增应用镜像 | 创建带 `new-image` 标签的 Issue 后，无人工介入即产出通过全部门禁、双架构构建与测试均有证据的 PR |
 | 二 | 场景二：PR CI 失败自动修复 | 目标仓 PR 打上 `ci_failed` 后，无人工介入即产出通过 arm64 复验、以最小 diff 落回源码的 Fix PR |
 | 三 | 场景三：openEuler 大版本升级 | 批量补齐缺失的 oe 版本，成功项汇总为批量 PR、失败项汇总为 Issue |
+| 四 | 场景四：功能测试脚本补齐 | 每日自动为缺功能测试脚本的存量应用产出通过 KunpengTest 静态校验的一软件一 PR（附 Dockerfile 空行触发目标仓构建 + 功能测试 CI） |
 
 **场景二的来源与边界：** 该能力完整移植自 [docker-images-workflow](https://github.com/FdeCad/docker-images-workflow)，保留其独立子系统（`scripts/stages/`、`scripts/watch/`、`config/watchlist.json` 与 `ci_*` 库），仅适配本仓的 Runner 标签、锁定工具链与凭据约定。它与其它场景不共享 TaskSpec / 候选包 / 门禁体系——它操作的是目标仓已有的 PR，不生成新的镜像目录。
+
+**场景四的来源与边界：** 目标仓把功能测试与 CI 构建绑定（Dockerfile 变更即构建，成功后按 `{app}/tests/test.sh` 执行功能测试），但存量应用大多缺测试脚本。场景四每日爬取 Kunpeng 上游看板（`upstream-dashboard.test.osinfra.cn` 的公开 API）获取软件目录，与目标仓宽松匹配出缺口应用，Agent 按 [KunpengTest 规范](https://github.com/opensourceways/upstream-dashboard/blob/KunpengTest/README.md)生成脚本，静态校验通过后一软件一 PR，并给该软件最新 Dockerfile 追加一个空行以触发目标仓绑定的构建 + 测试 CI。它复用场景一的 Agent 运行时（`agent_runtime.run_agent`）与场景二的 fork / 跨仓 PR 交付，但脚本规范独立（KunpengTest：禁 `set -e`、脚本内自拉服务、五个注入环境变量、PASS/FAIL 输出约定），不做实跑验证（仅静态校验，失败重试 2 轮后写 `testgen-log` 分支的 exhausted 标记转人工）。
 
 **写入目标的分级。** 阶段一的写入目标限定为测试仓，生产仓需显式配置开启。配置缺失、为空或错误时一律解析为测试仓，任何情况下都不得回退到生产仓——自动化对目标仓持有 push 权限，误写的代价由社区承担。
 
@@ -852,6 +855,7 @@ openeuler-docker-images-workflow/
 │   │   ├── upgrade_upstream_versions.yml # legacy：应用版本更新（已由社区服务承接，未接入交付）
 │   │   ├── upgrade_openeuler_versions.yml # 场景三：openEuler 大版本升级
 │   │   ├── _upgrade_versions.yml     # 场景三共享验证（生成 + 构建 + 测试）
+│   │   ├── generate_test_scripts.yml  # 场景四：功能测试脚本补齐（scan → matrix 生成 → PR）
 │   │   └── test-e2e.yml              # 开发自测（不创建真实 PR）
 │   └── agents/
 │       ├── image-creator.md           # Image Creator（生成者）
@@ -859,6 +863,7 @@ openeuler-docker-images-workflow/
 │       ├── testcase-qa.md             # Testcase QA（挑战者）
 │       ├── ci-failure-analyst.md      # 场景二：CI 失败诊断师
 │       ├── dockerfile-builder.md      # 场景二：容器构建修复工程师
+│       ├── testgen-creator.md         # 场景四：KunpengTest 测试脚本生成者
 │       └── code-fixer.md              # Fixer（修复者，内置故障分析）
 ├── config/
 │   └── watchlist.json                 # 场景二：监控仓库列表与轮询参数

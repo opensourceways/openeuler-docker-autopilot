@@ -1,0 +1,133 @@
+name: Generate Test Scripts
+
+# 场景四（存量镜像功能测试补齐）的入口：每天爬 Kunpeng 上游看板获取软件
+# 目录，与 openeuler/openeuler-docker-images 对比找出缺功能测试脚本的应用，
+# AI Agent 按 KunpengTest 规范生成 tests/test.sh，静态校验后一软件一 PR
+# （PR 同时给该软件最新 Dockerfile 追加一个空行，触发目标仓绑定在
+# Dockerfile 变更上的构建 + 功能测试 CI）。
+#
+# 触发：每天 UTC 2:00（避开场景二的 0:00）；workflow_dispatch 便于手动/单软件调试。
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      app:
+        description: '只处理这一个看板软件名（单软件调试，留空跑全量）'
+        required: false
+        type: string
+      limit:
+        description: '本轮最多生成几个（默认 10，也可用 Variable TESTGEN_MAX_PER_ROUND 固定）'
+        required: false
+        default: '10'
+        type: string
+      runner_labels:
+        description: '本次运行使用的 runner 标签（JSON 数组），留空用 Variable / 默认值'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TARGET_REPO: openeuler/openeuler-docker-images
+  TARGET_BRANCH: master
+
+concurrency:
+  group: testgen-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: Scan dashboard vs target repo
+    runs-on: >-
+      ${{ fromJSON(inputs.runner_labels || vars.TESTGEN_RUNNER_LABELS ||
+          '["ubuntu-latest"]') }}
+    timeout-minutes: 20
+    outputs:
+      candidates: ${{ steps.scan.outputs.candidates }}
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up runner environment
+        uses: ./.github/actions/phase1-setup
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
+      - name: Clone target repository
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          git clone --depth 1 \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
+            source-repo
+
+      - name: Scan for apps missing functional tests
+        id: scan
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          TESTGEN_LIMIT: ${{ inputs.limit || vars.TESTGEN_MAX_PER_ROUND || '10' }}
+        run: |
+          ARGS=(--repo source-repo --format github-output)
+          if [ -n "${{ inputs.app }}" ]; then
+            ARGS+=(--app "${{ inputs.app }}")
+          fi
+          "${RUNNER_TEMP}/phase1-venv/bin/python" \
+            scripts/harness/testgen_scan.py "${ARGS[@]}"
+
+  generate:
+    name: "Generate test.sh for ${{ matrix.item.app }}"
+    needs: scan
+    if: needs.scan.outputs.candidates != '[]' && needs.scan.outputs.candidates != ''
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ vars.TESTGEN_MAX_PARALLEL || 2 }}
+      matrix:
+        item: ${{ fromJSON(needs.scan.outputs.candidates) }}
+    runs-on: >-
+      ${{ fromJSON(inputs.runner_labels || vars.TESTGEN_RUNNER_LABELS ||
+          '["ubuntu-latest"]') }}
+    timeout-minutes: 90
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up runner environment
+        uses: ./.github/actions/phase1-setup
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
+      - name: Install opencode
+        run: curl -fsSL https://opencode.ai/install | bash
+
+      - name: Clone target repository
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          git clone --depth 1 \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
+            source-repo
+
+      - name: Generate test script and open PR
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          GITCODE_FORK_REPO: ${{ vars.GITCODE_FORK_REPO }}
+          GIT_COMMIT_NAME: ${{ vars.GIT_COMMIT_NAME }}
+          GIT_COMMIT_EMAIL: ${{ vars.GIT_COMMIT_EMAIL }}
+          SOURCE_REPO_DIR: ${{ github.workspace }}/source-repo
+          TESTGEN_ITEM: ${{ toJSON(matrix.item) }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" \
+            scripts/harness/testgen_generate.py --item "$TESTGEN_ITEM"

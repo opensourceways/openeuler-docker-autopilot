@@ -61,13 +61,13 @@ def _retry(fn, attempts: int = 4, base_delay: float = 1.5, label: str = ''):
     raise last
 
 
-def _ensure_ci_fix_branch() -> None:
-    """ci-fix-log 分支不存在时从 main 创建。"""
-    url = f"{GITHUB_API}/repos/{_repo()}/git/refs/heads/{CI_FIX_BRANCH}"
+def ensure_branch(branch: str) -> None:
+    """数据分支不存在时从 main 创建（ci-fix-log / testgen-log 通用）。"""
+    url = f"{GITHUB_API}/repos/{_repo()}/git/refs/heads/{branch}"
     if _retry(lambda: requests.get(url, headers=_headers(), timeout=15)).ok:
         return
     resp = requests.get(
-        f"{GITHUB_API}/repos/{_repo()}/git/refs/heads/main",
+        f"{GITHUB_API}/repos/{_repo()}/git/refs/heads/{MAIN_BRANCH}",
         headers=_headers(), timeout=15,
     )
     resp.raise_for_status()
@@ -75,9 +75,14 @@ def _ensure_ci_fix_branch() -> None:
     requests.post(
         f"{GITHUB_API}/repos/{_repo()}/git/refs",
         headers=_headers(),
-        json={'ref': f'refs/heads/{CI_FIX_BRANCH}', 'sha': sha},
+        json={'ref': f'refs/heads/{branch}', 'sha': sha},
         timeout=15,
     ).raise_for_status()
+
+
+def _ensure_ci_fix_branch() -> None:
+    """ci-fix-log 分支不存在时从 main 创建。"""
+    ensure_branch(CI_FIX_BRANCH)
 
 
 def read_file(path: str, branch: str = CI_FIX_BRANCH) -> str:
@@ -94,6 +99,8 @@ def write_file(path: str, content: str, message: str, branch: str = CI_FIX_BRANC
     """向指定分支写入文件（自动处理创建/更新）。"""
     if branch == CI_FIX_BRANCH:
         _ensure_ci_fix_branch()
+    else:
+        ensure_branch(branch)
     url = f"{GITHUB_API}/repos/{_repo()}/contents/{path}"
     encoded = base64.b64encode(content.encode('utf-8')).decode('ascii')
 

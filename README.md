@@ -39,25 +39,27 @@
 
 ### 背景
 
-openEuler 社区维护着一批应用容器镜像。系统覆盖三个场景，对应三类高度重复的变更动作：
+openEuler 社区维护着一批应用容器镜像。系统覆盖四个场景，对应四类高度重复的变更动作：
 
 1. **社区希望新增一个应用镜像**（场景一）——需要研究上游构建方式，按仓库规范写 Dockerfile、`meta.yml`、README、`doc/image-info.yml`，还要补一套能证明镜像真的可用的功能测试。
 2. **openEuler 发布新版本**（场景三）——所有存量应用都要补齐新 openEuler 版本的镜像，批量且机械。
 3. **已有的版本升级 PR 卡在 CI**（场景二）——构建环境、依赖、编译参数一变就红，维护者要翻 Jenkins 日志、定位根因、改 Dockerfile 再重提，单条 PR 平均 15–30 分钟。
+4. **存量镜像缺功能测试脚本**（场景四）——目标仓把功能测试与 CI 构建绑定（Dockerfile 变更即构建 + 按 `tests/test.sh` 功能测试），但多数应用没有测试脚本，需要按 [KunpengTest 规范](https://github.com/opensourceways/upstream-dashboard/blob/KunpengTest/README.md)批量补齐。
 
-场景一、三两类工作共享同一批固定规范，但也都夹着不确定的部分：上游依赖怎么装、服务怎么起、构建失败怎么修。前者适合代码，后者适合 Agent。场景二处理的就是失败本身——它的根因往往是已知的构建失败模式（缺编译依赖、链接参数变更、Makefile 路径假设失效），因此把「诊断 + 修复」整体交给 Agent，只把触发、阶段推进、确定性复验与交付留给代码。
+场景一、三两类工作共享同一批固定规范，但也都夹着不确定的部分：上游依赖怎么装、服务怎么起、构建失败怎么修。前者适合代码，后者适合 Agent。场景二处理的就是失败本身——它的根因往往是已知的构建失败模式（缺编译依赖、链接参数变更、Makefile 路径假设失效），因此把「诊断 + 修复」整体交给 Agent，只把触发、阶段推进、确定性复验与交付留给代码。场景四与场景一共享「Agent 生成测试 + 静态校验」的质量机制，但脚本规范遵循目标仓 CI 的 KunpengTest 约定（禁 `set -e`、脚本内自拉服务、注入五个环境变量），走独立的**爬看板 → 对比缺口 → 生成 → 校验 → 提 PR** 链路。
 
 > 应用上游发布新版本（应用版本升级）已由社区运行中的服务承接：anitya 负责版本监控，easysoftware-autoupgrade 负责生成与提 PR。本系统不建设这条升级链路，只为这些 PR 修复 CI。
 
 ### 解决方案
 
-本项目用一套流水线覆盖三个场景。场景一 / 三**共享同一套生成、门禁、双架构验证与交付能力**，差异只在触发输入与调度方式；场景二处理的是「别人已经提出、但 CI 失败」的 PR，走独立的**监控 → 诊断 → 容器内修复 → 复验 → 落回**链路：
+本项目用一套流水线覆盖四个场景。场景一 / 三**共享同一套生成、门禁、双架构验证与交付能力**，差异只在触发输入与调度方式；场景二处理的是「别人已经提出、但 CI 失败」的 PR，走独立的**监控 → 诊断 → 容器内修复 → 复验 → 落回**链路；场景四为存量应用补功能测试脚本，走独立的**爬看板 → 对比缺口 → 生成 → 校验 → 提 PR** 链路：
 
 | 场景 | 触发源 | 执行内容 | 输出 |
 |------|--------|----------|------|
 | **① 新增应用镜像** | GitCode Issue（标题含 `【new-image】`） | 解析需求 → 生成镜像文件与测试 → 门禁 → 双架构构建测试 → 有界修复 | 单个应用的完整镜像目录 PR |
 | **② PR CI 失败自动修复** | 目标仓 PR 被打上 `ci_failed` 标签（Monitor 轮询） | 抓 Jenkins 失败日志 → AI 诊断根因 → 容器内逐条执行 Dockerfile 并修复 → 反推 Dockerfile → 双架构复验 | 落回源码的最小 diff Fix PR（`fix:` 前缀） |
 | **③ openEuler 版本升级** | `oe-new-version` 事件或手动 | 枚举全部应用 → Matrix 并行补齐缺失的 oe 版本 | 批量 PR + 失败应用报告 |
+| **④ 功能测试脚本补齐** | 每日定时（Kunpeng 看板目录对比） | 爬看板 → 找出缺 `tests/test.sh` 的应用 → AI 按 KunpengTest 规范生成 → 静态校验（失败重试 2 轮） | 一软件一 PR（含 Dockerfile 空行触发目标仓构建 + 功能测试） |
 
 场景一 / 三的共同骨架：
 
@@ -150,6 +152,7 @@ Fix PR CI 结果
 | 一 | 场景一：新增应用镜像 | **已打通**。完整走通「Issue 认领 → 生成 → 门禁 → 4 轮双架构验证 → 候选封存 → fork 分支 → 跨仓 PR」 |
 | 二 | 场景二：PR CI 失败自动修复 | **已集成**。移植上游 [docker-images-workflow](https://github.com/FdeCad/docker-images-workflow) 的修复链路（编排改造为单 run 串行、轮次显式）、Agent、脚本与测试；`config/watchlist.json` 默认 `enabled: false`，需显式开启后才会对目标仓 PR 动手 |
 | 三 | 场景三：openEuler 版本升级 | 工作流骨架已就位（检测新 oe 版本 → Matrix 并行补齐 → 批量 PR），仍走 legacy `run.py` 链路，尚未接入阶段一的候选包 / 门禁 / 证据体系 |
+| 四 | 场景四：功能测试脚本补齐 | **已打通**。每日爬 Kunpeng 看板对比缺口 → Agent 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮，耗尽转人工）→ 一软件一 PR（`generate_test_scripts.yml`）；需配置 `GITCODE_FORK_REPO` 与 `TESTGEN_*` Variables |
 
 > 应用上游版本升级由社区运行中的 anitya + easysoftware-autoupgrade 承接，不在本系统建设范围；本系统只为它产出的 PR 修复 CI（场景二）。
 
@@ -284,6 +287,11 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `CI_FIX_ARM64_RUNNER_LABELS` | 场景二 arm64 首修 / 复验 Job 的 runner 标签（必须 arm64） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` |
 | `CI_FIX_BUILD_CACHE_DIR` | arm64 复验的持久 BuildKit 层缓存目录（自托管机器上的路径，跨 run 复用；留空则退化为不缓存的 `docker build`） | `<runner.workspace>/ci-fix-buildkit-cache` |
 | `CI_FIX_BUILDKIT_BUILDER` | 缓存用的 buildx builder 名（不存在则自动创建 docker-container builder） | `oe-ci-fix` |
+| `TESTGEN_MAX_PER_ROUND` | 场景四每轮最多生成测试脚本的应用数 | `10` |
+| `TESTGEN_MAX_PARALLEL` | 场景四 generate Matrix 并行数 | `2` |
+| `TESTGEN_RUNNER_LABELS` | 场景四 scan / generate Job 的 runner 标签，JSON 数组 | `["ubuntu-latest"]` |
+
+场景四复用场景一的 Agent 栈（`deepseek/deepseek-flash` + `DEEPSEEK_API_KEY`），跨仓 PR 与场景二共用 `GITCODE_FORK_REPO`；跨轮状态（done / exhausted 标记）存放在本仓 `testgen-log` 分支。
 
 场景一的 Agent 模型默认取 `deepseek/deepseek-flash`（定义在 [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py)），可用 `OPENCODE_MODEL` / `OPENCODE_TIMEOUT` 覆盖。
 
@@ -296,6 +304,8 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 部署完成后，从 Actions 页面手动运行 **Create New Images**，`operation` 选 `pipeline_smoke`：它跑完整编排链路，但不调用 AI、不做任何 GitCode 写操作，用于确认 Runner、工具链与编排本身健康。
 
 场景二的入口是 **Fix PR CI failures**：`workflow_dispatch` 指定 `source_repo` / `pr_number` / `source_platform` 可手动触发一次完整修复链（会真实写 fix 分支与 Fix PR），同时可用 `x64_runner_labels` / `amd64_runner_labels` / `arm64_runner_labels` 临时指定跑在哪些机器上。日常运行由 **Watch CI failed PRs** 按 `config/watchlist.json` 轮询驱动（跑在哪台机器由 `CI_FIX_X64_RUNNER_LABELS` 决定），首次接入时建议先保持 `enabled: false`，确认凭据与 Runner 就绪后再开启。
+
+场景四的入口是 **Generate Test Scripts**：每日定时自动跑，也可 `workflow_dispatch` 手动触发；传 `app` 参数可只处理单个软件（调试模式），传 `limit` 控制本轮生成数。首次接入建议先用 `app=<某缺脚本软件>` 跑一单观察 PR 效果，再放开定时批量。
 
 ---
 
