@@ -85,7 +85,8 @@ on:
         value: ${{ jobs.verify-arm.outputs.verify_passed }}
 
 permissions:
-  contents: read
+  # ci-fix-log 数据分支的读写走本仓库 token；未配置 DISPATCH_TOKEN 时脚本回退到它
+  contents: write
 
 # 可复用 workflow **不继承**调用方的 env：脚本读的每个变量都要在这里再声明一次，
 # 否则会静默失效（终止轮的"连续失败回帖"开关就是这么丢过一次）。
@@ -126,7 +127,7 @@ jobs:
       ARCH: arm64
       MODE: build
       VERIFY_COUNT: ${{ inputs.verify_count }}
-      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN || github.token }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
 
     steps:
@@ -244,7 +245,7 @@ jobs:
       ARCH: amd64
       MODE: build
       VERIFY_COUNT: ${{ inputs.verify_count }}
-      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN || github.token }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
 
     steps:
@@ -361,7 +362,7 @@ jobs:
       ARCH: arm64
       MODE: verify
       VERIFY_COUNT: ${{ inputs.verify_count }}
-      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN || github.token }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
 
     steps:

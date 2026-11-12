@@ -58,7 +58,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  # ci-fix-log 数据分支的读写走本仓库 token；未配置 DISPATCH_TOKEN 时脚本回退到它
+  contents: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -120,7 +121,7 @@ jobs:
             github.event.inputs.pr_number }}
       FIX_PR_NUMBER: ${{ github.event.client_payload.fix_pr_number || '0' }}
       ATTEMPT: ${{ github.event.client_payload.attempt || '1' }}
-      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN || github.token }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
       # 三类 job 的 runner 标签：手动入口 → inputs，自动入口（Monitor 触发）→
       # Variables，都没有 → 与 dispatch 表单相同的默认值。
@@ -171,7 +172,7 @@ jobs:
       PR_BASE_BRANCH: ${{ needs.prepare.outputs.pr_base_branch }}
       # 重试时为 fix PR 编号，首次为 0；ci-log-analysis 用它从 fix PR 评论中查最新 build URL
       FIX_PR_NUMBER: ${{ needs.prepare.outputs.fix_pr_number }}
-      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN || github.token }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
 
     steps:
@@ -345,7 +346,7 @@ jobs:
       PR_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
       FIX_BRANCH: ${{ needs.prepare.outputs.fix_branch }}
       PR_BASE_BRANCH: ${{ needs.prepare.outputs.pr_base_branch }}
-      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN || github.token }}
       GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN || '' }}
 
     steps:
