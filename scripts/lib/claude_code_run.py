@@ -126,7 +126,11 @@ def run_claude_code(
     log(f'    prompt:  {len(full_prompt)} chars → {prompt_dump_file}')
     log(f'    log:     {log_file}')
     log(f'    output:  {output_file}')
-    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    api_key = (
+        os.environ.get('ANTHROPIC_API_KEY')
+        or os.environ.get('AI_API_KEY')
+        or ''
+    )
     log(f'    api:     key={("***" + api_key[-4:]) if len(api_key) > 4 else "NOT SET"}')
     log(f'    replay:  cd {work_dir} && {claude_bin} {" ".join(claude_args)} < {prompt_dump_file}')
 

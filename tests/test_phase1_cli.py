@@ -840,7 +840,7 @@ def test_shared_agent_cli_reports_contract_errors_without_traceback(tmp_path):
     )
 
     assert result.returncode == 2
-    assert "DEEPSEEK_API_KEY is required" in result.stderr
+    assert "AI_API_KEY (or DEEPSEEK_API_KEY) is required" in result.stderr
     assert "Traceback" not in result.stderr
 
 

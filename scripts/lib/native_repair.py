@@ -530,7 +530,9 @@ def decide_round(
     if not api_key:
         # Converging needs no model, so the key is only required once a repair
         # is actually about to run.
-        raise NativeRepairError("DEEPSEEK_API_KEY is required to repair")
+        raise NativeRepairError(
+            "AI_API_KEY (or DEEPSEEK_API_KEY) is required to repair"
+        )
     # One Fixer sees both architectures, so a fix for one cannot silently
     # regress the other — and for the same reason one category cannot speak
     # for both.
@@ -667,7 +669,9 @@ def validate_native_with_repairs(
             "native repair evidence must remain outside target workspace"
         )
     if not api_key:
-        raise NativeRepairError("DEEPSEEK_API_KEY is required")
+        raise NativeRepairError(
+            "AI_API_KEY (or DEEPSEEK_API_KEY) is required"
+        )
     report_path.parent.mkdir(parents=True, exist_ok=True)
     junit_path.parent.mkdir(parents=True, exist_ok=True)
     repair_report_dir.mkdir(parents=True, exist_ok=True)

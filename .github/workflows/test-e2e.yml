@@ -49,10 +49,10 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Secrets check"
-          if [ -z "$DEEPSEEK_API_KEY" ]; then
-            echo "::warning::DEEPSEEK_API_KEY not set — Agent calls will fail"
+          if [ -z "$AI_API_KEY" ]; then
+            echo "::warning::AI_API_KEY not set — Agent calls will fail"
           else
-            echo "DEEPSEEK_API_KEY: set (${#DEEPSEEK_API_KEY} chars)"
+            echo "AI_API_KEY: set (${#AI_API_KEY} chars)"
           fi
           if [ -z "$GITCODE_TOKEN" ]; then
             echo "::warning::GITCODE_TOKEN not set — PR creation will fail"
@@ -61,8 +61,7 @@ jobs:
           fi
           echo "::endgroup::"
         env:
-          ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
-          ANTHROPIC_AUTH_TOKEN: ${{ secrets.DEEPSEEK_API_KEY }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY }}
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
 
       - name: Install deps
@@ -121,8 +120,12 @@ jobs:
     needs: test-deterministic
     runs-on: [self-hosted, Linux, X64, oe-image-x86]
     env:
-      ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
-      ANTHROPIC_AUTH_TOKEN: ${{ secrets.DEEPSEEK_API_KEY }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY }}
+      AI_MODEL: ${{ vars.AI_MODEL || 'gateway/deepseek-v4-pro' }}
+      AI_PROVIDER_ID: ${{ vars.AI_PROVIDER_ID || 'gateway' }}
+      OPENAI_BASE_URL: >-
+        ${{ vars.OPENAI_BASE_URL || 'https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1' }}
     steps:
       - name: Check out workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -164,6 +167,6 @@ jobs:
             echo "Found Dockerfile: $DOCKERFILE"
             docker build -f "$DOCKERFILE" -t "test-image:ci" "$(dirname "$DOCKERFILE")" || echo "Build failed (expected in CI without full context)"
           else
-            echo "No Dockerfile generated — Agent did not produce output (ANTHROPIC_AUTH_TOKEN may be missing)"
+            echo "No Dockerfile generated — Agent did not produce output (AI_API_KEY may be missing)"
           fi
         continue-on-error: true

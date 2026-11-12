@@ -164,8 +164,8 @@ Round 3  amd64 回修 → arm64 复验 ──通过──> code-fix
 | 类别 | 内容 |
 |---|---|
 | AI 后端 | `AI_RUNNER`（默认 `opencode`；可选 `claude-code` / `claude-code-account`） |
-| 模型 | `AI_MODEL` 默认 `bailian/deepseek-v4.1-flash-1017`（阿里云百炼，OpenAI 兼容模式） |
-| 凭证 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` 取 `secrets.AI_API_KEY`，回退 `secrets.DEEPSEEK_API_KEY` |
+| 模型 | `AI_MODEL` 默认 `gateway/deepseek-v4-pro`（火山引擎 API 网关，OpenAI 兼容模式） |
+| 凭证 | `AI_API_KEY` 取 `secrets.AI_API_KEY`，回退 `secrets.DEEPSEEK_API_KEY`；同时写入 `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` 兼容别名 |
 | 超时 | `AI_TIMEOUT_MS` 默认 10,800,000 ms（3 小时） |
 | 工具链 | `.github/actions/phase1-setup`（按 `arch` 预置 opencode/venv，含 `preflight` 校验） |
 | Python 依赖 | `requirements.txt`（运行时仅 `requests`） |

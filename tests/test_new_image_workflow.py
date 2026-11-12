@@ -750,7 +750,7 @@ def test_only_the_decision_stage_receives_a_model_key():
     round_workflow = _workflow(ROUND_PATH)
     expected = (
         "${{ inputs.operation != 'pipeline_smoke' && "
-        "secrets.DEEPSEEK_API_KEY || '' }}"
+        "(secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY) || '' }}"
     )
 
     for name in ROUNDS:

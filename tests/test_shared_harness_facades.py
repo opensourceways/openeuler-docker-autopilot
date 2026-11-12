@@ -21,8 +21,8 @@ def test_existing_harness_modules_keep_shared_public_apis():
 
 
 def test_phase_one_has_one_public_cli_without_legacy_delegation():
-    flow = (ROOT / "scripts" / "harness" / "flow.py").read_text()
-    run = (ROOT / "scripts" / "harness" / "run.py").read_text()
+    flow = (ROOT / "scripts" / "harness" / "flow.py").read_text(encoding="utf-8")
+    run = (ROOT / "scripts" / "harness" / "run.py").read_text(encoding="utf-8")
 
     assert not (ROOT / "scripts" / "harness" / "phase1.py").exists()
     assert "from scripts.harness.run import" not in flow

@@ -30,8 +30,8 @@ AGENTS_DIR = PROJECT_ROOT / ".github" / "agents"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts.lib import ai_provider
 from scripts.lib.agent_runtime import (  # noqa: E402
-    MODEL,
     qa_requests_repair,
     validate_agent_payload,
 )
@@ -47,7 +47,7 @@ from scripts.lib.failure_knowledge import (  # noqa: E402
 )
 from scripts.lib.task_spec import TaskSpec, TaskSpecError  # noqa: E402
 
-OPENCODE_MODEL = os.environ.get("OPENCODE_MODEL", MODEL)
+OPENCODE_MODEL = ai_provider.model()
 OPENCODE_TIMEOUT = int(os.environ.get("OPENCODE_TIMEOUT", "4800"))
 OPENCODE_STALE_SECONDS = 600
 MAX_QA_ROUNDS = 2
@@ -125,6 +125,15 @@ def _run_opencode(prompt: str, *, cwd: Path) -> str:
         cmd[cmd.index("--dangerously-skip-permissions")] = "--auto"
     cmd += ["--", prompt]
 
+    # 自定义 OpenAI 兼容服务商（火山引擎 API 网关）：干净 Runner 上没有全局
+    # opencode 配置，必须把 provider 声明随子进程注入，`gateway/<model>` 才能解析。
+    child_env = os.environ.copy()
+    config = ai_provider.config_content(OPENCODE_MODEL)
+    if config:
+        child_env["OPENCODE_CONFIG_CONTENT"] = config
+        if not child_env.get("OPENAI_API_KEY"):
+            child_env["OPENAI_API_KEY"] = ai_provider.api_key()
+
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -132,6 +141,7 @@ def _run_opencode(prompt: str, *, cwd: Path) -> str:
         text=True,
         bufsize=1,
         cwd=work_dir,
+        env=child_env,
     )
 
     text_parts: list[str] = []

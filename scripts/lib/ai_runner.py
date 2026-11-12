@@ -13,15 +13,16 @@ from typing import Dict, Any, Optional
 
 # 各后端可接受的凭证环境变量（任一非空即通过）
 _CREDENTIAL_ENV = {
-    'claude-code': ('ANTHROPIC_API_KEY',),
+    'claude-code': ('ANTHROPIC_API_KEY', 'AI_API_KEY'),
     'claude-code-account': ('CLAUDE_CREDENTIALS_JSON',),
-    'opencode': ('OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'ANTHROPIC_API_KEY',
-                 'OPENROUTER_API_KEY', 'GEMINI_API_KEY'),
+    'opencode': ('AI_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY',
+                 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY'),
 }
 
 _SECRET_HINT = {
     'claude-code': 'AI_API_KEY（Anthropic API Key）',
     'claude-code-account': 'CLAUDE_CREDENTIALS_JSON',
+    'opencode': 'AI_API_KEY（兼容 OPENAI_API_KEY / DEEPSEEK_API_KEY）',
 }
 
 

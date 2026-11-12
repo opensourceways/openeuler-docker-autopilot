@@ -26,6 +26,7 @@ from pathlib import Path
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
+from scripts.lib import ai_provider
 from scripts.lib.agent_runtime import run_agent  # noqa: E402
 from scripts.lib.ci_gitcode_api import (  # noqa: E402
     create_pull_request,
@@ -309,9 +310,11 @@ def run_generate(item: dict) -> int:
         # The clone may sit on a differently named default branch.
         _git(repo_dir, "checkout", "-B", branch, check=False)
 
-    api_key = _env("DEEPSEEK_API_KEY")
+    api_key = ai_provider.api_key()
     if not api_key:
-        raise SystemExit("DEEPSEEK_API_KEY is required for script generation")
+        raise SystemExit(
+            "AI_API_KEY (or DEEPSEEK_API_KEY) is required for script generation"
+        )
     executable = shutil.which("opencode")
     if executable is None:
         raise SystemExit("opencode CLI not found (curl -fsSL https://opencode.ai/install | bash)")

@@ -259,8 +259,8 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | Secret | 用途 | 必需 |
 |--------|------|------|
 | `GITCODE_TOKEN` | GitCode 读写：读 Issue/PR、克隆目标仓、推送分支、创建 PR、评论与打标签；场景二读 CI 日志同样依赖它 | 必填 |
-| `AI_API_KEY` | 场景二的模型 Key（当前服务商为阿里云百炼，填 DashScope API Key）；留空时自动回退使用 `DEEPSEEK_API_KEY` | 场景二必填 |
-| `DEEPSEEK_API_KEY` | 场景一 / 三的 DeepSeek Key（经 opencode，走 `https://api.deepseek.com/anthropic`）；场景二未配 `AI_API_KEY` 时也回退用它 | 除 `pipeline_smoke` 外必填 |
+| `AI_API_KEY` | **所有场景统一的模型 Key**（当前为火山引擎 API 网关 Key）；留空时回退 `DEEPSEEK_API_KEY` | 除 `pipeline_smoke` 外必填 |
+| `DEEPSEEK_API_KEY` | 兼容别名：仅在未配置 `AI_API_KEY` 时作为 Key 使用 | 可选 |
 | `DISPATCH_TOKEN` | 场景二专用：触发本仓 `repository_dispatch`、读写 `ci-fix-log` 数据分支、checkout 源仓库、推送 fix 分支、创建 Fix PR（GitHub PAT，需 `repo` + `workflow` scope） | 场景二必填 |
 | `CLAUDE_CREDENTIALS_JSON` | `AI_RUNNER=claude-code-account` 时的 Claude.ai OAuth 凭证 | 可选 |
 
@@ -274,14 +274,14 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 |------|------|--------|
 | `MAX_PARALLEL_IMAGES` | 场景三 Matrix 并行的镜像数上限 | `4` |
 | `GITCODE_BOT_USERNAME` | 交付阶段用于推送分支的 GitCode 账号名 | _(无)_ |
-| `AI_RUNNER` | 场景二 AI 后端：`opencode` / `claude-code-account` | `opencode` |
-| `AI_MODEL` | 场景二模型名（`provider/model`）；`deepseek-v4.1-flash-1017` 是百炼上的 DeepSeek V4.1 Flash 1017 版本 | `bailian/deepseek-v4.1-flash-1017` |
-| `AI_PROVIDER_ID` | 自定义 OpenAI 兼容服务商的 provider id（与模型名前缀一致） | `bailian` |
-| `AI_TIMEOUT_MS` | 场景二单次 Agent 调用超时（毫秒） | `10800000` |
+| `AI_RUNNER` | 所有场景的 AI 后端：`opencode` / `claude-code-account` | `opencode` |
+| `AI_MODEL` | 所有场景统一的模型名（`provider/model`） | `gateway/deepseek-v4-pro` |
+| `AI_PROVIDER_ID` | 自定义 OpenAI 兼容服务商的 provider id（与模型名前缀一致） | `gateway` |
+| `AI_TIMEOUT_MS` | 所有场景单次 Agent 调用超时（毫秒） | `10800000` |
 | `GITCODE_FORK_REPO` | 场景二 fix 分支的推送去向（`owner/repo`）；留空则直推源仓库 | _(空)_ |
 | `PR_COMMENT_ON_FAILURE` | 场景二自动修复连续失败时是否回帖源 PR（回帖是 outward-facing 动作，故默认不回；覆盖位置：arm64 复验三轮失败、Monitor 跑满 6 个 run 停手） | _(空)_ |
 | `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二 Fix commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
-| `OPENAI_BASE_URL` | 模型 API 地址（OpenAI 兼容） | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| `OPENAI_BASE_URL` | 所有场景统一的模型 API 地址（OpenAI 兼容） | `https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1` |
 | `CI_FIX_X64_RUNNER_LABELS` | 场景二轻量 Job（prepare / 分析 / code-fix / 监控 / cron 同步）的 runner 标签，JSON 数组 | `["ubuntu-latest"]` |
 | `CI_FIX_AMD64_RUNNER_LABELS` | 场景二 amd64 修复 Job 的 runner 标签（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-fix-amd64"]` |
 | `CI_FIX_ARM64_RUNNER_LABELS` | 场景二 arm64 首修 / 复验 Job 的 runner 标签（必须 arm64） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` |
@@ -291,11 +291,15 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `TESTGEN_MAX_PARALLEL` | 场景四 generate Matrix 并行数 | `2` |
 | `TESTGEN_RUNNER_LABELS` | 场景四 scan / generate Job 的 runner 标签，JSON 数组 | `["ubuntu-latest"]` |
 
-场景四复用场景一的 Agent 栈（`deepseek/deepseek-flash` + `DEEPSEEK_API_KEY`），跨仓 PR 与场景二共用 `GITCODE_FORK_REPO`；跨轮状态（done / exhausted 标记）存放在本仓 `testgen-log` 分支。
+场景四复用场景一的 Agent 栈（`gateway/deepseek-v4-pro` + 网关 provider 注入），跨仓 PR 与场景二共用 `GITCODE_FORK_REPO`；跨轮状态（done / exhausted 标记）存放在本仓 `testgen-log` 分支。
 
-场景一的 Agent 模型默认取 `deepseek/deepseek-flash`（定义在 [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py)），可用 `OPENCODE_MODEL` / `OPENCODE_TIMEOUT` 覆盖。
+**所有场景共用一套服务商配置**，唯一事实来源是 [`scripts/lib/ai_provider.py`](scripts/lib/ai_provider.py)：模型、provider id、baseURL、API Key 与超时都从同一组环境变量解析。最少只需配置 `AI_API_KEY`（或兼容的 `DEEPSEEK_API_KEY`），其余参数都有默认值。
 
-场景二默认走**阿里云百炼**（DashScope OpenAI 兼容模式）：`AI_MODEL=bailian/deepseek-v4.1-flash-1017`、`OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`、Key 放 `AI_API_KEY`。`bailian` 不是 opencode 内置 provider，[`opencode_run.py`](scripts/lib/opencode_run.py) 会按 `AI_PROVIDER_ID` + `OPENAI_BASE_URL` 在 `OPENCODE_CONFIG_CONTENT` 里声明一个自定义 provider（`npm=@ai-sdk/openai-compatible`），Key 以 `{env:OPENAI_API_KEY}` 引用、不落明文。
+默认走**火山引擎 API 网关**（OpenAI 兼容模式）：`AI_MODEL=gateway/deepseek-v4-pro`、`OPENAI_BASE_URL=https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1`、Key 放 `AI_API_KEY`。`gateway` 不是 opencode 内置 provider，[`ai_provider.py`](scripts/lib/ai_provider.py) 会按 `AI_PROVIDER_ID` + `OPENAI_BASE_URL` 在 `OPENCODE_CONFIG_CONTENT` 里声明一个自定义 provider（`npm=@ai-sdk/openai-compatible`），Key 以 `{env:OPENAI_API_KEY}` 引用、不落明文。
+
+`OPENCODE_MODEL` 保留为兼容别名：未设置 `AI_MODEL` 时生效。
+
+已内置完整能力声明的模型：`glm-5.3`（256k 输入）与 `deepseek-v4-pro`（1M 输入 / 384k 输出 / thinking / reasoning_content 交错）。其他模型只下发 `{"name": "<model-id>"}` 的最小声明；如需开启 thinking、图片输入或指定上下文长度，在 [`ai_provider.py`](scripts/lib/ai_provider.py) 的 `_MODEL_OPTIONS` 中补充。
 
 换成其它 OpenAI 兼容服务商：改 `OPENAI_BASE_URL` + `AI_MODEL`（`<provider_id>/<model>`）+ `AI_PROVIDER_ID` 三者一致即可。若要用 opencode 内置 provider（如 `deepseek/…`、`anthropic/…`），把 `AI_MODEL` 前缀改成对应内置 id 即可——前缀与 `AI_PROVIDER_ID` 不一致时不会注入自定义 provider，会走 opencode 内置配置。
 
@@ -698,7 +702,8 @@ openeuler-docker-images-workflow/
 | 模块 | 职责 |
 |------|------|
 | [`scripts/lib/generation_pipeline.py`](scripts/lib/generation_pipeline.py) | Creator / QA 生成期流水线与轮次控制 |
-| [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py) | Agent 进程管理、结构化输出契约、模型与超时配置 |
+| [`scripts/lib/agent_runtime.py`](scripts/lib/agent_runtime.py) | Agent 进程管理与结构化输出契约 |
+| [`scripts/lib/ai_provider.py`](scripts/lib/ai_provider.py) | 所有场景统一的模型、provider、baseURL、API Key 与超时配置 |
 | [`scripts/lib/evidence_resolver.py`](scripts/lib/evidence_resolver.py) | Harness 受限取证——Agent 声称的证据由 Harness 固定，不由 Agent 自证 |
 | [`scripts/lib/upstream_format_check.py`](scripts/lib/upstream_format_check.py) | 上游引用格式校验 |
 

@@ -110,9 +110,10 @@
 | 可选后端 | **Claude Code**：`AI_RUNNER=claude-code`（`ANTHROPIC_API_KEY`）或 `claude-code-account`（`CLAUDE_CREDENTIALS_JSON`），需在 Runner 上安装 `@anthropic-ai/claude-code` |
 | 统一入口 | [`scripts/lib/ai_runner.py`](../scripts/lib/ai_runner.py)：按 `AI_RUNNER` 选择后端，并在调用前校验凭证；opencode 走 [`opencode_run.py`](../scripts/lib/opencode_run.py)，Claude Code 走 [`claude_code_run.py`](../scripts/lib/claude_code_run.py) |
 | Agent 定义 | `.github/agents/` 下 6 份提示词：`image-creator`、`testcase-creator`、`testcase-qa`、`code-fixer`、`ci-failure-analyst`、`dockerfile-builder` |
-| 场景一/三模型 | 默认 `deepseek/deepseek-flash`（见 [`scripts/lib/agent_runtime.py`](../scripts/lib/agent_runtime.py)），可用 `OPENCODE_MODEL` / `OPENCODE_TIMEOUT` 覆盖 |
-| 场景二模型 | 默认 `bailian/deepseek-v4.1-flash-1017`（阿里云百炼 DashScope，OpenAI 兼容模式）；`AI_PROVIDER_ID` + `OPENAI_BASE_URL` 注入自定义 provider，Key 以 `{env:OPENAI_API_KEY}` 引用、不落明文 |
-| 调用超时 | 场景二 `AI_TIMEOUT_MS` 默认 10,800,000 ms（3 小时） |
+| 服务商配置 | 所有场景统一由 [`scripts/lib/ai_provider.py`](../scripts/lib/ai_provider.py) 解析 `AI_MODEL` / `AI_PROVIDER_ID` / `OPENAI_BASE_URL` / `AI_API_KEY` / `AI_TIMEOUT_MS` |
+| 默认模型 | `gateway/deepseek-v4-pro`（火山引擎 API 网关，OpenAI 兼容模式）；1M 上下文、384k 输出、thinking + reasoning_content；Key 以 `{env:OPENAI_API_KEY}` 引用、不落明文 |
+| 兼容别名 | `OPENCODE_MODEL`（模型）、`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`（Key） |
+| 调用超时 | `AI_TIMEOUT_MS` 默认 10,800,000 ms（3 小时） |
 
 > 换服务商只需让 `AI_MODEL`（`<provider_id>/<model>`）、`AI_PROVIDER_ID`、`OPENAI_BASE_URL` 三者保持一致；使用 opencode 内置 provider（如 `deepseek/…`、`anthropic/…`）时前缀改成对应内置 id 即可。
 

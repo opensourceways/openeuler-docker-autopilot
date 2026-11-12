@@ -15,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts.lib import ai_provider
 from scripts.lib.agent_runtime import AgentRuntimeError
 from scripts.lib.candidate_bundle import (
     CandidateBundle,
@@ -398,9 +399,11 @@ def _target_apply_patch(args: argparse.Namespace) -> None:
 
 
 def cmd_phase1_generate(args: argparse.Namespace) -> None:
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    api_key = ai_provider.api_key()
     if not api_key:
-        raise GenerationPipelineError("DEEPSEEK_API_KEY is required")
+        raise GenerationPipelineError(
+            "AI_API_KEY (or DEEPSEEK_API_KEY) is required"
+        )
     result = run_generation_pipeline(
         workspace=args.workspace,
         report_dir=args.report_dir,
@@ -438,9 +441,11 @@ def cmd_phase1_smoke_generate(args: argparse.Namespace) -> None:
 
 
 def cmd_phase1_native_repair(args: argparse.Namespace) -> None:
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    api_key = ai_provider.api_key()
     if not api_key:
-        raise NativeRepairError("DEEPSEEK_API_KEY is required")
+        raise NativeRepairError(
+            "AI_API_KEY (or DEEPSEEK_API_KEY) is required"
+        )
     result = validate_native_with_repairs(
         workspace=args.workspace,
         task=_load_task(args.task_spec),
@@ -504,7 +509,7 @@ def cmd_phase1_native_smoke(args: argparse.Namespace) -> None:
 
 def cmd_phase1_decide(args: argparse.Namespace) -> None:
     args.report_dir.mkdir(parents=True, exist_ok=True)
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    api_key = ai_provider.api_key()
     try:
         reports = {
             "x86_64": json.loads(args.x86_report.read_text()),

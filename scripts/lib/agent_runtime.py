@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator, Mapping, Sequence
 
+from scripts.lib import ai_provider
 from scripts.lib.progress import log, run_streaming
 from scripts.lib.toolchain import MIN_DISK_FREE
 
@@ -59,7 +60,12 @@ class AgentScratchOverLimitError(AgentRuntimeError):
         self.limit_mb = limit_mb
 
 
-MODEL = "deepseek/deepseek-flash"
+# 所有场景共用 scripts/lib/ai_provider.py 的服务商配置（模型/provider/baseURL/
+# 密钥），provider 声明由 _agent_config 合并进 OPENCODE_CONFIG_CONTENT，密钥以
+# {env:OPENAI_API_KEY} 引用、不落明文。
+MODEL = ai_provider.DEFAULT_MODEL
+PROVIDER_ID = ai_provider.DEFAULT_PROVIDER_ID
+BASE_URL = ai_provider.DEFAULT_BASE_URL
 _AGENT_HEARTBEAT_SECONDS = 60.0
 # Research downloads are the one Agent action that can quietly consume a whole
 # budget, so cap the scratch directory instead of trusting the prompt alone.
@@ -120,7 +126,7 @@ def _default_runner(
     process_env = os.environ.copy()
     process_env.update(env)
     role = env.get("OE_AGENT_ROLE", "unknown")
-    secret = env.get("DEEPSEEK_API_KEY", "")
+    secret = env.get("OPENAI_API_KEY") or env.get("DEEPSEEK_API_KEY", "")
     scratch = Path(env.get("OE_AGENT_SCRATCH", cwd / SCRATCH_DIR))
     started = time.monotonic()
     last_output = [started]
@@ -600,56 +606,58 @@ def validate_agent_payload(
     _validate_contract(payload, required_keys)
 
 
-def _permission_config(
+# 兼容旧引用：provider 声明统一由 ai_provider 生成。
+provider_config = ai_provider.provider_config
+
+
+def _agent_config(
     role: str,
     *,
     external_read_dirs: Sequence[Path] = (),
     deny_all: bool = False,
 ) -> str:
     if deny_all:
-        return json.dumps(
-            {
-                "$schema": "https://opencode.ai/config.json",
-                "permission": {
-                    "*": "deny",
-                    "read": "deny",
-                    "edit": "deny",
-                    "bash": "deny",
-                    "webfetch": "deny",
-                    "task": "deny",
-                    "external_directory": "deny",
-                },
-            },
-            separators=(",", ":"),
-        )
-    writable = role in _WRITE_ROLES
-    external_patterns = tuple(f"{path.as_posix()}/**" for path in external_read_dirs)
-    edit_permission: object = "allow" if writable else "deny"
-    external_permission: object = "deny"
-    if external_patterns:
-        edit_permission = {
-            "*": "allow",
-            "../**": "deny",
-        }
-        external_permission = {
+        permission = {
             "*": "deny",
-            **{pattern: "allow" for pattern in external_patterns},
+            "read": "deny",
+            "edit": "deny",
+            "bash": "deny",
+            "webfetch": "deny",
+            "task": "deny",
+            "external_directory": "deny",
         }
-    permission = {
-        "read": "allow" if writable else "deny",
-        "edit": edit_permission,
-        "bash": "allow" if writable else "deny",
-        "webfetch": "allow" if writable else "deny",
-        "task": "deny",
-        "external_directory": external_permission,
-    }
-    return json.dumps(
-        {
-            "$schema": "https://opencode.ai/config.json",
-            "permission": permission,
-        },
-        separators=(",", ":"),
-    )
+    else:
+        writable = role in _WRITE_ROLES
+        external_patterns = tuple(
+            f"{path.as_posix()}/**" for path in external_read_dirs
+        )
+        edit_permission: object = "allow" if writable else "deny"
+        external_permission: object = "deny"
+        if external_patterns:
+            edit_permission = {
+                "*": "allow",
+                "../**": "deny",
+            }
+            external_permission = {
+                "*": "deny",
+                **{pattern: "allow" for pattern in external_patterns},
+            }
+        permission = {
+            "read": "allow" if writable else "deny",
+            "edit": edit_permission,
+            "bash": "allow" if writable else "deny",
+            "webfetch": "allow" if writable else "deny",
+            "task": "deny",
+            "external_directory": external_permission,
+        }
+    # provider 必须与 permission 一起注入：干净 Runner 上没有全局 opencode 配置，
+    # 少了 provider 声明 `gateway/<model>` 无法解析到任何模型。
+    config: dict = {"$schema": "https://opencode.ai/config.json"}
+    provider = provider_config()
+    if provider:
+        config["provider"] = provider
+    config["permission"] = permission
+    return json.dumps(config, separators=(",", ":"))
 
 
 def run_agent(
@@ -676,7 +684,9 @@ def run_agent(
     if not workspace.is_dir():
         raise AgentRuntimeError("Agent workspace does not exist")
     if not api_key:
-        raise AgentRuntimeError("DEEPSEEK_API_KEY is required")
+        raise AgentRuntimeError(
+            "AI_API_KEY (or DEEPSEEK_API_KEY) is required"
+        )
     if not prompt.strip():
         raise AgentRuntimeError("Agent prompt is required")
     if not required_keys:
@@ -697,11 +707,12 @@ def run_agent(
             )
         normalized_external_dirs.append(resolved)
 
+    model_name = ai_provider.model()
     command = [
         str(executable),
         "run",
         "--model",
-        MODEL,
+        model_name,
         "--format",
         "json",
         "--auto",
@@ -712,9 +723,11 @@ def run_agent(
     ]
     env = {
         "DEEPSEEK_API_KEY": api_key,
+        # 网关 provider 的密钥引用 {env:OPENAI_API_KEY}，必须随子进程注入
+        "OPENAI_API_KEY": api_key,
         "OE_AGENT_ROLE": role,
         "OE_AGENT_SCRATCH": str(prepare_scratch(workspace)),
-        "OPENCODE_CONFIG_CONTENT": _permission_config(
+        "OPENCODE_CONFIG_CONTENT": _agent_config(
             role,
             external_read_dirs=tuple(normalized_external_dirs),
         ),
@@ -722,7 +735,7 @@ def run_agent(
     started = time.monotonic()
     log(
         f"agent:{role}",
-        f"START model={MODEL} timeout={float(timeout):g}s "
+        f"START model={model_name} timeout={float(timeout):g}s "
         f"prompt_chars={len(prompt)} workspace={workspace}",
     )
     result = runner(command, workspace, env, timeout)
@@ -806,7 +819,7 @@ def run_agent(
             recovery_prompt,
         ]
         recovery_env = dict(env)
-        recovery_env["OPENCODE_CONFIG_CONTENT"] = _permission_config(
+        recovery_env["OPENCODE_CONFIG_CONTENT"] = _agent_config(
             role,
             deny_all=True,
         )

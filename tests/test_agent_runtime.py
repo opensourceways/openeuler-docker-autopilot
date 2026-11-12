@@ -235,7 +235,7 @@ def test_default_agent_runner_streams_safe_progress(tmp_path, capsys):
     assert result.payload["success"] is True
     assert (
         "[flow][agent:image_creator] START "
-        "model=deepseek/deepseek-flash timeout=3600s"
+        "model=gateway/deepseek-v4-pro timeout=3600s"
     ) in output
     assert (
         "[flow][agent:image_creator] ACTION tool=write "
@@ -344,7 +344,7 @@ def test_write_agent_uses_pinned_model_and_scoped_permissions(tmp_path):
         str(executable),
         "run",
         "--model",
-        "deepseek/deepseek-flash",
+        "gateway/deepseek-v4-pro",
         "--format",
         "json",
         "--auto",
@@ -360,7 +360,12 @@ def test_write_agent_uses_pinned_model_and_scoped_permissions(tmp_path):
     assert call["command"][-1] == "Create the task-scoped image files."
     assert call["cwd"] == workspace
     assert call["env"]["DEEPSEEK_API_KEY"] == "deepseek-secret"
+    assert call["env"]["OPENAI_API_KEY"] == "deepseek-secret"
     config = json.loads(call["env"]["OPENCODE_CONFIG_CONTENT"])
+    gateway = config["provider"]["gateway"]
+    assert gateway["npm"] == "@ai-sdk/openai-compatible"
+    assert gateway["options"]["apiKey"] == "{env:OPENAI_API_KEY}"
+    assert "deepseek-v4-pro" in gateway["models"]
     assert config["permission"]["edit"] == "allow"
     assert config["permission"]["bash"] == "allow"
     assert config["permission"]["task"] == "deny"
