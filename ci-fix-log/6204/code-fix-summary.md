@@ -1,0 +1,1 @@
+Fixed the x265 3.4 source download URL by switching from the non-existent GitHub release asset (`releases/download/3.4/x265_3.4.tar.gz`, HTTP 404) to the GitHub tag archive (`archive/refs/tags/3.4.tar.gz`) and added a synthetic `.hg_archival.txt` so CMake resolves the encoder version to `3.4` instead of `unknown`.
