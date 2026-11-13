@@ -2,10 +2,12 @@
 # name: 看板软件名（传给 /api/v1/version/resolve）
 # app:  目标仓应用目录名；domain: 目标仓一级目录
 # 新增/删除软件直接改本文件，workflow 不再遍历目标仓。
-# pending: 看板有、镜像仓还没有的独立软件，不参与自动升级；
-#          入库后移到 apps 并补 app / domain（已排除软件族与内核组件）。
+# 目标仓还没有的软件也登记在这里：由场景二触发场景一新建镜像。
 # 初始内容由 scripts/utils/scrape_upgrade_apps.py 生成（看板 kunpeng 域）。
 apps:
+- name: benchmark
+  app: benchmark
+  domain: AI
 - name: caffe
   app: caffe
   domain: AI
@@ -32,6 +34,9 @@ apps:
   domain: AI
 - name: sglang
   app: sglang
+  domain: AI
+- name: TensorRT
+  app: tensorrt
   domain: AI
 - name: TensorRT-LLM
   app: tensorrt-llm
@@ -129,6 +134,9 @@ apps:
 - name: Kyuubi
   app: kyuubi
   domain: Bigdata
+- name: Lance
+  app: lance
+  domain: Bigdata
 - name: Livy
   app: livy
   domain: Bigdata
@@ -143,6 +151,12 @@ apps:
   domain: Bigdata
 - name: Oozie
   app: oozie
+  domain: Bigdata
+- name: ORC
+  app: orc
+  domain: Bigdata
+- name: pandas
+  app: pandas
   domain: Bigdata
 - name: Parquet
   app: parquet
@@ -177,6 +191,9 @@ apps:
 - name: Calico
   app: calico
   domain: Cloud
+- name: chromium
+  app: chromium
+  domain: Cloud
 - name: cloudwego
   app: cloudwego
   domain: Cloud
@@ -189,6 +206,9 @@ apps:
 - name: DeathStarBench
   app: deathstarbench
   domain: Cloud
+- name: Django
+  app: django
+  domain: Cloud
 - name: Docker
   app: docker
   domain: Cloud
@@ -197,6 +217,9 @@ apps:
   domain: Cloud
 - name: Envoy
   app: envoy
+  domain: Cloud
+- name: fcgi
+  app: fcgi
   domain: Cloud
 - name: Flannel
   app: flannel
@@ -255,11 +278,17 @@ apps:
 - name: RabbitMQ
   app: rabbitmq
   domain: Cloud
+- name: rdma-core
+  app: rdma-core
+  domain: Cloud
 - name: Squid
   app: squid
   domain: Cloud
 - name: sriov-network-operator
   app: sriov-network-operator
+  domain: Cloud
+- name: Stratovirt
+  app: stratovirt
   domain: Cloud
 - name: Strongswan
   app: strongswan
@@ -282,6 +311,9 @@ apps:
 - name: InfluxDB
   app: influxdb
   domain: Database
+- name: LevelDB
+  app: leveldb
+  domain: Database
 - name: MariaDB
   app: mariadb
   domain: Database
@@ -290,6 +322,9 @@ apps:
   domain: Database
 - name: Milvus
   app: milvus
+  domain: Database
+- name: MongoDB
+  app: mongodb
   domain: Database
 - name: MySQL
   app: mysql
@@ -318,6 +353,9 @@ apps:
 - name: RocksDB
   app: rocksdb
   domain: Database
+- name: sqlite
+  app: sqlite
+  domain: Database
 - name: TDengine
   app: tdengine
   domain: Database
@@ -327,17 +365,65 @@ apps:
 - name: TiDB
   app: tidb
   domain: Database
+- name: 3d-dna
+  app: 3d-dna
+  domain: HPC
 - name: 3DSlicer
   app: 3dslicer
   domain: HPC
 - name: Abinit
   app: abinit
   domain: HPC
+- name: Abyss
+  app: abyss
+  domain: HPC
+- name: ALLHiC
+  app: allhic
+  domain: HPC
+- name: AlphaFold2
+  app: alphafold2
+  domain: HPC
 - name: Amber tools
   app: ambertools
   domain: HPC
+- name: Augustus
+  app: augustus
+  domain: HPC
+- name: AutoDock vina
+  app: autodock-vina
+  domain: HPC
+- name: bamtools
+  app: bamtools
+  domain: HPC
+- name: batchelor
+  app: batchelor
+  domain: HPC
+- name: BayesTyper
+  app: bayestyper
+  domain: HPC
+- name: bcftools
+  app: bcftools
+  domain: HPC
+- name: BEAST
+  app: beast
+  domain: HPC
+- name: bedtools
+  app: bedtools
+  domain: HPC
+- name: bioawk
+  app: bioawk
+  domain: HPC
+- name: biovizbase
+  app: biovizbase
+  domain: HPC
+- name: bismark
+  app: bismark
+  domain: HPC
 - name: Blat
   app: blat
+  domain: HPC
+- name: Bowtie2
+  app: bowtie2
   domain: HPC
 - name: BUSCO
   app: busco
@@ -347,6 +433,15 @@ apps:
   domain: HPC
 - name: Cactus
   app: cactus
+  domain: HPC
+- name: Canu
+  app: canu
+  domain: HPC
+- name: cd-hit
+  app: cd-hit
+  domain: HPC
+- name: centrifuge
+  app: centrifuge
   domain: HPC
 - name: CESM
   app: cesm
@@ -360,8 +455,14 @@ apps:
 - name: circos
   app: circos
   domain: HPC
+- name: ClipKIT
+  app: clipkit
+  domain: HPC
 - name: CMAQ
   app: cmaq
+  domain: HPC
+- name: CNVnator
+  app: cnvnator
   domain: HPC
 - name: Code-Saturne
   app: code-saturne
@@ -387,17 +488,43 @@ apps:
 - name: Cufflinks
   app: cufflinks
   domain: HPC
+- name: Cutadapt
+  app: cutadapt
+  domain: HPC
+- name: Deal.II
+  app: deal.ii
+  domain: HPC
 - name: DeePMD-kit
   app: deepmd-kit
   domain: HPC
 - name: DeepSeek-LLM
   app: deepseek
   domain: HPC
+- name: deeptools
+  app: deeptools
+  domain: HPC
+- name: DELFT3D
+  app: delft3d4
+  domain: HPC
+  version_source: github-tags
+  tag_prefix: Delft3D4_
+- name: diamond
+  app: diamond
+  domain: HPC
 - name: DL_POLY
   app: dl-poly
   domain: HPC
+- name: dnacopy
+  app: dnacopy
+  domain: HPC
 - name: eccodes
   app: eccodes
+  domain: HPC
+- name: ecflow
+  app: ecflow
+  domain: HPC
+- name: EIGENSOFT
+  app: eigensoft
   domain: HPC
 - name: Elmer
   app: elmer
@@ -408,17 +535,44 @@ apps:
 - name: ESPResSOmd
   app: espressomd
   domain: HPC
+- name: Falcon
+  app: falcon
+  domain: HPC
 - name: FASTA
   app: fasta
   domain: HPC
+- name: fastp
+  app: fastp
+  domain: HPC
+- name: fastseg
+  app: fastseg
+  domain: HPC
+- name: FastTree
+  app: fasttree
+  domain: HPC
+- name: fastx_toolkit
+  app: fastx-toolkit
+  domain: HPC
 - name: FDS
   app: fds
+  domain: HPC
+- name: featureCounts
+  app: featurecounts
+  domain: HPC
+- name: FigTRee
+  app: figtree
+  domain: HPC
+- name: flye
+  app: flye
   domain: HPC
 - name: Foldseek
   app: foldseek
   domain: HPC
 - name: folly
   app: folly
+  domain: HPC
+- name: FSL
+  app: fslpy
   domain: HPC
 - name: FVCOM
   app: fvcom
@@ -432,8 +586,38 @@ apps:
 - name: geant4
   app: geant4
   domain: HPC
+- name: GEMMA
+  app: gemma
+  domain: HPC
+- name: geneselectmmd
+  app: geneselectmmd
+  domain: HPC
+- name: genewise
+  app: genewise
+  domain: HPC
+- name: genomation
+  app: genomation
+  domain: HPC
+- name: glean
+  app: glean
+  domain: HPC
+- name: gnuplot
+  app: gnuplot
+  domain: HPC
+- name: GRAPHMAP
+  app: graphmap
+  domain: HPC
+- name: Graphtyper2
+  app: graphtyper2
+  domain: HPC
 - name: grib_api
   app: grib_api
+  domain: HPC
+- name: GRIDSS
+  app: gridss
+  domain: HPC
+- name: gromacs
+  app: gromacs
   domain: HPC
 - name: gsl
   app: gsl
@@ -447,8 +631,20 @@ apps:
 - name: HH-suite
   app: hh-suite
   domain: HPC
+- name: HISAT2
+  app: hisat2
+  domain: HPC
+- name: HMMER
+  app: hmmer
+  domain: HPC
 - name: HYCOM
   app: hycom
+  domain: HPC
+- name: hyphy
+  app: hyphy
+  domain: HPC
+- name: idba
+  app: idba
   domain: HPC
 - name: interproscan
   app: interproscan
@@ -465,23 +661,62 @@ apps:
 - name: kalign
   app: kalign
   domain: HPC
+- name: kallisto
+  app: kallisto
+  domain: HPC
 - name: kallisto+bustools_python
   app: kb_python
+  domain: HPC
+- name: kebabs
+  app: kebabs
   domain: HPC
 - name: kobas
   app: kobas
   domain: HPC
+- name: kraken2
+  app: kraken2
+  domain: HPC
 - name: Lammps
   app: lammps
+  domain: HPC
+- name: LASTZ
+  app: lastz
   domain: HPC
 - name: Lumpy
   app: lumpy
   domain: HPC
+- name: MACS3
+  app: macs3
+  domain: HPC
+- name: maigespack
+  app: maigespack
+  domain: HPC
+- name: Manta
+  app: manta
+  domain: HPC
+- name: MCscanX
+  app: mcscanx
+  domain: HPC
 - name: MEEP
   app: meep
   domain: HPC
+- name: megahit
+  app: megahit
+  domain: HPC
+- name: Meraculous
+  app: meraculous
+  domain: HPC
 - name: meryl
   app: meryl
+  domain: HPC
+- name: metaeuk
+  app: metaeuk
+  domain: HPC
+- name: metapod
+  app: metapod
+  domain: HPC
+- name: methylkit
+  app: methylkit
   domain: HPC
 - name: mfem
   app: mfem
@@ -492,11 +727,38 @@ apps:
 - name: miniGhost
   app: minighost
   domain: HPC
+- name: minimap2
+  app: minimap2
+  domain: HPC
 - name: MNE-python
   app: mne
   domain: HPC
+- name: monocle
+  app: monocle
+  domain: HPC
 - name: Moose Framework
   app: moose
+  domain: HPC
+- name: MOPAC
+  app: mopac
+  domain: HPC
+- name: MPB
+  app: mpb
+  domain: HPC
+- name: mrbayes
+  app: mrbayes
+  domain: HPC
+- name: Mrtrix
+  app: mrtrix
+  domain: HPC
+- name: multiqc
+  app: multiqc
+  domain: HPC
+- name: mummer
+  app: mummer
+  domain: HPC
+- name: Muscle
+  app: muscle
   domain: HPC
 - name: NAMD
   app: namd
@@ -519,6 +781,12 @@ apps:
 - name: NOVOPlasty
   app: novoplasty
   domain: HPC
+- name: Nwchem
+  app: nwchem
+  domain: HPC
+- name: openbabel
+  app: openbabel
+  domain: HPC
 - name: OpenFOAM
   app: openfoam
   domain: HPC
@@ -540,11 +808,38 @@ apps:
 - name: phono3py
   app: phono3py
   domain: HPC
+- name: phonopy
+  app: phonopy
+  domain: HPC
+- name: phylophlan
+  app: phylophlan
+  domain: HPC
+- name: picard
+  app: picard
+  domain: HPC
+- name: pilon
+  app: pilon
+  domain: HPC
+- name: Primer3
+  app: primer3
+  domain: HPC
+- name: prodigal
+  app: prodigal
+  domain: HPC
 - name: ProteinMPNN
   app: proteinmpnn
   domain: HPC
 - name: prottest
   app: prottest3
+  domain: HPC
+- name: PSI
+  app: psi
+  domain: HPC
+- name: psipred
+  app: psipred
+  domain: HPC
+- name: psmc
+  app: psmc
   domain: HPC
 - name: pwdft
   app: pwdft
@@ -564,14 +859,32 @@ apps:
 - name: Quantum Package
   app: qp2
   domain: HPC
+- name: QuantumEspresso
+  app: quantumespresso
+  domain: HPC
 - name: RDKit
   app: rdkit
+  domain: HPC
+- name: Relion
+  app: relion
+  domain: HPC
+- name: repeatmasker
+  app: repeatmasker
+  domain: HPC
+- name: RepeatModeler
+  app: repeatmodeler
+  domain: HPC
+- name: RepeatScout
+  app: repeatscout
   domain: HPC
 - name: Rfdiffusion
   app: rfdiffusion
   domain: HPC
 - name: RHMC
   app: rhmc
+  domain: HPC
+- name: rMATs
+  app: rmats
   domain: HPC
 - name: ROMS
   app: roms
@@ -582,11 +895,47 @@ apps:
 - name: RSEM
   app: rsem
   domain: HPC
+- name: salmon
+  app: salmon
+  domain: HPC
+- name: sambamba
+  app: sambamba
+  domain: HPC
+- name: samblaster
+  app: samblaster
+  domain: HPC
+- name: Samtools
+  app: samtools
+  domain: HPC
+- name: scanpy
+  app: scanpy
+  domain: HPC
 - name: SeisSol
   app: seissol
   domain: HPC
+- name: seqkit
+  app: seqkit
+  domain: HPC
+- name: seqwish
+  app: seqwish
+  domain: HPC
 - name: Seurat
   app: seurat
+  domain: HPC
+- name: siesta
+  app: siesta
+  domain: HPC
+- name: SimpleITK
+  app: simpleitk
+  domain: HPC
+- name: smcpp
+  app: smcpp
+  domain: HPC
+- name: sniffles
+  app: sniffles
+  domain: HPC
+- name: SoftSV
+  app: softsv
   domain: HPC
 - name: SPACK
   app: spack
@@ -597,8 +946,17 @@ apps:
 - name: specfem3d_globe
   app: specfem3d_globe
   domain: HPC
+- name: STAR
+  app: star
+  domain: HPC
+- name: SU2
+  app: su2
+  domain: HPC
 - name: SURVIVOR
   app: survivor
+  domain: HPC
+- name: SVseq2
+  app: svseq2
   domain: HPC
 - name: swan
   app: swan
@@ -612,11 +970,32 @@ apps:
 - name: Tophat2
   app: tophat
   domain: HPC
+- name: trf
+  app: trf
+  domain: HPC
+- name: trimal
+  app: trimal
+  domain: HPC
+- name: trimmomatic
+  app: trimmomatic
+  domain: HPC
+- name: Trinity
+  app: trinity
+  domain: HPC
+- name: VaPoR
+  app: vapor
+  domain: HPC
+- name: VASP
+  app: vasp
+  domain: HPC
 - name: vaspkit
   app: vaspkit
   domain: HPC
 - name: Velvet
   app: velvet
+  domain: HPC
+- name: VEP
+  app: vep
   domain: HPC
 - name: wannier tools
   app: wannier_tools
@@ -624,11 +1003,20 @@ apps:
 - name: WAVEWATCH
   app: wavewatch
   domain: HPC
+- name: WAVEWATCH III
+  app: wavewatch-iii
+  domain: HPC
+- name: wgrib2
+  app: wgrib2
+  domain: HPC
 - name: WPS
   app: wps
   domain: HPC
 - name: WRF
   app: wrf
+  domain: HPC
+- name: wtdbg2
+  app: wtdbg2
   domain: HPC
 - name: Yambo
   app: yambo
@@ -645,14 +1033,29 @@ apps:
 - name: Ansible
   app: ansible
   domain: Others
+- name: Ant
+  app: ant
+  domain: Others
+- name: apptainer
+  app: apptainer
+  domain: Others
+- name: APR
+  app: apr
+  domain: Others
 - name: APR-util
   app: apr-util
   domain: Others
 - name: Bcache
   app: bcache
   domain: Others
+- name: bcrypt
+  app: bcrypt
+  domain: Others
 - name: Binder
   app: binder
+  domain: Others
+- name: Boost
+  app: boost
   domain: Others
 - name: brpc
   app: brpc
@@ -668,6 +1071,12 @@ apps:
   domain: Others
 - name: cJSON
   app: cjson
+  domain: Others
+- name: CMake
+  app: cmake
+  domain: Others
+- name: curl
+  app: curl
   domain: Others
 - name: DHCP
   app: dhcp
@@ -690,8 +1099,14 @@ apps:
 - name: Eigen
   app: eigen-git-mirror
   domain: Others
+- name: EMU
+  app: emu
+  domain: Others
 - name: Erlang
   app: erlang
+  domain: Others
+- name: Expat
+  app: expat
   domain: Others
 - name: FastJSON
   app: fastjson
@@ -699,14 +1114,38 @@ apps:
 - name: fbthrift
   app: fbthrift
   domain: Others
+- name: ffmpeg
+  app: ffmpeg
+  domain: Others
+- name: FFTW
+  app: fftw
+  domain: Others
 - name: Filebeat
   app: filebeat
   domain: Others
 - name: Fio
   app: fio
   domain: Others
+- name: FlatBuffers
+  app: flatbuffers
+  domain: Others
+- name: fmt
+  app: fmt
+  domain: Others
 - name: gcc
   app: gcc
+  domain: Others
+- name: GDAL
+  app: gdal
+  domain: Others
+- name: GDB
+  app: gdb
+  domain: Others
+- name: Geos
+  app: geos
+  domain: Others
+- name: git
+  app: git
   domain: Others
 - name: Glassfish
   app: glassfish
@@ -714,8 +1153,17 @@ apps:
 - name: Glibc
   app: glibc
   domain: Others
+- name: GMP
+  app: gmp
+  domain: Others
 - name: Golang
   app: go
+  domain: Others
+- name: Google Test
+  app: google-test
+  domain: Others
+- name: gperftools
+  app: gperftools
   domain: Others
 - name: Gradle
   app: gradle
@@ -723,11 +1171,17 @@ apps:
 - name: grads
   app: grads
   domain: Others
+- name: grpc-java
+  app: grpc-java
+  domain: Others
 - name: grpc
   app: grpc-server
   domain: Others
 - name: Guacamole
   app: guacd
+  domain: Others
+- name: Gzip
+  app: gzip
   domain: Others
 - name: HAProxy
   app: haproxy
@@ -756,6 +1210,9 @@ apps:
 - name: irvsp
   app: irvsp
   domain: Others
+- name: ISA-L
+  app: isa-l
+  domain: Others
 - name: jemalloc
   app: jemalloc
   domain: Others
@@ -771,11 +1228,35 @@ apps:
 - name: Keepalived
   app: keepalived
   domain: Others
+- name: kokkos
+  app: kokkos
+  domain: Others
+- name: lapack
+  app: lapack
+  domain: Others
+- name: libavif
+  app: libavif
+  domain: Others
 - name: libconfig
   app: libconfig
   domain: Others
+- name: libdrm
+  app: libdrm
+  domain: Others
+- name: Libevent
+  app: libevent
+  domain: Others
+- name: libjpeg-turbo
+  app: libjpeg-turbo
+  domain: Others
+- name: libmpc
+  app: libmpc
+  domain: Others
 - name: libwebp
   app: libwebp
+  domain: Others
+- name: Libxml2
+  app: libxml2
   domain: Others
 - name: libyuv-android
   app: libyuv-android
@@ -792,6 +1273,9 @@ apps:
 - name: LZ4
   app: lz4
   domain: Others
+- name: LZO
+  app: lzo
+  domain: Others
 - name: Maven
   app: maven
   domain: Others
@@ -801,11 +1285,20 @@ apps:
 - name: Mesa
   app: mesa
   domain: Others
+- name: Metis
+  app: metis
+  domain: Others
 - name: Mongoose
   app: mongoose
   domain: Others
 - name: monolith
   app: monolith
+  domain: Others
+- name: MPFR
+  app: mpfr
+  domain: Others
+- name: mpi4py
+  app: mpi4py
   domain: Others
 - name: Multiwfn
   app: multiwfn
@@ -837,17 +1330,41 @@ apps:
 - name: npm
   app: npm
   domain: Others
+- name: Numpy
+  app: numpy
+  domain: Others
+- name: ObsPy
+  app: obspy
+  domain: Others
+- name: ompi
+  app: ompi
+  domain: Others
 - name: onednn
   app: onednn
   domain: Others
+- name: OpenBLAS
+  app: openblas
+  domain: Others
+- name: OpenH264
+  app: openh264
+  domain: Others
 - name: jdk
   app: openjdk
+  domain: Others
+- name: openssl
+  app: openssl
+  domain: Others
+- name: Opus
+  app: opus
   domain: Others
 - name: PaceMaker
   app: pacemaker
   domain: Others
 - name: PaddlePaddle
   app: paddlepaddle
+  domain: Others
+- name: pcre
+  app: pcre
   domain: Others
 - name: Perl
   app: perl
@@ -858,11 +1375,23 @@ apps:
 - name: PHP
   app: php
   domain: Others
+- name: pigz
+  app: pigz
+  domain: Others
 - name: Plink
   app: plink
   domain: Others
+- name: plumed
+  app: plumed
+  domain: Others
+- name: Proj
+  app: proj
+  domain: Others
 - name: Protobuf
   app: protobuf
+  domain: Others
+- name: psutil
+  app: psutil
   domain: Others
 - name: Python
   app: python
@@ -873,11 +1402,17 @@ apps:
 - name: Quartz
   app: quartz
   domain: Others
+- name: R
+  app: r
+  domain: Others
 - name: RabitQ
   app: rabitq-library
   domain: Others
 - name: rapidjson
   app: rapidjson
+  domain: Others
+- name: RE2
+  app: re2
   domain: Others
 - name: React
   app: react
@@ -903,8 +1438,23 @@ apps:
 - name: ScaNN
   app: scann
   domain: Others
+- name: SCons
+  app: scons
+  domain: Others
+- name: Shiny
+  app: shiny
+  domain: Others
 - name: siege
   app: siege
+  domain: Others
+- name: simde
+  app: simde
+  domain: Others
+- name: simdjson
+  app: simdjson
+  domain: Others
+- name: SKLearn
+  app: sklearn
   domain: Others
 - name: slurm
   app: slurm
@@ -923,6 +1473,9 @@ apps:
   domain: Others
 - name: SPDK
   app: spdk
+  domain: Others
+- name: Sphinx
+  app: sphinx
   domain: Others
 - name: Spring Boot
   app: spring-boot
@@ -951,17 +1504,32 @@ apps:
 - name: TensorFlow
   app: tensorflow
   domain: Others
+- name: Tesseract
+  app: tesseract
+  domain: Others
+- name: TinyXML
+  app: tinyxml
+  domain: Others
 - name: Tomcat
   app: tomcat
   domain: Others
 - name: Tongsuo
   app: tongsuo
   domain: Others
+- name: Tornado
+  app: tornado
+  domain: Others
 - name: ATS
   app: traffic-server
   domain: Others
 - name: Triton
   app: triton
+  domain: Others
+- name: TypeScript
+  app: typescript
+  domain: Others
+- name: udunits
+  app: udunits
   domain: Others
 - name: UnixBench
   app: unixbench
@@ -1004,6 +1572,15 @@ apps:
   domain: Others
 - name: X265
   app: x265
+  domain: Others
+- name: ZeroMQ
+  app: zeromq
+  domain: Others
+- name: Zlib
+  app: zlib
+  domain: Others
+- name: zlib-ng
+  app: zlib-ng
   domain: Others
 - name: 3FS
   app: 3fs
@@ -1050,6 +1627,9 @@ apps:
 - name: Lustre
   app: lustre
   domain: Storage
+- name: MinIO
+  app: minio
+  domain: Storage
 - name: Mooncake
   app: mooncake
   domain: Storage
@@ -1065,194 +1645,3 @@ apps:
 - name: Sheepdog
   app: sheepdog
   domain: Storage
-pending:
-- name: 3d-dna
-- name: Abyss
-- name: ALLHiC
-- name: AlphaFold2
-- name: Ant
-- name: apptainer
-- name: APR
-- name: Augustus
-- name: AutoDock vina
-- name: bamtools
-- name: batchelor
-- name: BayesTyper
-- name: bcftools
-- name: bcrypt
-- name: BEAST
-- name: bedtools
-- name: benchmark
-- name: bioawk
-- name: biovizbase
-- name: bismark
-- name: Boost
-- name: Bowtie2
-- name: Canu
-- name: cd-hit
-- name: centrifuge
-- name: chromium
-- name: ClipKIT
-- name: CMake
-- name: CNVnator
-- name: curl
-- name: Cutadapt
-- name: Deal.II
-- name: deeptools
-- name: diamond
-- name: Django
-- name: dnacopy
-- name: ecflow
-- name: EIGENSOFT
-- name: EMU
-- name: Expat
-- name: Falcon
-- name: fastp
-- name: fastseg
-- name: FastTree
-- name: fastx_toolkit
-- name: fcgi
-- name: featureCounts
-- name: ffmpeg
-- name: FFTW
-- name: FigTRee
-- name: FlatBuffers
-- name: flye
-- name: fmt
-- name: GDAL
-- name: GDB
-- name: GEMMA
-- name: geneselectmmd
-- name: genewise
-- name: genomation
-- name: Geos
-- name: git
-- name: glean
-- name: GMP
-- name: gnuplot
-- name: Google Test
-- name: gperftools
-- name: GRAPHMAP
-- name: Graphtyper2
-- name: GRIDSS
-- name: gromacs
-- name: grpc-java
-- name: Gzip
-- name: HISAT2
-- name: HMMER
-- name: hyphy
-- name: idba
-- name: ISA-L
-- name: kallisto
-- name: kebabs
-- name: kokkos
-- name: kraken2
-- name: Lance
-- name: lapack
-- name: LASTZ
-- name: LevelDB
-- name: libavif
-- name: libdrm
-- name: Libevent
-- name: libjpeg-turbo
-- name: libmpc
-- name: Libxml2
-- name: LZO
-- name: MACS3
-- name: maigespack
-- name: Manta
-- name: MCscanX
-- name: megahit
-- name: Meraculous
-- name: metaeuk
-- name: metapod
-- name: methylkit
-- name: Metis
-- name: minimap2
-- name: MinIO
-- name: MongoDB
-- name: monocle
-- name: MOPAC
-- name: MPB
-- name: MPFR
-- name: mpi4py
-- name: mrbayes
-- name: Mrtrix
-- name: multiqc
-- name: mummer
-- name: Muscle
-- name: Numpy
-- name: Nwchem
-- name: ObsPy
-- name: ompi
-- name: openbabel
-- name: OpenBLAS
-- name: OpenH264
-- name: openssl
-- name: Opus
-- name: ORC
-- name: pandas
-- name: pcre
-- name: phonopy
-- name: phylophlan
-- name: picard
-- name: pigz
-- name: pilon
-- name: plumed
-- name: Primer3
-- name: prodigal
-- name: Proj
-- name: PSI
-- name: psipred
-- name: psmc
-- name: psutil
-- name: QuantumEspresso
-- name: R
-- name: rdma-core
-- name: RE2
-- name: Relion
-- name: repeatmasker
-- name: RepeatModeler
-- name: RepeatScout
-- name: rMATs
-- name: salmon
-- name: sambamba
-- name: samblaster
-- name: Samtools
-- name: scanpy
-- name: SCons
-- name: seqkit
-- name: seqwish
-- name: Shiny
-- name: siesta
-- name: simde
-- name: simdjson
-- name: SimpleITK
-- name: SKLearn
-- name: smcpp
-- name: sniffles
-- name: SoftSV
-- name: Sphinx
-- name: sqlite
-- name: STAR
-- name: Stratovirt
-- name: SU2
-- name: SVseq2
-- name: Tesseract
-- name: TinyXML
-- name: Tornado
-- name: trf
-- name: trimal
-- name: trimmomatic
-- name: Trinity
-- name: TypeScript
-- name: udunits
-- name: VaPoR
-- name: VASP
-- name: VEP
-- name: WAVEWATCH III
-- name: wgrib2
-- name: wtdbg2
-- name: ZeroMQ
-- name: Zlib
-- name: zlib-ng

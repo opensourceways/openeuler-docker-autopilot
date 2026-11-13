@@ -144,47 +144,10 @@ def build_entries(records: list[dict], repo: Path) -> tuple[list[dict], list[str
     return entries, missing, ambiguous
 
 
-def _read_existing(out: Path) -> dict:
-    if not out.is_file():
-        return {}
-    try:
-        data = yaml.safe_load(out.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _merge_apps(existing: list[dict], generated: list[dict]) -> list[dict]:
-    """保留手工维护的条目，用新生成的同名条目更新 name。"""
-    merged: dict[tuple[str, str], dict] = {}
-    for entry in existing:
-        if not isinstance(entry, dict):
-            continue
-        app = str(entry.get("app") or "").strip()
-        domain = str(entry.get("domain") or "").strip()
-        if app and domain:
-            merged[(domain, app)] = {
-                "name": str(entry.get("name") or app),
-                "app": app,
-                "domain": domain,
-            }
-    for entry in generated:
-        merged[(entry["domain"], entry["app"])] = entry
-    return sorted(
-        merged.values(),
-        key=lambda entry: (entry["domain"].casefold(), entry["app"].casefold()),
-    )
-
-
-def write_yaml(
-    entries: list[dict], out: Path, domain: str = "", pending: list[dict] | None = None
-) -> None:
+def write_yaml(entries: list[dict], out: Path, domain: str = "") -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
-    payload: dict[str, object] = {"apps": entries}
-    if pending:
-        payload["pending"] = pending
     body = yaml.safe_dump(
-        payload,
+        {"apps": entries},
         allow_unicode=True,
         sort_keys=False,
         default_flow_style=False,
@@ -196,8 +159,6 @@ def write_yaml(
         "# name: 看板软件名（传给 /api/v1/version/resolve）\n"
         "# app:  目标仓应用目录名；domain: 目标仓一级目录\n"
         "# 新增/删除软件直接改本文件，workflow 不再遍历目标仓。\n"
-        "# pending: 看板有、镜像仓还没有的独立软件，不参与自动升级；\n"
-        "#          入库后移到 apps 并补 app / domain（已排除软件族与内核组件）。\n"
         f"# 初始内容由 scripts/utils/scrape_upgrade_apps.py 生成"
         f"{f'（看板 {domain} 域）' if domain else ''}。\n"
     )
@@ -229,15 +190,9 @@ def main() -> int:
     if args.domain:
         records = [item for item in records if item.get("domain") == args.domain]
     entries, missing, ambiguous = build_entries(records, repo)
-    out = Path(args.out)
-    existing = _read_existing(out)
-    entries = _merge_apps(existing.get("apps") or [], entries)
-    pending = existing.get("pending") or []
-    write_yaml(entries, out, domain=args.domain, pending=pending)
+    write_yaml(entries, Path(args.out), domain=args.domain)
 
-    print(f"看板软件 {len(records)} 个；写入 {len(entries)} 条 -> {out}")
-    if pending:
-        print(f"保留 pending {len(pending)} 条")
+    print(f"看板软件 {len(records)} 个；写入 {len(entries)} 条 -> {args.out}")
     print(f"未在目标仓找到：{len(missing)} 个")
     if missing:
         print("  " + ", ".join(missing[:30]) + (" ..." if len(missing) > 30 else ""))

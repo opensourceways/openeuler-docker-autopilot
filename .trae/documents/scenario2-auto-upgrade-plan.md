@@ -22,10 +22,18 @@
 | 场景 | 入口 | 触发 |
 |---|---|---|
 | ① 新增镜像 | `create_new_images.yml` | Issue / 手动（不变） |
-| ② **应用自动升级** | `upgrade_upstream_versions.yml`（重写） | 每日定时 + 手动 `app` / `version` |
+| ② **应用自动升级** | `upgrade_upstream_versions.yml`（重写） | 手动 `app` / `version`（每日定时在测试期关闭） |
 | ③ openEuler 版本升级 | `upgrade_openeuler_versions.yml` | 不变（legacy，暂不动） |
 | ④ 存量补功能测试 | `generate_test_scripts.yml` | 手动（保留，作为场景二子能力的独立入口） |
 | 公共组件 | `_ci_repair.yml`（新增，`workflow_call`）+ `ci_fix_pipeline.yml` 薄壳 | 手动 / 显式 dispatch，无 cron |
+
+流程口径（已确认）：
+
+1. `config/upgrade-apps.yml` 是唯一入口，不遍历目标仓。
+2. 按清单逐项调用 `GET /api/v1/version/resolve`，拿到**最新版本 + 上游证据包**（`tag` / `tag_url` / `commit_sha` / `source` / `collector` 等）。
+3. 证据包是镜像构建与测试生成的输入：已有应用走确定性升级（复制上版本目录 + 版本串替换 + `meta.yml` 追加），证据注入测试生成与修复提示；缺仓应用（后续实施）把证据作为场景一生成镜像的输入（`source_url` + 构建线索）。
+4. 证据缺失时系统自探兜底；最终是否通过由双架构原生构建 + 功能测试决定，证据本身不作门禁。
+5. 每日定时在测试期关闭，只保留 `workflow_dispatch`。
 
 ## 实施步骤
 
@@ -84,9 +92,9 @@
 
 ```yaml
 on:
-  schedule: [{cron: '0 1 * * *'}]     # 每天 UTC 1:00，避开 ci-fix 0:00
   workflow_dispatch:
-    inputs: {app, version, runner_labels}
+    inputs: {app, version, limit, runner_labels}
+# 每日定时（cron: '0 1 * * *'）在测试期关闭，稳定后再恢复
 ```
 
 Job 图（一应用一 PR）：
@@ -117,7 +125,7 @@ Job 图（一应用一 PR）：
 - `tests/test_upstream_evidence.py`：normalize 适配层（含未知字段/collector 提升）、probe 三类结果（tag/release/archive 可下载、不可下载、跳过）、render 输出。
 - `tests/test_upgrade_scan.py`：命中/已存在/open PR/blocked、`--app`/`--version` 覆盖、os 取最新。
 - `tests/test_version_upgrade.py`：copytree、三处替换、meta.yml 追加、找不到旧版本串 fail closed。
-- `tests/test_upgrade_workflow.py`：定时 + 手动输入、job 图、arch runner 标签、无 `run.py`、无字面 `ubuntu-latest`。
+- `tests/test_upgrade_workflow.py`：无 `schedule`、手动输入、job 图、arch runner 标签、无 `run.py`、无字面 `ubuntu-latest`。
 - 更新 `tests/test_ci_fix_workflow.py`（薄壳 + `_ci_repair.yml`、Monitor 无 `schedule`）。
 
 ## 验证
@@ -134,3 +142,69 @@ Job 图（一应用一 PR）：
 - 定时全量可能一次产生多个 PR：首轮先手动单应用验证，稳定后再放开 `app` 缺省。
 - 证据字段未知：适配层不猜测必填项，只做归纳与透传；证据异常绝不影响升级主流程。
 - `_ci_repair.yml` 抽取只搬 job、不改脚本，回滚即恢复单体 workflow。
+
+## 后续演进：清单收敛 + 缺仓自动建镜像（待实施）
+
+> 先由人工把软件清单维护到位，代码改动后续再做。
+
+### 决定
+
+1. **取消 `pending`**：`config/upgrade-apps.yml` 只保留一个 `apps` 列表，每条 `name / app / domain`。
+2. **仓里没有 = 需要新建镜像**：`upgrade_scan` 发现目标仓缺该应用目录时，不再 skip，而是产出 `new_images`；场景二每日任务调用场景一 `create_new_images.yml`（`operation=scenario_one`）建镜像。
+3. **每日自动 + 限量**：缺仓建镜像默认每轮 1 个（新增 `MAX_NEW_IMAGES` 变量），观察稳定后再放开；已有 open PR 的跳过。
+
+### 清单迁移
+
+- 现有 `pending` 190 条并入 `apps`：
+  - `app`：名称归一化（小写，空格/下划线 → `-`）；`+`、`/` 等非法字符无法自动推导，走人工映射表，脚本遇到即报错，不静默跳过。
+  - `domain`：这批看板记录的 `raw_category` 都是 `HPC 鲲鹏`，先统一填 `HPC`，入库后按实际情况修正。
+  - `FSL` → `name: FSL`、`app: fslpy`、`domain: HPC`（只做 fslpy，不是整套 FSL）。
+  - `DELFT3D` → 只做 **Delft3D4**，DIMR / Delft3D FM / WAQ 不收录。
+    - 清单条目：`name: DELFT3D`、`app: delft3d4`、`domain: HPC`、`version_source: github-tags`、`tag_prefix: Delft3D4_`。
+    - 目录命名：`HPC/delft3d4/<语义版本>/<os>/`，例如 `4.06.00`；**禁止用 revision 号或看板返回值做目录名**。
+    - 版本发现：不能用看板 `version/resolve`（它返回 `2027.01`，属于 DIMRset 线）；改用 GitHub `Deltares/Delft3D` 的 `Delft3D4_*` tag（当前 `Delft3D4_4.06.00`），去掉 `Delft3D4_` 前缀得到版本号。
+    - 构建源：优先固定 tag 的 GitHub 源码归档（可复现、证据自探可直接用）；如必须走 SVN，用 `svn export -r <revision>` 固定版本，Dockerfile 里装 `subversion`，并在接入前验证 CI 到 `svn.oss.deltares.nl` 的连通性。
+    - SVN 定位：`https://svn.oss.deltares.nl/repos/delft3d/` 的 `trunk` 同时含 `flow2d3d` / `dflowfm` / `dimr` / `waq`，不可用于版本发现；`tags/delft3d4/` 下是 revision 号（2399…7545）+ `archive/` 旧语义版本，只作固定构建源。
+    - 构建与依赖：gfortran + MPI + netcdf/hdf5 + autoconf/automake，双架构同源编译；不引入 FM 的 DIMR 运行时。
+    - 许可：源码为 GPL/LGPL 混合（`engines_gpl` / `utils_lgpl` / `plugins_lgpl`），镜像分发需保留源码获取方式与许可声明。
+    - 测试：用上游 `examples` 的最小算例跑一次 `d_hydro` / `flow2d3d` 短算，断言生成输出文件；只断言版本号不够。
+  - `TensorRT` → `name: TensorRT`、`app: tensorrt`、`domain: AI`（只收 NVIDIA/TensorRT，11.4；下载依赖 NVIDIA 账号，场景一构建可能受限）。
+- 明确排除、不进入 `apps` 的名字：
+  - 软件族/聚合（8）：Android、Bioconda、Bioconductor、OpenHPC、OpenStack、OpenXLA、iSula；nanopack 待定。
+  - 内核组件（2）：fuse、KVM。
+  - `pytorch/TensorRT`（2.14.0）：看板里与 NVIDIA 那条同名且无别名，`version/resolve?name=TensorRT` 永远命中 NVIDIA 那条，暂不收录；将来需要看板补别名或清单扩展才能单独跟踪。
+
+### 代码改动
+
+**`scripts/harness/upgrade_scan.py`**
+
+- `load_apps` 只读 `apps`，不再识别 `pending`；保留 `(domain, app)` 去重与字段校验。
+- 应用目录不存在时产出 `new_images` 条目，而不是写 `skipped`：
+  `{app, domain, version, os_version, source_url, evidence}`。
+  - `version` 仍来自看板 `version/resolve`（`blocked_reason` 非空则不进）。
+  - `os_version` 取默认值 `24.03-lts-sp4`（与 `create_new_images.yml` 的默认一致），后续可做成清单字段。
+  - `source_url` 优先 `tag_url`，缺省用 `repo_url`。
+- 去重：目标仓已有 open PR 且 head 分支以 `auto/new-image/<app>/` 开头 → 跳过；需要给 `scripts/lib/ci_gitcode_api.py` 增加按前缀查询（现有 `find_any_pr_by_head_branch` 只支持精确匹配）。
+- 限量：`--limit` 继续管升级，新增 `--new-limit`（默认 0=不限，workflow 传 `MAX_NEW_IMAGES`）单独限制新建数量。
+
+**`.github/workflows/upgrade_upstream_versions.yml`**
+
+- `discover` 新增输出 `new_images`。
+- 新增 `create-images` job（matrix = `new_images`，`max-parallel = vars.MAX_NEW_IMAGES || 1`，`fail-fast: false`）：
+  - `permissions: actions: write`（dispatch 同仓 workflow 需要）。
+  - 每项执行 `gh workflow run create_new_images.yml -f operation=scenario_one -f app=... -f version=... -f os_version=... -f domain=... -f source_url=...`。
+  - `source_run_id` 留空即可：`finalize-trigger-issue` 只在 `issue:<n>` 时执行，不依赖 Issue。
+- `summary` 增加 `new_images` 明细与 dispatch 结果；新建失败不影响存量升级。
+
+### 测试
+
+- `tests/test_upgrade_scan.py`：缺仓应用进 `new_images`（不再进 `skipped`）、默认 os、source_url 取值、前缀 open PR 去重、`--new-limit`。
+- `tests/test_upgrade_workflow.py`：`create-images` job 存在、dispatch 参数完整、`MAX_NEW_IMAGES` 生效。
+- `tests/test_gitcode_api.py`（如有）：前缀匹配函数。
+
+### 风险
+
+- 一轮可能批量触发场景一，每项都要跑 4 轮双架构修复，成本高 → 默认每轮 1 个。
+- `app` 归一化出错会建出错误目录名 → 人工映射表 + 脚本 fail fast。
+- 看板版本口径问题：`DELFT3D` 返回的是 DIMR 线（2027.01），`FSL` 返回整套 FSL（6.0.7.13）而非 fslpy；这类要么保持排除，要么后续给清单加 `version_source` / `tag_prefix`，不能直接建。
+- 场景一要求目标目录不存在；若目标仓刚合并但本地 `discover` 用的是浅克隆旧 HEAD，可能重复触发，靠 open PR 去重兜底即可。

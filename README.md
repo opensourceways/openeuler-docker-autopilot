@@ -57,7 +57,7 @@ openEuler 社区维护着一批应用容器镜像。系统覆盖四个场景，�
 | 场景 | 触发源 | 执行内容 | 输出 |
 |------|--------|----------|------|
 | **① 新增应用镜像** | GitCode Issue（标题含 `【new-image】`） | 解析需求 → 生成镜像文件与测试 → 门禁 → 双架构构建测试 → 有界修复 | 单个应用的完整镜像目录 PR |
-| **② 应用自动升级** | 每日定时 / 手动（指定 `app`、`version`） | 看板解析最新版本 → 对比目标仓已有目录 → 补功能测试 → 确定性复制 + 版本串替换 + `meta.yml` → 双架构原生验证 | 一应用一 PR（`auto/version-update/...` 分支） |
+| **② 应用自动升级** | 手动触发（指定 `app`、`version`；每日定时在测试期关闭） | 按清单查接口（最新版本 + 上游证据包）→ 对比目标仓已有目录 → 补功能测试 → 确定性复制 + 版本串替换 + `meta.yml` → 双架构原生验证 | 一应用一 PR（`auto/version-update/...` 分支） |
 | **③ openEuler 版本升级** | `oe-new-version` 事件或手动 | 枚举全部应用 → Matrix 并行补齐缺失的 oe 版本 | 批量 PR + 失败应用报告 |
 | **④ 功能测试脚本补齐** | 手动触发（指定软件名） | 定位该软件最新镜像目录 → AI 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮） | 一软件一 PR（含 Dockerfile 空行触发目标仓构建 + 功能测试） |
 
@@ -99,9 +99,9 @@ openEuler 社区维护着一批应用容器镜像。系统覆盖四个场景，�
 场景二的骨架（一应用一 PR，详见 [4. 场景二：应用自动升级](#4-场景二应用自动升级)）：
 
 ```
-upgrade_upstream_versions.yml（每日定时 / 手动 app+version）
+upgrade_upstream_versions.yml（手动 app+version；每日定时测试期关闭）
          ↓
-discover：看板 version/resolve + 目标仓已有版本 → 升级矩阵（跳过 blocked / 已存在 / 已有 PR）
+discover：清单 → 看板 version/resolve（版本 + 上游证据包）+ 目标仓已有版本 → 升级矩阵（跳过 blocked / 已存在 / 已有 PR）
          ↓
 _升级应用（matrix，一应用一 PR）
   prepare：完整克隆 → 缺测试则补 tests/test.sh → 确定性升级 → commit → 推 auto/version-update/... 分支
@@ -125,9 +125,9 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 | **双架构原生验证** | x86_64 与 aarch64 各自独立产出构建与测试结论，一个架构通过不代表整体通过 |
 | **健康驱动的就绪判定** | 有 `HEALTHCHECK` 时等待 `healthy`，没有时完整观察 120 秒容器行为；`EXPOSE` 端口不参与就绪调度 |
 | **有界自动修复** | Fixer 依据结构化失败证据做最小范围修复，超出轮次上限即停止并保留证据 |
-| **上游版本自动发现** | 每日用 upstream-dashboard `version/resolve` 解析各应用最新版本，与目标仓已有目录对比，跳过 `blocked_reason` / 已存在 / 已有 open PR |
+| **上游版本自动发现** | 手动按清单调用 upstream-dashboard `version/resolve`（版本 + 上游证据包），与目标仓已有目录对比，跳过 `blocked_reason` / 已存在 / 已有 open PR；每日定时测试期关闭 |
 | **确定性版本升级** | 复制最新版本目录、整串替换 Dockerfile / README / `doc/image-info.yml` 中的旧版本号、追加 `meta.yml`；找不到旧版本串即失败交人工 |
-| **上游证据适配** | 已知字段归一化、未知字段透传；证据缺失时自探 tag / release / 源码归档可达性；证据只作 AI 参考与 PR 留痕，不参与门禁 |
+| **上游证据适配** | 已知字段归一化、未知字段透传；证据缺失时自探 tag / release / 源码归档可达性；证据作为镜像构建与测试生成的输入，是否通过仍由构建与测试决定 |
 | **PR CI 失败修复（手动组件）** | `_ci_repair.yml` 复用原自动修复链路：诊断 → 容器内逐条执行修复 → arm64 复验，同一 PR 最多 6 个 run；入口为手动 / 显式 dispatch，不再自动轮询 |
 | **容器内逐条执行式修复** | 不在文本上盲改：在自托管 Runner 的容器里逐条执行 Dockerfile 指令、失败即修，跑通后反推 Dockerfile 并用 `docker build` 验证 |
 | **精准日志抓取** | 从 PR 评论表格逐行解析 FAILED 行，只取实际失败架构的构建 job 日志、排除 trigger/编排层；日志与 `ci_failed` 状态矛盾时主动标记「证据不足」而不是猜根因 |
@@ -293,7 +293,7 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 
 部署完成后，从 Actions 页面手动运行 **Create New Images**，`operation` 选 `pipeline_smoke`：它跑完整编排链路，但不调用 AI、不做任何 GitCode 写操作，用于确认 Runner、工具链与编排本身健康。
 
-场景二的入口是 **App Version Upgrade**：默认每日定时运行；接入新环境时建议先用 `workflow_dispatch` 指定单个 `app`（可配 `version` 跳过看板解析）验证一次，确认 discover 输出、双架构验证与 PR 正文都符合预期后再放开全量扫描。`limit` 控制单轮最多升级几个应用。
+场景二的入口是 **App Version Upgrade**：现在只保留 `workflow_dispatch`，每日定时在测试期关闭。用 `app` 指定单个应用（可配 `version` 跳过看板解析）验证 discover 输出、双架构验证与 PR 正文；不传 `app` 即按清单全量扫描。`limit` 控制单轮最多升级几个应用。流程口径是：清单 → 接口返回最新版本 + 上游证据包 → 用证据包驱动镜像构建与测试生成，最终是否通过由双架构构建与功能测试决定。
 
 CI 修复组件（**Fix PR CI failures**）只保留手动 / 显式调用：`workflow_dispatch` 指定 `source_repo` / `pr_number` / `source_platform` 触发一次完整修复链（会真实写 fix 分支与 Fix PR），可用 `x64_runner_labels` / `amd64_runner_labels` / `arm64_runner_labels` 临时指定机器。**Watch CI failed PRs** 也只保留手动触发，不再有 cron。
 
@@ -369,12 +369,9 @@ create_new_images.yml  (operation = scenario_one)
 
 `discover` job 浅克隆目标仓后调用 [`upgrade_scan.py`](scripts/harness/upgrade_scan.py)：
 
-- 软件清单来自 [`config/upgrade-apps.yml`](config/upgrade-apps.yml)（人工维护，**不遍历目标仓**），当前分两段：
-  - `apps`：已在镜像仓、参与自动升级（353 条，看板 `kunpeng` 域）；
-  - `pending`：看板有、镜像仓还没有的**独立软件**（190 条），只做清单备查，不参与升级。软件族 / 发行集合（Android、Bioconda、Bioconductor、DELFT3D、FSL、iSula、nanopack、OpenHPC、OpenStack、OpenXLA）与内核组件（fuse、KVM）已排除。
-  - 维护：新增镜像目录后，把条目从 `pending` 移到 `apps` 并补 `app` / `domain`；重新运行 [`scrape_upgrade_apps.py`](scripts/utils/scrape_upgrade_apps.py)（`--domain kunpeng`）会合并看板结果，并保留手工条目和 `pending`。
+- 软件清单来自 [`config/upgrade-apps.yml`](config/upgrade-apps.yml)（人工维护，**不遍历目标仓**，当前覆盖看板 `kunpeng` 域 546 个软件，含尚未入库的软件）；初始清单由 [`scrape_upgrade_apps.py`](scripts/utils/scrape_upgrade_apps.py) 从看板一次性生成（`--domain kunpeng`）；
 - 每项包含 `name`（看板软件名，传给 `version/resolve`）、`app`（目标仓目录名）、`domain`（目标仓一级目录）；
-- `blocked_reason` 非空、最新版本目录已存在、目标分支已有同名升级分支的 open PR → 跳过并记录原因；清单里的软件在目标仓不存在 → 跳过并提示配置过期；
+- `blocked_reason` 非空、最新版本目录已存在、目标分支已有同名升级分支的 open PR → 跳过并记录原因；清单里的软件在目标仓不存在 → 跳过并标记「尚未入库，待场景一新建镜像」；
 - 命中 → `{app, domain, version, os_version, source_url, evidence}` 组成升级矩阵，`os_version` 沿用该应用最新的 os 目录。
 
 看板地址默认 `https://upstream-dashboard.test.osinfra.cn`，可用 Variable `UPSTREAM_DASHBOARD_BASE` 覆盖。接口 400/404 视为确定性失败（跳过该应用），502 重试，503 直接失败。
@@ -653,7 +650,7 @@ openeuler-docker-images-workflow/
 │   │   ├── monitor_new_image_issues.yml     # ① Issue 扫描与认领（cron */5）
 │   │   ├── create_new_images.yml            # ① 主编排（prepare → 4 轮 → 交付）
 │   │   ├── _create_new_image_rounds.yml     # ① 单轮验证-修复-决策组件
-│   │   ├── upgrade_upstream_versions.yml    # ② 应用自动升级主编排（每日定时 / 手动）
+│   │   ├── upgrade_upstream_versions.yml    # ② 应用自动升级主编排（手动；定时测试期关闭）
 │   │   ├── _upgrade_app.yml                 # ② 单应用升级组件（prepare → 双架构验证 → PR）
 │   │   ├── generate_test_scripts.yml        # ④ 存量补功能测试（手动单应用）
 │   │   ├── monitor_ci_failed_prs.yml        # CI 修复组件：扫 ci_failed PR（仅手动）
@@ -668,7 +665,7 @@ openeuler-docker-images-workflow/
 │   └── python-phase1.lock.txt               # Python 依赖锁
 ├── config/
 │   ├── watchlist.json                       # CI 修复组件的仓库列表与轮询参数（仅手动扫描使用）
-│   └── upgrade-apps.yml                     # ② 场景二软件清单（apps=可升级；pending=待入库的独立软件）
+│   └── upgrade-apps.yml                     # ② 场景二软件清单（人工维护，不遍历目标仓）
 ├── scripts/
 │   ├── harness/
 │   │   ├── flow.py                          # 阶段一确定性编排入口

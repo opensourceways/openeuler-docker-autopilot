@@ -2,19 +2,19 @@ name: App Version Upgrade
 
 # 场景二：应用自动升级（替代社区 easysoftware-autoupgrade）。
 #
-#   每日定时（或手动）→ 用 upstream-dashboard /api/v1/version/resolve 解析每个
-#   软件的最新上游版本 → 与目标仓已有版本目录对比 → 对缺新版本的应用执行
-#   「补功能测试 + 确定性版本升级 + 双架构原生验证 + 跨仓 PR」，一应用一 PR。
+#   按 config/upgrade-apps.yml 清单调用 upstream-dashboard
+#   /api/v1/version/resolve，拿到最新版本 + 上游证据包 → 与目标仓已有版本目录
+#   对比 → 对缺新版本的应用执行「补功能测试 + 确定性版本升级 + 双架构原生验证
+#   + 跨仓 PR」，一应用一 PR。
 #
 # 版本源只认看板接口（文档见 opensourceways/upstream-dashboard docs/external-api.md）。
-# 接口目前只返回版本号；后续会补充采集到的上游证据，证据的归纳/透传见
-# scripts/lib/upstream_evidence.py（只作 AI 参考与 PR 留痕，不参与门禁）。
+# 证据包的归纳/透传见 scripts/lib/upstream_evidence.py，作为镜像构建与测试生成的
+# 输入，证据缺失时系统自探兜底；是否通过仍以双架构原生构建 + 功能测试为准。
 #
+# 触发：当前只保留 workflow_dispatch（每日定时在测试期关闭）。
 # 手动入口：app 指定单个应用；version 手动指定目标版本（跳过看板解析）。
 
 on:
-  schedule:
-    - cron: '0 1 * * *'
   workflow_dispatch:
     inputs:
       app:

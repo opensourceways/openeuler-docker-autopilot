@@ -26,9 +26,9 @@ def _squash(value) -> str:
     return ' '.join(str(value).split())
 
 
-def test_daily_schedule_plus_manual_app_and_version():
+def test_manual_dispatch_only_app_and_version():
     trigger = _trigger(_workflow(UPGRADE))
-    assert trigger['schedule'] == [{'cron': '0 1 * * *'}]
+    assert 'schedule' not in trigger
     inputs = trigger['workflow_dispatch']['inputs']
     assert set(inputs) >= {'app', 'version', 'limit', 'runner_labels'}
 

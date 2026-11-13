@@ -163,7 +163,7 @@ def find_updates(
                     "app": entry["app"],
                     "reason": (
                         f"目标仓没有 {entry['domain']}/{entry['app']}"
-                        "（软件清单配置过期）"
+                        "（尚未入库，待场景一新建镜像）"
                     ),
                 }
             )
