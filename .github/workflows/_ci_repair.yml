@@ -68,10 +68,10 @@ on:
       CLAUDE_CREDENTIALS_JSON:
         required: false
 
-# 同一个 PR 的修复串行执行，避免并发冲突
-concurrency:
-  group: ci-fix-${{ inputs.source_repo }}-${{ inputs.pr_number }}
-  cancel-in-progress: false
+# 同一个 PR 的修复串行执行，避免并发冲突。
+# 注意：`concurrency` 不能写在可复用工作流的顶层（GitHub 会判为非法工作流文件，
+# workflow_dispatch 直接失败且不产生任何 job）；串行控制由入口
+# ci_fix_pipeline.yml 的 workflow 级 concurrency 承担。
 
 permissions:
   # ci-fix-log 数据分支的读写走本仓库 token；未配置 DISPATCH_TOKEN 时脚本回退到它
