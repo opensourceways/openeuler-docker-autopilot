@@ -312,9 +312,11 @@ def run_generate(item: dict) -> int:
         raise SystemExit(
             "AI_API_KEY (or DEEPSEEK_API_KEY) is required for script generation"
         )
-    executable = shutil.which("opencode")
-    if executable is None:
-        raise SystemExit("opencode CLI not found (curl -fsSL https://opencode.ai/install | bash)")
+    executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
+    if not executable:
+        raise SystemExit(
+            "opencode CLI not found (set OPENCODE_BIN or install it on PATH)"
+        )
 
     findings = generate_test_script(
         repo_dir=repo_dir,

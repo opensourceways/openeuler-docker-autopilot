@@ -56,15 +56,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up runner environment
+        id: tools
         uses: ./.github/actions/phase1-setup
+        with:
+          # 与场景二同一套锁定工具链（含 opencode）：不走 `curl | bash` 联网安装，
+          # 自托管 Runner 只需能访问 GitHub release。
+          arch: ${{ runner.arch == 'ARM64' && 'aarch64' || 'x86_64' }}
 
       - name: Install dependencies
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
             -r requirements.txt
-
-      - name: Install opencode
-        run: curl -fsSL https://opencode.ai/install | bash
 
       - name: Clone target repository
         env:
@@ -101,6 +103,7 @@ jobs:
           GITCODE_FORK_REPO: ${{ vars.GITCODE_FORK_REPO }}
           GIT_COMMIT_NAME: ${{ vars.GIT_COMMIT_NAME }}
           GIT_COMMIT_EMAIL: ${{ vars.GIT_COMMIT_EMAIL }}
+          OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
           SOURCE_REPO_DIR: ${{ github.workspace }}/source-repo
           TESTGEN_ITEM: ${{ steps.resolve.outputs.item }}
         run: |
