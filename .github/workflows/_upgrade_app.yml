@@ -82,6 +82,11 @@ jobs:
           arch: x86_64
           preflight: "true"
 
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
       - name: Clone target repository
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
@@ -222,6 +227,11 @@ jobs:
 
       - name: Set up runner environment
         uses: ./.github/actions/phase1-setup
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
 
       - name: Create cross-repo PR
         id: pr
