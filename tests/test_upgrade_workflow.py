@@ -10,6 +10,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 UPGRADE = ROOT / '.github' / 'workflows' / 'upgrade_upstream_versions.yml'
 APP = ROOT / '.github' / 'workflows' / '_upgrade_app.yml'
+AUDIT = ROOT / '.github' / 'workflows' / '_audit_app.yml'
 
 
 def _workflow(path: Path):
@@ -30,16 +31,17 @@ def test_manual_dispatch_only_app_and_version():
     trigger = _trigger(_workflow(UPGRADE))
     assert 'schedule' not in trigger
     inputs = trigger['workflow_dispatch']['inputs']
-    assert set(inputs) >= {'app', 'version', 'limit', 'runner_labels'}
+    assert set(inputs) >= {'app', 'version', 'limit', 'audit_limit', 'runner_labels'}
 
 
 def test_discover_scans_the_dashboard_and_feeds_the_matrix():
     jobs = _workflow(UPGRADE)['jobs']
-    assert list(jobs) == ['discover', 'upgrade', 'summary']
+    assert list(jobs) == ['discover', 'upgrade', 'audit', 'summary']
 
     scan_text = _squash(jobs['discover']['steps'])
     assert 'upgrade_scan.py' in scan_text
     assert '--format github-output' in scan_text
+    assert '--audit-limit' in scan_text
     assert 'gitcode.com' in scan_text
     # 看板地址可覆盖，且默认值写在 workflow 级 env
     assert 'UPSTREAM_DASHBOARD_BASE' in UPGRADE.read_text(encoding='utf-8')
@@ -50,6 +52,13 @@ def test_discover_scans_the_dashboard_and_feeds_the_matrix():
     assert upgrade['strategy']['matrix']['item'] == \
         '${{ fromJSON(needs.discover.outputs.updates) }}'
     assert upgrade['with']['item'] == '${{ toJSON(matrix.item) }}'
+
+    audit = jobs['audit']
+    assert audit['needs'] == 'discover'
+    assert audit['uses'] == './.github/workflows/_audit_app.yml'
+    assert audit['strategy']['matrix']['item'] == \
+        '${{ fromJSON(needs.discover.outputs.audits) }}'
+    assert audit['with']['item'] == '${{ toJSON(matrix.item) }}'
 
 
 def test_each_app_runs_prepare_dual_arch_validation_then_pr():
@@ -88,3 +97,16 @@ def test_no_legacy_runner_or_legacy_scripts_are_referenced():
         assert 'anitya' not in text
         # 字面 runs-on: ubuntu-latest 会被新镜像结构测试拒绝
         assert 'runs-on: ubuntu-latest' not in text
+
+
+def test_audit_app_is_read_only_and_reports_findings():
+    jobs = _workflow(AUDIT)['jobs']
+    assert list(jobs) == ['audit']
+    text = _squash(jobs['audit']['steps'])
+    assert 'upgrade_audit.py' in text
+    assert '--repo source-repo' in text
+    # 审计只读：浅克隆、没有 push / PR 步骤
+    assert '--depth 1' in text
+    assert 'git push' not in text
+    assert 'create_pull_request' not in text
+    assert 'upload-artifact' in text

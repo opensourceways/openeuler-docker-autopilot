@@ -4,8 +4,9 @@ name: App Version Upgrade
 #
 #   按 config/upgrade-apps.yml 清单调用 upstream-dashboard
 #   /api/v1/version/resolve，拿到最新版本 + 上游证据包 → 与目标仓已有版本目录
-#   对比 → 对缺新版本的应用执行「补功能测试 + AI 依证据包生成 Dockerfile +
-#   双架构原生验证 + 跨仓 PR」，一应用一 PR。
+#   对比 → 缺新版本的应用执行「补功能测试 + AI 依证据包生成 Dockerfile +
+#   双架构原生验证 + 跨仓 PR」；已是最新版本的应用**不跳过**，交给 audit 做
+#   AI 审计（Dockerfile 问题 / 证据对齐 / 镜像版本 / 测试脚本），只出报告不开 PR。
 #
 # 版本源只认看板接口（文档见 opensourceways/upstream-dashboard docs/external-api.md）。
 # 证据包的归纳/透传见 scripts/lib/upstream_evidence.py，作为镜像构建与测试生成的
@@ -27,6 +28,11 @@ on:
         type: string
       limit:
         description: '本轮最多升级几个应用（0 = 不限）'
+        required: false
+        default: '0'
+        type: string
+      audit_limit:
+        description: '本轮最多审计几个「已是最新版本」的应用（0 = 不限）'
         required: false
         default: '0'
         type: string
@@ -60,6 +66,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       updates: ${{ steps.scan.outputs.updates }}
+      audits: ${{ steps.scan.outputs.audits }}
       skipped: ${{ steps.scan.outputs.skipped }}
     steps:
       - name: Check out workflow source
@@ -89,22 +96,17 @@ jobs:
           APP: ${{ inputs.app }}
           VERSION: ${{ inputs.version }}
           LIMIT: ${{ inputs.limit || '0' }}
+          AUDIT_LIMIT: ${{ inputs.audit_limit || '0' }}
         run: |
-          ARGS=(--repo "$SOURCE_REPO_DIR" --format github-output --limit "${LIMIT:-0}")
+          ARGS=(--repo "$SOURCE_REPO_DIR" --format github-output --limit "${LIMIT:-0}" --audit-limit "${AUDIT_LIMIT:-0}")
           if [ -n "$APP" ]; then
             ARGS+=(--app "$APP")
           fi
           if [ -n "$VERSION" ]; then
             ARGS+=(--version "$VERSION")
           fi
-          SKIPPED=$(mktemp)
           "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_scan.py \
-            "${ARGS[@]}" > "$SKIPPED"
-          {
-            echo "skipped<<EOF"
-            cat "$SKIPPED"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+            "${ARGS[@]}"
 
   # ── 升级：一应用一 PR（独立的可复用 workflow，互不影响）────────────
   upgrade:
@@ -126,10 +128,32 @@ jobs:
       os_version: ${{ matrix.item.os_version }}
       source_url: ${{ matrix.item.source_url }}
 
-  # ── 汇总：本轮跳过原因（含 blocked_reason / 已有版本 / 已有 PR）─────
+  # ── 审计：已是最新版本也不跳过，AI 检查 Dockerfile/证据/版本/测试 ────
+  audit:
+    name: "Audit ${{ matrix.item.app }}"
+    needs: discover
+    if: needs.discover.outputs.audits != '[]' && needs.discover.outputs.audits != ''
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ vars.MAX_PARALLEL_UPGRADES || 2 }}
+      matrix:
+        item: ${{ fromJSON(needs.discover.outputs.audits) }}
+    uses: ./.github/workflows/_audit_app.yml
+    secrets: inherit
+    with:
+      item: ${{ toJSON(matrix.item) }}
+      app: ${{ matrix.item.app }}
+      domain: ${{ matrix.item.domain }}
+      version: ${{ matrix.item.version }}
+      os_version: ${{ matrix.item.os_version }}
+      runner_labels: >-
+        ${{ inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
+            '["self-hosted","Linux","X64","oe-image-x86"]' }}
+
+  # ── 汇总：本轮跳过原因（含 blocked_reason / 已有 PR / 审计上限）─────
   summary:
     name: Summarize round
-    needs: [discover, upgrade]
+    needs: [discover, upgrade, audit]
     if: ${{ always() }}
     runs-on: >-
       ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
@@ -143,6 +167,7 @@ jobs:
             echo "## 应用自动升级"
             echo ""
             echo "- 升级任务结果：\`${{ needs.upgrade.result || 'skipped' }}\`"
+            echo "- 审计任务结果：\`${{ needs.audit.result || 'skipped' }}\`"
             echo "- 跳过明细："
             echo ""
             echo '```json'

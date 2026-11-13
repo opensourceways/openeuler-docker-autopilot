@@ -32,11 +32,11 @@
 | 场景 | 触发源 | 执行内容 | 输出 |
 |---|---|---|---|
 | **① 新增应用镜像** | GitCode Issue（标题含 `【new-image】`） | 解析需求 → 生成镜像文件与测试 → 门禁 → 双架构构建测试 → 有界修复 | 单个应用的完整镜像目录 PR |
-| **② 应用自动升级** | 手动（指定 `app`、`version`；每日定时测试期关闭） | 按 `config/upgrade-apps.yml` 清单调接口（最新版本 + 上游证据包）→ 对比已有目录 → 补功能测试 → AI 依证据包生成 Dockerfile + 确定性目录/元数据落盘 → 双架构原生验证 | 一应用一 PR（`auto/version-update/...`） |
+| **② 应用自动升级** | 手动（指定 `app`、`version`；每日定时测试期关闭） | 按 `config/upgrade-apps.yml` 清单调接口（最新版本 + 上游证据包）→ 对比已有目录 → 缺新版本：补功能测试 + AI 依证据包生成 Dockerfile + 确定性目录/元数据落盘 + 双架构原生验证；已是最新：只读 AI 审计 | 一应用一 PR；审计只出报告 |
 | **③ openEuler 版本升级** | `oe-new-version` 事件或手动 | 枚举全部应用 → Matrix 并行补齐缺失的 oe 版本 | 批量 PR + 失败应用报告 |
 | **④ 功能测试脚本补齐** | 手动触发（指定软件名） | 定位该软件最新镜像目录 → AI 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮） | 一软件一 PR（含 Dockerfile 空行触发目标仓构建 + 功能测试） |
 
-场景 ①/③ 共享同一套「生成 → 门禁 → 双架构验证 → 交付」能力，差异只在触发输入与调度；场景 ② 复用 upstream-dashboard 做版本发现，Dockerfile 由 AI 结合证据包重新生成（不做版本串机械替换），补测试也调用 AI，目录复制与元数据登记由确定性代码承担；场景 ④ 走独立的「手动指定软件 → 定位镜像 → 生成 → 静态校验 → 提 PR」链路，一次运行只处理一个应用。
+场景 ①/③ 共享同一套「生成 → 门禁 → 双架构验证 → 交付」能力，差异只在触发输入与调度；场景 ② 复用 upstream-dashboard 做版本发现，Dockerfile 由 AI 结合证据包重新生成（不做版本串机械替换），补测试也调用 AI，目录复制与元数据登记由确定性代码承担；已是最新版本的应用不跳过，由只读 AI 审计 Dockerfile/证据/版本/测试。场景 ④ 走独立的「手动指定软件 → 定位镜像 → 生成 → 静态校验 → 提 PR」链路，一次运行只处理一个应用。
 
 ---
 
@@ -66,6 +66,7 @@
 | ① 新增镜像 | 测试 | `testcase-creator.md` ⇄ `testcase-qa.md` | 已生成的镜像与规范 | 共享测试入口 `tests/test.sh`（Creator 生成、QA 对抗复核，最多 2 轮） |
 | ①③ | 有界修复 | `code-fixer.md` | 双架构失败证据（构建/测试报告） | 白名单范围内的最小修复 |
 | ② 应用升级 | 生成 Dockerfile | `upgrade-creator.md` | 旧版本 Dockerfile、目标版本、看板 L1 证据包（3 条 `check`） | 新版本完整 Dockerfile（不做版本串机械替换；缺目标版本号/`FROM` 即重写或失败） |
+| ② 已是最新 | 审计 | `upgrade-auditor.md` | 现有 Dockerfile、meta.yml、测试脚本、看板 L1 证据与 tag/commit | 审计报告（Dockerfile 问题、证据对齐、版本正确性、测试质量；只读不开 PR） |
 | ② 应用升级 | 补测试 | `testgen-creator.md` | 应用镜像目录、KunpengTest 契约、上游证据 | `tests/test.sh`（静态校验失败最多回修 2 轮；生成失败不阻断升级） |
 | CI 修复组件 | 诊断 | `ci-failure-analyst.md` | 失败架构的 Jenkins 日志尾部 + PR diff + 知识库 | 结构化诊断报告（失败类型、根因、修复建议） |
 | CI 修复组件 | 修复 | `dockerfile-builder.md` | 诊断报告 + 源码 | 容器内逐条执行并跑通的命令序列 → 反推出的 Dockerfile |

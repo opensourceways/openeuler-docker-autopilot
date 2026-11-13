@@ -115,10 +115,35 @@ class FindUpdatesTest(unittest.TestCase):
         )
         self.assertEqual(len(result["updates"]), 1)
 
-    def test_existing_version_is_skipped(self) -> None:
+    def test_existing_version_becomes_an_audit(self) -> None:
         result = self._scan(_payload("v2.16.0"))
         self.assertEqual(result["updates"], [])
-        self.assertIn("已有版本目录", result["skipped"][0]["reason"])
+        self.assertEqual(len(result["audits"]), 1)
+        audit = result["audits"][0]
+        self.assertEqual(audit["app"], "kvrocks")
+        self.assertEqual(audit["version"], "v2.16.0")
+        self.assertEqual(audit["os_version"], "24.03-lts-sp4")
+        self.assertEqual(
+            audit["dockerfile_path"],
+            "Database/kvrocks/2.16.0/24.03-lts-sp4/Dockerfile",
+        )
+        self.assertFalse(audit["has_test_script"])
+        self.assertIn("转入 AI 审计", audit["reason"])
+
+    def test_audit_limit_caps_the_audit_matrix(self) -> None:
+        _make_app(self.repo, "Database", "redis", versions=("2.16.0",))
+        result = self._scan(
+            _payload("v2.16.0"),
+            apps=[
+                {"name": "kvrocks", "app": "kvrocks", "domain": "Database"},
+                {"name": "Redis", "app": "redis", "domain": "Database"},
+            ],
+            audit_limit=1,
+        )
+        self.assertEqual(len(result["audits"]), 1)
+        self.assertTrue(
+            any("审计数量达到上限" in item["reason"] for item in result["skipped"])
+        )
 
     def test_blocked_reason_is_skipped(self) -> None:
         result = self._scan(_payload("2.17.0", blocked_reason="no_release"))

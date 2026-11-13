@@ -43,21 +43,21 @@ openEuler 社区维护着一批应用容器镜像。系统覆盖四个场景，�
 
 1. **社区希望新增一个应用镜像**（场景一）——需要研究上游构建方式，按仓库规范写 Dockerfile、`meta.yml`、README、`doc/image-info.yml`，还要补一套能证明镜像真的可用的功能测试。
 2. **openEuler 发布新版本**（场景三）——所有存量应用都要补齐新 openEuler 版本的镜像，批量且机械。
-3. **应用上游发布了新版本**（场景二）——需要为存量应用补一个新版本镜像目录（复制上一版、替换版本串、补 meta 与测试），机械但量大。
+3. **应用上游发布了新版本**（场景二）——需要为存量应用补一个新版本镜像目录与测试，还要判断已有最新版本的 Dockerfile 是否可信，量大且需要理解上游构建方式。
 4. **存量镜像缺功能测试脚本**（场景四）——目标仓把功能测试与 CI 构建绑定（Dockerfile 变更即构建 + 按 `tests/test.sh` 功能测试），但多数应用没有测试脚本，需要按 [KunpengTest 规范](https://github.com/opensourceways/upstream-dashboard/blob/KunpengTest/README.md)逐个补齐。
 
-场景一、三两类工作共享同一批固定规范，但也都夹着不确定的部分：上游依赖怎么装、服务怎么起、构建失败怎么修。前者适合代码，后者适合 Agent。场景二处理的是版本发现与机械升级——版本号来自 upstream-dashboard，升级本身是确定性的复制与替换，因此代码承担全部动作，AI 只在「缺测试脚本时补测试」这一不确定环节介入。场景四与场景一共享「Agent 生成测试 + 静态校验」的质量机制，但脚本规范遵循目标仓 CI 的 KunpengTest 约定（禁 `set -e`、脚本内自拉服务、注入五个环境变量），走独立的**手动指定软件 → 定位镜像 → 生成 → 校验 → 提 PR** 链路。
+场景一、三两类工作共享同一批固定规范，但也都夹着不确定的部分：上游依赖怎么装、服务怎么起、构建失败怎么修。前者适合代码，后者适合 Agent。场景二处理的是版本发现与升级：版本号来自 upstream-dashboard，目录复制与元数据登记是确定性的，但 Dockerfile 必须结合上游证据与固定 tag 重新生成，已是最新版本时还要审计现有镜像，因此 AI 同时承担生成与审计。场景四与场景一共享「Agent 生成测试 + 静态校验」的质量机制，但脚本规范遵循目标仓 CI 的 KunpengTest 约定（禁 `set -e`、脚本内自拉服务、注入五个环境变量），走独立的**手动指定软件 → 定位镜像 → 生成 → 校验 → 提 PR** 链路。
 
 > **PR CI 失败修复**不再作为独立场景自动轮询：它抽成可复用组件 [`_ci_repair.yml`](.github/workflows/_ci_repair.yml)，由 [`ci_fix_pipeline.yml`](.github/workflows/ci_fix_pipeline.yml) 手动或显式 dispatch 调用。升级 PR 的 CI 若失败，交人工决定是否触发修复。
 
 ### 解决方案
 
-本项目用一套流水线覆盖四个场景。场景一 / 三**共享同一套生成、门禁、双架构验证与交付能力**，差异只在触发输入与调度方式；场景二用 upstream-dashboard 解析最新上游版本，对落后应用做**确定性版本升级 + 双架构原生验证 + 一应用一 PR**；场景四为存量应用补功能测试脚本，走独立的**手动指定软件 → 定位镜像 → 生成 → 校验 → 提 PR** 链路：
+本项目用一套流水线覆盖四个场景。场景一 / 三**共享同一套生成、门禁、双架构验证与交付能力**，差异只在触发输入与调度方式；场景二用 upstream-dashboard 解析最新上游版本，对落后应用做**AI 依证据生成 Dockerfile + 双架构原生验证 + 一应用一 PR**，对已是最新版本的应用做**只读 AI 审计**；场景四为存量应用补功能测试脚本，走独立的**手动指定软件 → 定位镜像 → 生成 → 校验 → 提 PR** 链路：
 
 | 场景 | 触发源 | 执行内容 | 输出 |
 |------|--------|----------|------|
 | **① 新增应用镜像** | GitCode Issue（标题含 `【new-image】`） | 解析需求 → 生成镜像文件与测试 → 门禁 → 双架构构建测试 → 有界修复 | 单个应用的完整镜像目录 PR |
-| **② 应用自动升级** | 手动触发（指定 `app`、`version`；每日定时在测试期关闭） | 按清单查接口（最新版本 + 上游证据包）→ 对比目标仓已有目录 → 补功能测试 → 确定性复制 + 版本串替换 + `meta.yml` → 双架构原生验证 | 一应用一 PR（`auto/version-update/...` 分支） |
+| **② 应用自动升级** | 手动触发（指定 `app`、`version`；每日定时在测试期关闭） | 按清单查接口（最新版本 + 上游证据包）→ 对比目标仓已有目录 → 缺新版本：补测试 + AI 生成 Dockerfile + 元数据落盘 + 双架构验证；已是最新：只读 AI 审计 | 一应用一 PR；审计只出报告 |
 | **③ openEuler 版本升级** | `oe-new-version` 事件或手动 | 枚举全部应用 → Matrix 并行补齐缺失的 oe 版本 | 批量 PR + 失败应用报告 |
 | **④ 功能测试脚本补齐** | 手动触发（指定软件名） | 定位该软件最新镜像目录 → AI 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮） | 一软件一 PR（含 Dockerfile 空行触发目标仓构建 + 功能测试） |
 
@@ -125,8 +125,9 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 | **双架构原生验证** | x86_64 与 aarch64 各自独立产出构建与测试结论，一个架构通过不代表整体通过 |
 | **健康驱动的就绪判定** | 有 `HEALTHCHECK` 时等待 `healthy`，没有时完整观察 120 秒容器行为；`EXPOSE` 端口不参与就绪调度 |
 | **有界自动修复** | Fixer 依据结构化失败证据做最小范围修复，超出轮次上限即停止并保留证据 |
-| **上游版本自动发现** | 手动按清单调用 upstream-dashboard `version/resolve`（版本 + 上游证据包），与目标仓已有目录对比，跳过 `blocked_reason` / 已存在 / 已有 open PR；每日定时测试期关闭 |
+| **上游版本自动发现** | 手动按清单调用 upstream-dashboard `version/resolve`（版本 + 上游证据包），与目标仓已有目录对比；`blocked_reason` / 已有 open PR 跳过，已是最新版本转审计；每日定时测试期关闭 |
 | **确定性版本升级** | 复制最新版本目录，Dockerfile 由 AI 依据上游证据包与固定 tag 源码重新生成（禁止机械替换版本号）；README / `doc/image-info.yml` 更新版本、追加 `meta.yml`；生成内容缺目标版本号即失败交人工 |
+| **已是最新版本审计** | 看板版本已在目标仓时不跳过：确定性检查版本/tag/meta/测试脚本，再由 AI 审计 Dockerfile 问题、证据对齐、镜像版本与测试质量，只出报告 |
 | **上游证据适配** | 已知字段归一化、未知字段透传；证据缺失时自探 tag / release / 源码归档可达性；证据作为镜像构建与测试生成的输入，是否通过仍由构建与测试决定 |
 | **PR CI 失败修复（手动组件）** | `_ci_repair.yml` 复用原自动修复链路：诊断 → 容器内逐条执行修复 → arm64 复验，同一 PR 最多 6 个 run；入口为手动 / 显式 dispatch，不再自动轮询 |
 | **容器内逐条执行式修复** | 不在文本上盲改：在自托管 Runner 的容器里逐条执行 Dockerfile 指令、失败即修，跑通后反推 Dockerfile 并用 `docker build` 验证 |
@@ -365,14 +366,15 @@ create_new_images.yml  (operation = scenario_one)
 | `app` | 只处理这一个应用（留空 = 扫描全部应用） |
 | `version` | 手动指定目标版本（跳过看板解析，配合 `app` 使用） |
 | `limit` | 本轮最多升级几个应用（`0` = 不限） |
+| `audit_limit` | 本轮最多审计几个「已是最新版本」的应用（`0` = 不限） |
 | `runner_labels` | 发现 / 汇总 job 的 runner 标签（JSON 数组） |
 
 `discover` job 浅克隆目标仓后调用 [`upgrade_scan.py`](scripts/harness/upgrade_scan.py)：
 
 - 软件清单来自 [`config/upgrade-apps.yml`](config/upgrade-apps.yml)（人工维护，**不遍历目标仓**，当前覆盖看板 `kunpeng` 域 546 个软件，含尚未入库的软件）；初始清单由 [`scrape_upgrade_apps.py`](scripts/utils/scrape_upgrade_apps.py) 从看板一次性生成（`--domain kunpeng`）；
 - 每项包含 `name`（看板软件名，传给 `version/resolve`）、`app`（目标仓目录名）、`domain`（目标仓一级目录）；
-- `blocked_reason` 非空、最新版本目录已存在、目标分支已有同名升级分支的 open PR → 跳过并记录原因；清单里的软件在目标仓不存在 → 跳过并标记「尚未入库，待场景一新建镜像」；
-- 命中 → `{app, domain, version, os_version, source_url, evidence}` 组成升级矩阵，`os_version` 沿用该应用最新的 os 目录。
+- `blocked_reason` 非空、目标分支已有同名升级分支的 open PR → 跳过并记录原因；清单里的软件在目标仓不存在 → 跳过并标记「尚未入库，待场景一新建镜像」；
+- **最新版本目录已存在 → 不跳过**，产出 `audits` 条目交给 AI 审计；命中升级 → `{app, domain, version, os_version, source_url, evidence}` 组成升级矩阵，`os_version` 沿用该应用最新的 os 目录。
 
 看板地址默认 `https://upstream-dashboard.test.osinfra.cn`，可用 Variable `UPSTREAM_DASHBOARD_BASE` 覆盖。接口 400/404 视为确定性失败（跳过该应用），502 重试，503 直接失败。
 
@@ -381,7 +383,7 @@ create_new_images.yml  (operation = scenario_one)
 每个应用由可复用组件 [`_upgrade_app.yml`](.github/workflows/_upgrade_app.yml) 独立执行（一应用一 PR，互不影响）：
 
 ```
-prepare            完整克隆目标仓 → 缺测试则补 tests/test.sh → 确定性升级 → commit → 推分支
+prepare            完整克隆目标仓 → AI 依证据生成 Dockerfile → 缺测试则补 tests/test.sh → 确定性落盘 → commit → 推分支
    ↓
 validate-x86_64    x86_64 原生构建 + 功能测试（flow.py phase1-native-validate）
 validate-aarch64   aarch64 原生构建 + 功能测试（与 x86 并行）
@@ -395,7 +397,20 @@ open-pr            跨仓 PR：变更说明 + 功能测试状态 + 上游证据
 - **双架构原生验证**：x86_64 / aarch64 各自真实构建并跑功能测试，不使用 QEMU；任一架构失败则不开 PR，证据留在 artifact，分支保留供人工或修复组件继续处理。
 - **分支**：`auto/version-update/<app>/<version>-<oe_tag>`，推送到 `GITCODE_FORK_REPO`（留空则直推目标仓），再从 fork 向目标仓提跨仓 PR。
 
-### 4.3 上游证据
+### 4.3 已是最新版本的 AI 审计
+
+看板版本与目标仓最新目录一致时不跳过，由 [`_audit_app.yml`](.github/workflows/_audit_app.yml) 只读审计（不开 PR、不改仓库）：
+
+```
+clone 目标仓 → 确定性检查 → upgrade_auditor Agent → audit.json / audit.md → job summary + artifact
+```
+
+- **确定性检查**（[`upgrade_audit.py`](scripts/harness/upgrade_audit.py)）：`ARG VERSION` / `ARG TAG` / `git clone -b` 是否指向看板版本与 tag、`meta.yml` 是否登记该版本、是否存在 `tests/test.sh`、是否使用 `EXPECTED_VERSION`。
+- **AI 审计**（[`upgrade-auditor.md`](.github/agents/upgrade-auditor.md)）：判断 Dockerfile 是否有问题、是否按上游证据构建、构建出的镜像版本是否正确、测试脚本是否足够；输出 `ok / issues / critical` 与逐条问题。
+- **报告**：`audit.json`、`audit.md` 写入 job summary 与 artifact；审计结论供人工判断，不自动修复。
+- **本地试跑**：`upgrade_audit.py --item '<audit item>' --repo source-repo --dry-run` 只跑确定性检查并打印将发给 Agent 的上下文，不调用 AI。
+
+### 4.4 上游证据
 
 `version/resolve` 返回版本定位信息，`/api/v1/software` 返回看板采集的上游证据（L1 的 3 条 `check`：ARM CI / 文档声明 / release 产物）。系统按「透传 + 适配」处理，**证据只作 AI 参考与 PR 留痕，不参与门禁**：
 
@@ -754,7 +769,8 @@ openeuler-docker-images-workflow/
 |------|------|
 | [`scripts/lib/upstream_dashboard.py`](scripts/lib/upstream_dashboard.py) | `/api/v1/version/resolve` 客户端：浏览器 UA、400/404 确定性失败、502 重试、503 失败，返回原始 payload；并从 `/api/v1/software` 抓取 L1 证据包（3 条 `check`） |
 | [`scripts/lib/upstream_evidence.py`](scripts/lib/upstream_evidence.py) | 上游证据适配：已知字段归一化、未知字段透传、`collector` 提升、自探兜底与 PR / 提示词渲染 |
-| [`scripts/harness/upgrade_scan.py`](scripts/harness/upgrade_scan.py) | 版本发现：读 `config/upgrade-apps.yml` × 看板解析 × 目标仓已有版本 → 升级矩阵（不遍历目标仓） |
+| [`scripts/harness/upgrade_scan.py`](scripts/harness/upgrade_scan.py) | 版本发现：读 `config/upgrade-apps.yml` × 看板解析 × 目标仓已有版本 → 升级矩阵 + 已是最新版本的审计矩阵 |
+| [`scripts/harness/upgrade_audit.py`](scripts/harness/upgrade_audit.py) | 已是最新版本审计：确定性检查版本/tag/meta/测试脚本，再调 AI 审计 Dockerfile、证据对齐与测试质量，输出 audit.json/audit.md |
 | [`scripts/utils/scrape_upgrade_apps.py`](scripts/utils/scrape_upgrade_apps.py) | 一次性工具：从看板拉软件列表（`--domain kunpeng` / `ascend`），匹配目标仓目录，生成初始 `config/upgrade-apps.yml` |
 | [`scripts/lib/version_upgrade.py`](scripts/lib/version_upgrade.py) | 确定性落盘：复制版本目录、写入 AI 生成的 Dockerfile、更新 README/doc 版本号、追加 `meta.yml`；生成内容不符合目标版本即失败并清理 |
 | [`scripts/harness/upgrade_apply.py`](scripts/harness/upgrade_apply.py) | 单应用升级：切分支、AI 依证据包生成 Dockerfile、缺测试则补、确定性落盘、commit、推送，并产出 `task-spec.json` |

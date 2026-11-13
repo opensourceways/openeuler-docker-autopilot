@@ -1,0 +1,104 @@
+name: Audit one app
+
+# 场景二的「已是最新版本」审计（由 upgrade_upstream_versions.yml 按审计矩阵调用）：
+#   目标仓已有看板最新版本 → 不跳过 → AI 审计 Dockerfile / 证据对齐 / 版本正确性 /
+#   测试脚本 → 报告写入 job summary 与 artifact。
+#
+# 只读：不修改目标仓，不开 PR，不推送分支。
+
+on:
+  workflow_call:
+    inputs:
+      item:
+        description: 'upgrade_scan 产出的单条 audit JSON'
+        required: true
+        type: string
+      app:
+        required: true
+        type: string
+      domain:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      os_version:
+        required: true
+        type: string
+      runner_labels:
+        required: false
+        default: '["self-hosted","Linux","X64","oe-image-x86"]'
+        type: string
+    secrets:
+      GITCODE_TOKEN:
+        required: true
+      AI_API_KEY:
+        required: false
+      DEEPSEEK_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  TARGET_REPO: openeuler/openeuler-docker-images
+  TARGET_BRANCH: master
+  AI_RUNNER: ${{ vars.AI_RUNNER || 'opencode' }}
+  AI_MODEL: ${{ vars.AI_MODEL || 'gateway/deepseek-v4-pro' }}
+  AI_PROVIDER_ID: ${{ vars.AI_PROVIDER_ID || 'gateway' }}
+  AI_TIMEOUT_MS: ${{ vars.AI_TIMEOUT_MS || '10800000' }}
+  AI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
+  OPENAI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
+  DEEPSEEK_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
+  OPENAI_BASE_URL: >-
+    ${{ vars.OPENAI_BASE_URL || 'https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1' }}
+  UPSTREAM_DASHBOARD_BASE: ${{ vars.UPSTREAM_DASHBOARD_BASE || 'https://upstream-dashboard.test.osinfra.cn' }}
+
+jobs:
+
+  audit:
+    name: "Audit ${{ inputs.app }}"
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    timeout-minutes: 90
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up runner environment
+        id: tools
+        uses: ./.github/actions/phase1-setup
+        with:
+          arch: x86_64
+          preflight: "true"
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
+      - name: Clone target repository
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          # 审计只读，浅克隆即可；不需要 push。
+          git clone --depth 1 \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
+            source-repo
+
+      - name: Audit existing image
+        env:
+          ITEM: ${{ inputs.item }}
+          OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_audit.py \
+            --item "$ITEM" \
+            --repo source-repo \
+            --out "${RUNNER_TEMP}/audit"
+
+      - name: Upload audit report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: upgrade-audit-${{ inputs.app }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/audit/

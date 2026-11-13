@@ -4,9 +4,13 @@ Stage: 场景二 —— 应用升级候选发现（upgrade_scan）
 
 每天（或手动）在目标仓克隆里枚举应用，用 upstream-dashboard 的
 ``/api/v1/version/resolve`` 解析每个软件的最新上游版本，与本地已有版本目录
-对比，产出需要升级的应用矩阵：
+对比，产出：
 
-    [{app, domain, version, os_version, source_url, evidence}]
+- ``updates``：需要升级的应用矩阵
+  ``[{app, domain, version, os_version, source_url, evidence}]``；
+- ``audits``：已是最新版本、不能直接跳过的应用
+  ``[{app, domain, version, os_version, dockerfile_path, source_url, evidence,
+  has_test_script}]``，交给 ``upgrade_audit.py`` 做 AI 审计。
 
 规则：
 - 软件清单来自 ``config/upgrade-apps.yml``（人工维护，初始由
@@ -14,15 +18,15 @@ Stage: 场景二 —— 应用升级候选发现（upgrade_scan）
 - 每个软件按 ``{domain}/{app}/{version}/{os}/Dockerfile`` 定位（复用
   testgen_scan 的排序）；
 - ``blocked_reason`` 非 null → 跳过（记录原因；看板未解析出可用版本）；
-- 最新版本已存在同名目录（去 ``v`` 前缀、忽略大小写）→ 跳过；
-- 目标分支已有 open PR → 跳过；
+- 最新版本已存在同名目录（去 ``v`` 前缀、忽略大小写）→ **不跳过**，产出 audit；
+- 目标分支已有 open PR → 跳过（已有升级在途）；
 - os 目录沿用该应用最新的一个（不补齐所有 os 版本）；
 - 证据：``upstream_evidence.normalize`` + ``upstream_dashboard.fetch_evidence``
-  （看板 ``/api/v1/software`` 采集证据，通常 3 条）+ ``probe``（自探兜底），只作参考，
-  抓取失败不阻断升级。
+  （看板 ``/api/v1/software`` 采集证据，固定 L1 的 3 条）+ ``probe``（自探兜底），
+  只作参考，抓取失败不阻断升级。
 
-输入: --repo <目标仓克隆>，可选 --app / --version / --apps-file / --limit
-输出: --format github-output → GITHUB_OUTPUT 写 updates=<json>；--format json → stdout
+输入: --repo <目标仓克隆>，可选 --app / --version / --apps-file / --limit / --audit-limit
+输出: --format github-output → GITHUB_OUTPUT 写 updates/audits/skipped；--format json → stdout
 """
 
 import argparse
@@ -147,12 +151,35 @@ def _resolve_one(
     return payload, probe(payload)
 
 
+def _build_evidence(
+    name: str,
+    new_version: str,
+    payload: dict,
+    probe_result: dict,
+    fetch_evidence: Callable[[str, str], list[dict]] | None,
+) -> dict:
+    evidence = upstream_evidence.normalize(payload)
+    evidence["probe"] = probe_result
+    collector = list(evidence.get("collector") or [])
+    if fetch_evidence is not None:
+        try:
+            collector.extend(fetch_evidence(name, new_version))
+        except Exception as error:  # 证据只作参考，抓取失败不能阻断升级
+            log_stage(
+                "upgrade-scan",
+                f"{name}: 证据包抓取失败（非阻断）: {error}",
+            )
+    evidence["collector"] = collector
+    return _trim_evidence(evidence)
+
+
 def find_updates(
     *,
     repo_dir: Path,
     app_filter: str = "",
     forced_version: str = "",
     limit: int = 0,
+    audit_limit: int = 0,
     apps: list[dict] | None = None,
     apps_file: str | Path | None = None,
     resolve: Callable[..., dict | None] = upstream_dashboard.resolve_version,
@@ -215,6 +242,7 @@ def find_updates(
             )
 
     updates: list[dict] = []
+    audits: list[dict] = []
     for (entry, app_dir), (payload, probe_result) in zip(pairs, payloads):
         app = entry["app"]
         domain = entry["domain"]
@@ -239,8 +267,38 @@ def find_updates(
         if not new_version:
             skipped.append({"app": app, "reason": "看板未给出可用版本号"})
             continue
+
         if _normalize_version(new_version) in existing_versions(app_dir):
-            skipped.append({"app": app, "reason": f"已有版本目录 {new_version}"})
+            if audit_limit and len(audits) >= audit_limit:
+                skipped.append(
+                    {
+                        "app": app,
+                        "reason": (
+                            f"已有版本目录 {new_version}；"
+                            f"审计数量达到上限 {audit_limit}"
+                        ),
+                    }
+                )
+                continue
+            audits.append(
+                {
+                    "app": app,
+                    "domain": domain,
+                    "version": new_version,
+                    "os_version": dockerfile.parts[-2],
+                    "dockerfile_path": dockerfile.relative_to(repo_dir).as_posix(),
+                    "source_url": str(payload.get("repo_url") or ""),
+                    "evidence": _build_evidence(
+                        entry["name"],
+                        new_version,
+                        payload,
+                        probe_result,
+                        fetch_evidence,
+                    ),
+                    "has_test_script": testgen_scan.has_any_test_script(app_dir),
+                    "reason": f"已有版本目录 {new_version}，无需升级，转入 AI 审计",
+                }
+            )
             continue
 
         os_version = dockerfile.parts[-2]
@@ -250,18 +308,6 @@ def find_updates(
                 skipped.append({"app": app, "reason": f"已有 open PR（{branch}）"})
                 continue
 
-        evidence = upstream_evidence.normalize(payload)
-        evidence["probe"] = probe_result
-        collector = list(evidence.get("collector") or [])
-        if fetch_evidence is not None:
-            try:
-                collector.extend(fetch_evidence(entry["name"], new_version))
-            except Exception as error:  # 证据只作参考，抓取失败不能阻断升级
-                log_stage(
-                    "upgrade-scan",
-                    f"{app}: 证据包抓取失败（非阻断）: {error}",
-                )
-        evidence["collector"] = collector
         updates.append(
             {
                 "app": app,
@@ -269,13 +315,19 @@ def find_updates(
                 "version": new_version,
                 "os_version": os_version,
                 "source_url": str(payload.get("repo_url") or ""),
-                "evidence": _trim_evidence(evidence),
+                "evidence": _build_evidence(
+                    entry["name"],
+                    new_version,
+                    payload,
+                    probe_result,
+                    fetch_evidence,
+                ),
             }
         )
         if limit and len(updates) >= limit:
             break
 
-    return {"updates": updates, "skipped": skipped}
+    return {"updates": updates, "audits": audits, "skipped": skipped}
 
 
 def main() -> int:
@@ -289,6 +341,12 @@ def main() -> int:
         help=f"软件清单（默认 {DEFAULT_APPS_FILE}）",
     )
     parser.add_argument("--limit", type=int, default=0, help="最多产出几个升级（0=不限）")
+    parser.add_argument(
+        "--audit-limit",
+        type=int,
+        default=0,
+        help="最多产出几个「已是最新版本」的 AI 审计（0=不限）",
+    )
     parser.add_argument("--format", choices=("json", "github-output"), default="json")
     args = parser.parse_args()
 
@@ -303,6 +361,7 @@ def main() -> int:
         app_filter=args.app,
         forced_version=args.version,
         limit=args.limit,
+        audit_limit=args.audit_limit,
         apps_file=args.apps_file or None,
         pr_exists=find_any_pr_by_head_branch,
         target_repo=os.environ.get("TARGET_REPO", DEFAULT_TARGET_REPO),
@@ -310,7 +369,9 @@ def main() -> int:
     )
     log_stage(
         "upgrade-scan",
-        f"updates={len(result['updates'])} skipped={len(result['skipped'])}",
+        "updates={} audits={} skipped={}".format(
+            len(result["updates"]), len(result["audits"]), len(result["skipped"])
+        ),
     )
 
     if args.format == "github-output":
@@ -319,6 +380,8 @@ def main() -> int:
             raise SystemExit("GITHUB_OUTPUT is not set (not running in Actions)")
         with open(github_output, "a", encoding="utf-8") as handle:
             handle.write(f"updates={json.dumps(result['updates'], ensure_ascii=False)}\n")
+            handle.write(f"audits={json.dumps(result['audits'], ensure_ascii=False)}\n")
+            handle.write(f"skipped={json.dumps(result['skipped'], ensure_ascii=False)}\n")
         print(json.dumps(result["skipped"], ensure_ascii=False, indent=2))
     else:
         print(json.dumps(result, ensure_ascii=False, indent=2))
