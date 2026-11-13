@@ -5,13 +5,13 @@ Stage: 场景四单软件功能测试脚本生成（testgen_generate）
 对一个缺 test.sh 的存量应用：AI Agent 按 KunpengTest 规范生成
 {domain}/{app}/tests/test.sh → 静态校验（失败带报告重试，最多 2 轮）→
 给该软件最新 Dockerfile 追加一个空行（触发目标仓绑定的构建+测试 CI）→
-commit 并推送 fork → 创建跨仓 PR（一软件一 PR）→ 写 done 标记。
+commit 并推送 fork → 创建跨仓 PR（一软件一 PR）。
 
-输入: --item '<json>'（scan 阶段的候选：app/domain/version/os_version/source_url）
-环境: DEEPSEEK_API_KEY, GITCODE_TOKEN, GITCODE_FORK_REPO(可选),
+输入: --item '<json>'（解析阶段的产物：app/domain/version/os_version/source_url）
+环境: AI_API_KEY（兼容 DEEPSEEK_API_KEY）, GITCODE_TOKEN, GITCODE_FORK_REPO(可选),
       SOURCE_REPO_DIR(默认 PROJECT_ROOT/source-repo), TARGET_REPO, TARGET_BRANCH,
-      GIT_COMMIT_NAME/GIT_COMMIT_EMAIL, DISPATCH_TOKEN
-输出: 退出码 0（exhausted 也退出 0，不阻塞 matrix 其余软件）
+      GIT_COMMIT_NAME/GIT_COMMIT_EMAIL
+输出: 退出码 0（已交付 PR）；静态校验 2 轮仍不通过 → 1
 """
 
 import argparse
@@ -38,7 +38,6 @@ from scripts.lib.stage_common import (  # noqa: E402
     log_stage,
     normalize_repo,
 )
-from scripts.lib.testgen_state import mark_done, mark_exhausted  # noqa: E402
 
 DEFAULT_SOURCE_REPO_DIR = os.path.join(PROJECT_ROOT, "source-repo")
 DEFAULT_TARGET_REPO = "openeuler/openeuler-docker-images"
@@ -56,7 +55,7 @@ build also exercises the container functionally.
 - Test entry: `{test_path}` (application-level, version injected via `EXPECTED_VERSION`)
 - Target Dockerfile touched with a trailing blank line only, to trigger the
   build+test CI bound to Dockerfile changes
-- Source: dashboard software `{dashboard_name}` ({repo_url})
+- Upstream: {repo_url}
 - Spec: [KunpengTest README](https://github.com/opensourceways/upstream-dashboard/blob/KunpengTest/README.md)
 - Static checks passed: bash -n, no `set -e`, `test[A-Za-z0-9_]+` case names, \
 PASS/FAIL convention, `EXPECTED_VERSION` guard, no docker operations, \
@@ -231,7 +230,6 @@ def deliver(
     app: str,
     domain: str,
     dockerfile_rel: str,
-    dashboard_name: str,
     source_url: str,
 ) -> str:
     """Commit, push to the fork and open the cross-repo PR."""
@@ -278,7 +276,6 @@ def deliver(
         body = _PR_BODY_TEMPLATE.format(
             app=app,
             test_path=test_rel,
-            dashboard_name=dashboard_name,
             repo_url=source_url or "unknown upstream",
         )
         pr = create_pull_request(target_repo, head, base_branch, title, body, token)
@@ -331,19 +328,20 @@ def run_generate(item: dict) -> int:
     )
     if findings:
         reason = "\n".join(f"{f['code']}: {f['message']}" for f in findings)
-        log_stage("testgen", f"{app}: exhausted after {MAX_REPAIR_ROUNDS + 1} rounds")
-        mark_exhausted(app, reason)
-        return 0
+        log_stage(
+            "testgen",
+            f"{app}: exhausted after {MAX_REPAIR_ROUNDS + 1} rounds\n{reason}",
+        )
+        return 1
 
     pr_url = deliver(
         repo_dir=repo_dir,
         app=app,
         domain=domain,
         dockerfile_rel=dockerfile_rel,
-        dashboard_name=str(item.get("dashboard_name", app)),
         source_url=source_url,
     )
-    mark_done(app, pr_url or "PR URL unavailable")
+    log_stage("testgen", f"{app}: delivered {pr_url or '(url unavailable)'}")
     return 0
 
 
@@ -352,7 +350,7 @@ def main() -> int:
     parser.add_argument(
         "--item",
         required=True,
-        help="candidate JSON from scan: "
+        help="resolved item JSON: "
         '{"app": "...", "domain": "...", "version": "...", '
         '"os_version": "...", "source_url": "..."}',
     )

@@ -52,7 +52,6 @@ _ITEM = {
     "version": "2.0.0",
     "os_version": "24.03-lts-sp4",
     "source_url": "https://github.com/example/myapp",
-    "dashboard_name": "MyApp",
 }
 
 
@@ -288,11 +287,6 @@ class RunGenerateTest(unittest.TestCase):
             )
             return {"web_url": "https://gitcode.com/pr/99"}
 
-        done: list[tuple] = []
-
-        def fake_mark_done(app, pr_url):
-            done.append((app, pr_url))
-
         with (
             mock.patch.object(testgen_generate, "run_agent",
                               side_effect=_script_writer(scripts)),
@@ -306,21 +300,16 @@ class RunGenerateTest(unittest.TestCase):
                               return_value=pr_existing),
             mock.patch.object(testgen_generate, "create_pull_request",
                               side_effect=fake_create),
-            mock.patch.object(testgen_generate, "mark_done",
-                              side_effect=fake_mark_done),
-            mock.patch.object(testgen_generate, "mark_exhausted") as exhausted,
             mock.patch("shutil.which", return_value="/fake/opencode"),
         ):
             code = testgen_generate.run_generate(dict(_ITEM))
         return {
             "code": code,
             "created": created,
-            "done": done,
-            "exhausted": exhausted,
             "pushes": pushes,
         }
 
-    def test_full_success_creates_pr_and_marks_done(self) -> None:
+    def test_full_success_creates_pr(self) -> None:
         result = self._full_run([_GOOD_SCRIPT])
         self.assertEqual(result["code"], 0)
         self.assertEqual(len(result["created"]), 1)
@@ -328,8 +317,6 @@ class RunGenerateTest(unittest.TestCase):
         self.assertEqual(pr["repo"], "openeuler/openeuler-docker-images")
         self.assertEqual(pr["head"], "m0_fork:auto/test-script/myapp")
         self.assertEqual(pr["base"], "master")
-        self.assertEqual(result["done"], [("myapp", "https://gitcode.com/pr/99")])
-        result["exhausted"].assert_not_called()
         # Dockerfile got its blank line
         dockerfile = (
             self.repo / "Database" / "myapp" / "2.0.0" / "24.03-lts-sp4" / "Dockerfile"
@@ -340,14 +327,11 @@ class RunGenerateTest(unittest.TestCase):
         existing = {"web_url": "https://gitcode.com/pr/40"}
         result = self._full_run([_GOOD_SCRIPT], pr_existing=existing)
         self.assertEqual(result["created"], [])
-        self.assertEqual(result["done"], [("myapp", "https://gitcode.com/pr/40")])
 
-    def test_repeated_failure_marks_exhausted(self) -> None:
+    def test_repeated_failure_exits_non_zero(self) -> None:
         result = self._full_run([_BAD_SCRIPT] * 3)
-        self.assertEqual(result["code"], 0)
+        self.assertEqual(result["code"], 1)
         self.assertEqual(result["created"], [])
-        self.assertEqual(result["done"], [])
-        result["exhausted"].assert_called_once()
 
 
 class MainTest(unittest.TestCase):

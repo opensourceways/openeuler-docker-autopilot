@@ -1,8 +1,10 @@
-"""Tests for the scenario-four scan stage."""
+"""Tests for the scenario-four target-app resolver."""
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -10,7 +12,6 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.harness import testgen_scan  # noqa: E402
-from scripts.lib.testgen_dashboard import DashboardSoftware  # noqa: E402
 
 
 def _make_app(repo: Path, domain: str, app: str, *, versions=("2.0.0",),
@@ -27,31 +28,16 @@ def _make_app(repo: Path, domain: str, app: str, *, versions=("2.0.0",),
         target.write_text("#!/bin/bash\n", encoding="utf-8")
 
 
-def _software(name: str, repo_url: str = "https://github.com/x/y") -> DashboardSoftware:
-    return DashboardSoftware(
-        name=name, repo_url=repo_url, latest_version="1.0", is_active=True
-    )
-
-
-def _repo(tmp_path: Path) -> Path:
-    repo = tmp_path / "target-repo"
-    repo.mkdir()
-    return repo
-
-
 class NormalizeNameTest(unittest.TestCase):
     def test_case_and_separators_fold(self) -> None:
         self.assertEqual(testgen_scan.normalize_name("ClickHouse"), "clickhouse")
         self.assertEqual(testgen_scan.normalize_name("spring cloud"), "spring-cloud")
         self.assertEqual(testgen_scan.normalize_name("Spring_Cloud"), "spring-cloud")
-        self.assertEqual(testgen_scan.normalize_name("trf"), "trf")
         self.assertEqual(testgen_scan.normalize_name("  libavif "), "libavif")
 
 
 class HasAnyTestScriptTest(unittest.TestCase):
     def test_shared_tests_location(self) -> None:
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             app_dir = Path(tmp)
             self.assertFalse(testgen_scan.has_any_test_script(app_dir))
@@ -60,16 +46,12 @@ class HasAnyTestScriptTest(unittest.TestCase):
             self.assertTrue(testgen_scan.has_any_test_script(app_dir))
 
     def test_legacy_app_level_location(self) -> None:
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             app_dir = Path(tmp)
             (app_dir / "test.sh").write_text("#!/bin/bash\n", encoding="utf-8")
             self.assertTrue(testgen_scan.has_any_test_script(app_dir))
 
     def test_version_colocated_location(self) -> None:
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             app_dir = Path(tmp)
             (app_dir / "1.0" / "oe2403").mkdir(parents=True)
@@ -81,8 +63,6 @@ class HasAnyTestScriptTest(unittest.TestCase):
 
 class LatestDockerfileTest(unittest.TestCase):
     def test_picks_highest_version_then_os(self) -> None:
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             app_dir = Path(tmp)
             for version, os_version in (
@@ -99,162 +79,78 @@ class LatestDockerfileTest(unittest.TestCase):
             self.assertEqual(best.parts[-2], "24.03-lts-sp4")
 
     def test_no_dockerfile_returns_none(self) -> None:
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(testgen_scan.latest_dockerfile(Path(tmp)))
 
 
-class FindCandidatesTest(unittest.TestCase):
+class ResolveItemTest(unittest.TestCase):
     def setUp(self) -> None:
-        import tempfile
-
         self._tmp = tempfile.TemporaryDirectory()
-        self.repo = _repo(Path(self._tmp.name))
-        # Default state patches; individual tests override as needed.
-        for name, value in (("is_exhausted", False), ("is_done", False)):
-            patcher = mock.patch.object(
-                testgen_scan, name, return_value=value
-            )
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.repo = Path(self._tmp.name) / "target-repo"
+        self.repo.mkdir()
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _scan(self, software, **overrides):
-        defaults = dict(
-            repo_dir=self.repo,
-            limit=10,
-            app_filter=None,
-            token="",
-            target_repo="openeuler/openeuler-docker-images",
+    def test_resolves_latest_image_of_the_named_app(self) -> None:
+        _make_app(self.repo, "Database", "kvrocks",
+                  versions=("2.15.0", "2.16.0"))
+        item = testgen_scan.resolve_item(repo_dir=self.repo, app="Kvrocks")
+        self.assertEqual(
+            item,
+            {
+                "app": "kvrocks",
+                "domain": "Database",
+                "version": "2.16.0",
+                "os_version": "24.03-lts-sp4",
+                "source_url": "",
+            },
         )
-        defaults.update(overrides)
-        with mock.patch.object(
-            testgen_scan, "fetch_dashboard_software", return_value=software
-        ):
-            return testgen_scan.find_candidates(**defaults)
 
-    def test_missing_test_script_becomes_candidate(self) -> None:
+    def test_source_url_is_echoed(self) -> None:
         _make_app(self.repo, "Database", "kvrocks")
-        result = self._scan([_software("Kvrocks")])
-        self.assertEqual(
-            result["candidates"],
-            [
-                {
-                    "app": "kvrocks",
-                    "domain": "Database",
-                    "version": "2.0.0",
-                    "os_version": "24.03-lts-sp4",
-                    "source_url": "https://github.com/x/y",
-                    "dashboard_name": "Kvrocks",
-                }
-            ],
+        item = testgen_scan.resolve_item(
+            repo_dir=self.repo, app="kvrocks",
+            source_url=" https://github.com/apache/kvrocks ",
         )
-        self.assertEqual(result["skipped"], [])
+        self.assertEqual(item["source_url"], "https://github.com/apache/kvrocks")
 
-    def test_existing_shared_test_script_is_skipped(self) -> None:
-        _make_app(self.repo, "Database", "kvrocks", test_script="tests/test.sh")
-        result = self._scan([_software("Kvrocks")])
-        self.assertEqual(result["candidates"], [])
-        self.assertEqual(result["skipped"][0]["reason"], "test.sh already present")
-
-    def test_no_matching_directory_is_reported(self) -> None:
-        result = self._scan([_software("Spring Cloud")])
-        self.assertEqual(result["candidates"], [])
-        self.assertEqual(
-            result["skipped"][0]["reason"], "no target-repo directory matched"
-        )
-
-    def test_ambiguous_match_is_skipped(self) -> None:
+    def test_domain_disambiguates_same_name(self) -> None:
         _make_app(self.repo, "Database", "salmon")
         _make_app(self.repo, "Others", "Salmon")
-        result = self._scan([_software("salmon")])
-        self.assertEqual(result["candidates"], [])
-        self.assertIn("ambiguous match", result["skipped"][0]["reason"])
+        with self.assertRaises(SystemExit) as ambiguous:
+            testgen_scan.resolve_item(repo_dir=self.repo, app="salmon")
+        self.assertIn("--domain", str(ambiguous.exception))
 
-    def test_app_without_dockerfile_is_skipped(self) -> None:
+        item = testgen_scan.resolve_item(
+            repo_dir=self.repo, app="salmon", domain="Others"
+        )
+        self.assertEqual(item["domain"], "Others")
+
+    def test_missing_app_raises(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            testgen_scan.resolve_item(repo_dir=self.repo, app="nope")
+        self.assertIn("找不到应用目录", str(ctx.exception))
+
+    def test_existing_test_script_blocks_regeneration(self) -> None:
+        _make_app(self.repo, "Database", "kvrocks", test_script="tests/test.sh")
+        with self.assertRaises(SystemExit) as ctx:
+            testgen_scan.resolve_item(repo_dir=self.repo, app="kvrocks")
+        self.assertIn("已有功能测试脚本", str(ctx.exception))
+
+    def test_app_without_dockerfile_raises(self) -> None:
         (self.repo / "Database" / "empty-app").mkdir(parents=True)
-        result = self._scan([_software("Empty App")])
-        self.assertEqual(result["candidates"], [])
-        self.assertEqual(
-            result["skipped"][0]["reason"], "app directory has no Dockerfile"
-        )
-
-    def test_exhausted_and_done_are_skipped(self) -> None:
-        _make_app(self.repo, "Database", "kvrocks")
-        with mock.patch.object(testgen_scan, "is_exhausted", return_value=True):
-            result = self._scan([_software("kvrocks")])
-        self.assertEqual(result["candidates"], [])
-        self.assertEqual(result["skipped"][0]["reason"], "exhausted (needs human review)")
-
-        with (
-            mock.patch.object(testgen_scan, "is_exhausted", return_value=False),
-            mock.patch.object(testgen_scan, "is_done", return_value=True),
-        ):
-            result = self._scan([_software("kvrocks")])
-        self.assertEqual(result["candidates"], [])
-        self.assertEqual(result["skipped"][0]["reason"], "already delivered")
-
-    def test_open_pr_is_skipped_when_token_present(self) -> None:
-        _make_app(self.repo, "Database", "kvrocks")
-        with mock.patch.object(
-            testgen_scan, "find_any_pr_by_head_branch", return_value={"number": 7}
-        ) as finder:
-            result = self._scan([_software("kvrocks")], token="t")
-        finder.assert_called_once_with(
-            "openeuler/openeuler-docker-images", "auto/test-script/kvrocks", "t",
-            open_only=True,
-        )
-        self.assertEqual(result["candidates"], [])
-        self.assertEqual(result["skipped"][0]["reason"], "open PR already exists")
-
-    def test_no_token_skips_pr_check(self) -> None:
-        _make_app(self.repo, "Database", "kvrocks")
-        with mock.patch.object(
-            testgen_scan, "find_any_pr_by_head_branch"
-        ) as finder:
-            self._scan([_software("kvrocks")], token="")
-        finder.assert_not_called()
-
-    def test_limit_truncates_in_dashboard_order(self) -> None:
-        _make_app(self.repo, "Database", "kvrocks")
-        _make_app(self.repo, "Database", "redis")
-        result = self._scan(
-            [_software("kvrocks"), _software("redis")], limit=1
-        )
-        self.assertEqual(len(result["candidates"]), 1)
-        self.assertEqual(result["candidates"][0]["app"], "kvrocks")
-
-    def test_app_filter_restricts_scan(self) -> None:
-        _make_app(self.repo, "Database", "kvrocks")
-        _make_app(self.repo, "Database", "redis")
-        result = self._scan(
-            [_software("kvrocks"), _software("redis")],
-            app_filter="redis",
-        )
-        self.assertEqual(len(result["candidates"]), 1)
-        self.assertEqual(result["candidates"][0]["app"], "redis")
-
-    def test_dashboard_unreachable_returns_empty(self) -> None:
-        with mock.patch.object(
-            testgen_scan, "fetch_dashboard_software", return_value=None
-        ):
-            result = testgen_scan.find_candidates(
-                repo_dir=self.repo, limit=5, token=""
-            )
-        self.assertEqual(result["candidates"], [])
-        self.assertTrue(result["dashboard_unreachable"])
+        with self.assertRaises(SystemExit) as ctx:
+            testgen_scan.resolve_item(repo_dir=self.repo, app="empty-app")
+        self.assertIn("没有", str(ctx.exception))
 
 
 class MainTest(unittest.TestCase):
     def test_github_output_written(self) -> None:
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "gh_output"
-            repo = _repo(Path(tmp))
+            repo = Path(tmp) / "target-repo"
+            repo.mkdir()
             _make_app(repo, "Database", "kvrocks")
             with (
                 mock.patch.dict(
@@ -263,26 +159,21 @@ class MainTest(unittest.TestCase):
                     clear=False,
                 ),
                 mock.patch.object(
-                    testgen_scan,
-                    "fetch_dashboard_software",
-                    return_value=[_software("kvrocks")],
+                    sys, "argv",
+                    ["testgen_scan", "--app", "kvrocks", "--format", "github-output"],
                 ),
-                mock.patch.object(testgen_scan, "is_exhausted", return_value=False),
-                mock.patch.object(testgen_scan, "is_done", return_value=False),
-                mock.patch.object(sys, "argv", [
-                    "testgen_scan", "--format", "github-output",
-                ]),
             ):
                 self.assertEqual(testgen_scan.main(), 0)
             content = out.read_text(encoding="utf-8")
-            self.assertIn("candidates=", content)
-            self.assertIn('"app": "kvrocks"', content)
+            self.assertIn("item=", content)
+            payload = json.loads(content.split("item=", 1)[1].strip())
+            self.assertEqual(payload["app"], "kvrocks")
 
     def test_missing_repo_dir_exits(self) -> None:
         with (
             mock.patch.dict("os.environ", {"SOURCE_REPO_DIR": ""}, clear=False),
             mock.patch.object(
-                sys, "argv", ["testgen_scan", "--repo", "no-such-dir"]
+                sys, "argv", ["testgen_scan", "--repo", "no-such-dir", "--app", "x"]
             ),
         ):
             with self.assertRaises(SystemExit):
