@@ -2,163 +2,37 @@
 # name: 看板软件名（传给 /api/v1/version/resolve）
 # app:  目标仓应用目录名；domain: 目标仓一级目录
 # 新增/删除软件直接改本文件，workflow 不再遍历目标仓。
-# 初始内容由 scripts/utils/scrape_upgrade_apps.py 生成。
+# 初始内容由 scripts/utils/scrape_upgrade_apps.py 生成（看板 kunpeng 域）。
 apps:
-- name: accelerate
-  app: accelerate
-  domain: AI
-- name: AIBrix
-  app: aibrix
-  domain: AI
-- name: Areal
-  app: areal
-  domain: AI
-- name: AReno
-  app: areno
-  domain: AI
-- name: axolotl
-  app: axolotl
-  domain: AI
-- name: bitsandbytes
-  app: bitsandbytes
-  domain: AI
-- name: cache-dit
-  app: cache-dit
-  domain: AI
 - name: caffe
   app: caffe
-  domain: AI
-- name: ColossalAI
-  app: colossalai
-  domain: AI
-- name: ComfyUI
-  app: comfyui
-  domain: AI
-- name: DeepSpeed
-  app: deepspeed
-  domain: AI
-- name: dgl
-  app: dgl
-  domain: AI
-- name: DiffSynth-Studio
-  app: diffsynth-studio
-  domain: AI
-- name: diffusers
-  app: diffusers
   domain: AI
 - name: DiskANN
   app: diskann
   domain: AI
-- name: evalscope
-  app: evalscope
-  domain: AI
 - name: Faiss
   app: faiss
-  domain: AI
-- name: FastChat
-  app: fastchat
-  domain: AI
-- name: flash-linear-attention
-  app: flash-linear-attention
-  domain: AI
-- name: FunASR
-  app: funasr
-  domain: AI
-- name: InternLM
-  app: internlm
-  domain: AI
-- name: Ktransformers
-  app: ktransformers
   domain: AI
 - name: LangGraph
   app: langgraph
   domain: AI
-- name: Liger-Kernel
-  app: liger-kernel
-  domain: AI
-- name: LightX2V
-  app: lightx2v
-  domain: AI
 - name: llama.cpp
   app: llama.cpp
-  domain: AI
-- name: LlamaFactory
-  app: llamafactory
-  domain: AI
-- name: llm-compressor
-  app: llm-compressor
-  domain: AI
-- name: llm-d
-  app: llm-d
-  domain: AI
-- name: LMCache
-  app: lmcache
-  domain: AI
-- name: MiniOneRec
-  app: minionerec
-  domain: AI
-- name: mmengine
-  app: mmengine
-  domain: AI
-- name: modelscope
-  app: modelscope
-  domain: AI
-- name: ms-swift
-  app: ms-swift
-  domain: AI
-- name: Ollama
-  app: ollama
   domain: AI
 - name: ONNXRuntime
   app: onnxruntime
   domain: AI
-- name: opencompass
-  app: opencompass
-  domain: AI
 - name: OpenCV
   app: opencv
-  domain: AI
-- name: PEFT
-  app: peft
   domain: AI
 - name: PyTorch
   app: pytorch
   domain: AI
-- name: ROLL
-  app: roll
-  domain: AI
 - name: sglang
   app: sglang
   domain: AI
-- name: Slime
-  app: slime
-  domain: AI
-- name: SpecForge
-  app: specforge
-  domain: AI
-- name: speculators
-  app: speculators
-  domain: AI
-- name: stable-diffusion-webui
-  app: stable-diffusion-webui
-  domain: AI
-- name: tensordict
-  app: tensordict
-  domain: AI
 - name: TensorRT-LLM
   app: tensorrt-llm
-  domain: AI
-- name: TileLang
-  app: tilelang
-  domain: AI
-- name: timm
-  app: timm
-  domain: AI
-- name: torchtitan
-  app: torchtitan
-  domain: AI
-- name: torchtune
-  app: torchtune
   domain: AI
 - name: torchvision
   app: torchvision
@@ -166,32 +40,11 @@ apps:
 - name: Towhee
   app: towhee
   domain: AI
-- name: transformers
-  app: transformers
-  domain: AI
-- name: TRL
-  app: trl
-  domain: AI
 - name: TVM
   app: tvm
   domain: AI
-- name: Vbench
-  app: vbench
-  domain: AI
-- name: veRL
-  app: verl
-  domain: AI
 - name: vLLM
   app: vllm
-  domain: AI
-- name: wenet
-  app: wenet
-  domain: AI
-- name: xDiT
-  app: xdit
-  domain: AI
-- name: xtuner
-  app: xtuner
   domain: AI
 - name: Accumulo
   app: accumulo

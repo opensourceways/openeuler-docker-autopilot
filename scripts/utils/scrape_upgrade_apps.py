@@ -144,7 +144,7 @@ def build_entries(records: list[dict], repo: Path) -> tuple[list[dict], list[str
     return entries, missing, ambiguous
 
 
-def write_yaml(entries: list[dict], out: Path) -> None:
+def write_yaml(entries: list[dict], out: Path, domain: str = "") -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     body = yaml.safe_dump(
         {"apps": entries},
@@ -159,7 +159,8 @@ def write_yaml(entries: list[dict], out: Path) -> None:
         "# name: 看板软件名（传给 /api/v1/version/resolve）\n"
         "# app:  目标仓应用目录名；domain: 目标仓一级目录\n"
         "# 新增/删除软件直接改本文件，workflow 不再遍历目标仓。\n"
-        "# 初始内容由 scripts/utils/scrape_upgrade_apps.py 生成。\n"
+        f"# 初始内容由 scripts/utils/scrape_upgrade_apps.py 生成"
+        f"{f'（看板 {domain} 域）' if domain else ''}。\n"
     )
     out.write_text(header + body, encoding="utf-8")
 
@@ -173,6 +174,12 @@ def main() -> int:
         default=os.environ.get("UPSTREAM_DASHBOARD_BASE", DEFAULT_BASE),
         help="看板地址",
     )
+    parser.add_argument(
+        "--domain",
+        choices=("kunpeng", "ascend"),
+        default="",
+        help="只保留看板的某个域（留空 = 全域）",
+    )
     args = parser.parse_args()
 
     repo = Path(args.repo)
@@ -180,8 +187,10 @@ def main() -> int:
         raise SystemExit(f"repo not found: {repo}")
 
     records = fetch_software(args.base)
+    if args.domain:
+        records = [item for item in records if item.get("domain") == args.domain]
     entries, missing, ambiguous = build_entries(records, repo)
-    write_yaml(entries, Path(args.out))
+    write_yaml(entries, Path(args.out), domain=args.domain)
 
     print(f"看板软件 {len(records)} 个；写入 {len(entries)} 条 -> {args.out}")
     print(f"未在目标仓找到：{len(missing)} 个")
