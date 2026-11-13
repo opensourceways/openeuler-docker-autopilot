@@ -72,7 +72,9 @@ jobs:
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
-          git clone --depth 1 \
+          # 必须是完整克隆：GitCode 侧拒收浅克隆推上来的分支
+          # （remote rejected: shallow update not allowed）。
+          git clone \
             "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
             source-repo
 
