@@ -178,6 +178,7 @@ def find_updates(
     repo_dir: Path,
     app_filter: str = "",
     forced_version: str = "",
+    forced_tag: str = "",
     limit: int = 0,
     audit_limit: int = 0,
     apps: list[dict] | None = None,
@@ -214,12 +215,20 @@ def find_updates(
 
     if forced_version:
         # 手动指定版本：不查看板，其余照常对比本地目录。
+        # tag 不能拿版本号冒充（slurm 的版本是 26.05.6.1，上游 tag 却是
+        # slurm-26-05-6-1）；没给 tag 就留空，后续审计/修复会跳过 tag 校验。
+        forced_tag = forced_tag.strip()
+        if not forced_tag:
+            log_stage(
+                "upgrade-scan",
+                "手动指定版本但未给 tag，本次跳过 tag 校验（需要时请同时填 tag）",
+            )
         payloads: list[tuple[dict | None, dict]] = [
             (
                 {
                     "name": entry["name"],
                     "version": forced_version,
-                    "tag": forced_version,
+                    "tag": forced_tag,
                     "source": "manual",
                 },
                 {
@@ -336,6 +345,11 @@ def main() -> int:
     parser.add_argument("--app", default="", help="只处理这一个应用")
     parser.add_argument("--version", default="", help="手动指定目标版本（跳过看板解析）")
     parser.add_argument(
+        "--tag",
+        default="",
+        help="手动指定版本对应的上游 tag（如 slurm-26-05-6-1；留空则跳过 tag 校验）",
+    )
+    parser.add_argument(
         "--apps-file",
         default=os.environ.get("UPGRADE_APPS_FILE", ""),
         help=f"软件清单（默认 {DEFAULT_APPS_FILE}）",
@@ -360,6 +374,7 @@ def main() -> int:
         repo_dir=repo_dir,
         app_filter=args.app,
         forced_version=args.version,
+        forced_tag=args.tag,
         limit=args.limit,
         audit_limit=args.audit_limit,
         apps_file=args.apps_file or None,

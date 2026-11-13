@@ -27,6 +27,10 @@ on:
         description: '手动指定目标版本（配合 app 使用；留空 = 用看板解析的最新版）'
         required: false
         type: string
+      tag:
+        description: '手动指定版本对应的上游 tag（如 slurm-26-05-6-1；留空则不校验 tag）'
+        required: false
+        type: string
       limit:
         description: '本轮最多升级几个应用（0 = 不限）'
         required: false
@@ -96,6 +100,7 @@ jobs:
           SOURCE_REPO_DIR: ${{ github.workspace }}/source-repo
           APP: ${{ inputs.app }}
           VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
           LIMIT: ${{ inputs.limit || '0' }}
           AUDIT_LIMIT: ${{ inputs.audit_limit || '0' }}
         run: |
@@ -105,6 +110,9 @@ jobs:
           fi
           if [ -n "$VERSION" ]; then
             ARGS+=(--version "$VERSION")
+          fi
+          if [ -n "$TAG" ]; then
+            ARGS+=(--tag "$TAG")
           fi
           "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_scan.py \
             "${ARGS[@]}"

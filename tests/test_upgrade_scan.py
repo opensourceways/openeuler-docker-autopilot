@@ -188,6 +188,23 @@ class FindUpdatesTest(unittest.TestCase):
             fetch_evidence=lambda name, version: [],
         )
         self.assertEqual(result["updates"][0]["version"], "2.18.0")
+        # 版本号不能冒充上游 tag，否则审计/修复会误判 tag.mismatch
+        self.assertEqual(result["updates"][0]["evidence"]["tag"], "")
+
+    def test_forced_tag_is_carried_into_evidence(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            app_filter="kvrocks",
+            forced_version="2.18.0",
+            forced_tag="v2.18.0",
+            apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
+            resolve=lambda name: (_ for _ in ()).throw(
+                AssertionError("dashboard must not be called")
+            ),
+            probe=lambda p: {},
+            fetch_evidence=lambda name, version: [],
+        )
+        self.assertEqual(result["updates"][0]["evidence"]["tag"], "v2.18.0")
 
     def test_unknown_app_raises(self) -> None:
         with self.assertRaises(SystemExit):
