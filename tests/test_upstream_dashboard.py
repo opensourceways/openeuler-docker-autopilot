@@ -81,6 +81,25 @@ class ResolveVersionTest(unittest.TestCase):
             with pytest.raises(upstream_dashboard.DashboardError, match="503"):
                 upstream_dashboard.resolve_version("x265")
 
+    def test_418_warms_up_waf_cookie_and_retries(self) -> None:
+        responses = [
+            _Response(418, None, "waf"),
+            _Response(200, _PAYLOAD),
+        ]
+        with (
+            mock.patch.object(
+                upstream_dashboard.requests, "get", side_effect=responses
+            ) as getter,
+            mock.patch.object(
+                upstream_dashboard, "_warm_up_cookies"
+            ) as warm_up,
+        ):
+            payload = upstream_dashboard.resolve_version("x265")
+
+        assert payload == _PAYLOAD
+        warm_up.assert_called_once()
+        assert getter.call_count == 2
+
     def test_base_url_can_be_overridden(self) -> None:
         with mock.patch.dict(
             "os.environ",

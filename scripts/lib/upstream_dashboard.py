@@ -36,8 +36,20 @@ _HEADERS = {
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/json",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 }
+_HTML_HEADERS = {
+    "User-Agent": _HEADERS["User-Agent"],
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": _HEADERS["Accept-Language"],
+    "Upgrade-Insecure-Requests": "1",
+}
+_SESSION = requests.Session()
+_WARMED_BASE = ""
 
 _RETRYABLE_STATUS = {502}
 _MAX_ATTEMPTS = 3
@@ -50,6 +62,42 @@ class DashboardError(RuntimeError):
 def base_url() -> str:
     """看板地址：环境变量 / 仓库 Variable 覆盖，默认测试环境。"""
     return (os.environ.get("UPSTREAM_DASHBOARD_BASE") or DEFAULT_BASE).rstrip("/")
+
+
+def _warm_up_cookies(timeout: int) -> None:
+    """先访问首页拿 WAF 会话 Cookie；418 常见于缺少这一步。"""
+    global _WARMED_BASE
+    base = base_url()
+    if _WARMED_BASE == base:
+        return
+    _WARMED_BASE = base
+    try:
+        _SESSION.get(f"{base}/", headers=_HTML_HEADERS, timeout=timeout)
+    except requests.RequestException:
+        pass
+
+
+def _get(url: str, *, params: dict[str, str], timeout: int):
+    """API 请求；遇到 WAF 418 时取一次首页 Cookie 后重试。"""
+    headers = {**_HEADERS, "Referer": f"{base_url()}/"}
+    cookies = _SESSION.cookies.get_dict() or None
+    response = requests.get(
+        url,
+        params=params,
+        headers=headers,
+        cookies=cookies,
+        timeout=timeout,
+    )
+    if response.status_code == 418:
+        _warm_up_cookies(timeout)
+        response = requests.get(
+            url,
+            params=params,
+            headers=headers,
+            cookies=_SESSION.cookies.get_dict() or None,
+            timeout=timeout,
+        )
+    return response
 
 
 def resolve_version(
@@ -71,9 +119,7 @@ def resolve_version(
     last_error: Exception | None = None
     for attempt in range(_MAX_ATTEMPTS):
         try:
-            response = requests.get(
-                url, params=params, headers=_HEADERS, timeout=timeout
-            )
+            response = _get(url, params=params, timeout=timeout)
         except requests.RequestException as error:
             last_error = error
             if attempt < _MAX_ATTEMPTS - 1:
@@ -134,10 +180,9 @@ def fetch_evidence(
     """
     url = f"{base_url()}/api/v1/software"
     try:
-        response = requests.get(
+        response = _get(
             url,
             params={"name": name, "page_size": _EVIDENCE_PAGE_SIZE},
-            headers=_HEADERS,
             timeout=timeout,
         )
     except requests.RequestException:
