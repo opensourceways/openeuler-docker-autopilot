@@ -175,6 +175,21 @@ class LoadAppsTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 upgrade_scan.load_apps(path)
 
+    def test_pending_software_is_not_part_of_the_upgrade_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "apps.yml"
+            path.write_text(
+                "apps:\n"
+                "- name: Redis\n"
+                "  app: redis\n"
+                "  domain: Database\n"
+                "pending:\n"
+                "- name: AlphaFold2\n",
+                encoding="utf-8",
+            )
+            apps = upgrade_scan.load_apps(path)
+        self.assertEqual([entry["app"] for entry in apps], ["redis"])
+
 
 class NormalizeVersionTest(unittest.TestCase):
     def test_v_prefix_and_case_are_ignored(self) -> None:

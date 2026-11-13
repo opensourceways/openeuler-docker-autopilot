@@ -369,7 +369,10 @@ create_new_images.yml  (operation = scenario_one)
 
 `discover` job 浅克隆目标仓后调用 [`upgrade_scan.py`](scripts/harness/upgrade_scan.py)：
 
-- 软件清单来自 [`config/upgrade-apps.yml`](config/upgrade-apps.yml)（人工维护，**不遍历目标仓**，当前只保留看板 `kunpeng` 域的软件）；初始清单由 [`scrape_upgrade_apps.py`](scripts/utils/scrape_upgrade_apps.py) 从看板一次性生成（`--domain kunpeng`）；
+- 软件清单来自 [`config/upgrade-apps.yml`](config/upgrade-apps.yml)（人工维护，**不遍历目标仓**），当前分两段：
+  - `apps`：已在镜像仓、参与自动升级（353 条，看板 `kunpeng` 域）；
+  - `pending`：看板有、镜像仓还没有的**独立软件**（190 条），只做清单备查，不参与升级。软件族 / 发行集合（Android、Bioconda、Bioconductor、DELFT3D、FSL、iSula、nanopack、OpenHPC、OpenStack、OpenXLA）与内核组件（fuse、KVM）已排除。
+  - 维护：新增镜像目录后，把条目从 `pending` 移到 `apps` 并补 `app` / `domain`；重新运行 [`scrape_upgrade_apps.py`](scripts/utils/scrape_upgrade_apps.py)（`--domain kunpeng`）会合并看板结果，并保留手工条目和 `pending`。
 - 每项包含 `name`（看板软件名，传给 `version/resolve`）、`app`（目标仓目录名）、`domain`（目标仓一级目录）；
 - `blocked_reason` 非空、最新版本目录已存在、目标分支已有同名升级分支的 open PR → 跳过并记录原因；清单里的软件在目标仓不存在 → 跳过并提示配置过期；
 - 命中 → `{app, domain, version, os_version, source_url, evidence}` 组成升级矩阵，`os_version` 沿用该应用最新的 os 目录。
@@ -665,7 +668,7 @@ openeuler-docker-images-workflow/
 │   └── python-phase1.lock.txt               # Python 依赖锁
 ├── config/
 │   ├── watchlist.json                       # CI 修复组件的仓库列表与轮询参数（仅手动扫描使用）
-│   └── upgrade-apps.yml                     # ② 场景二软件清单（人工维护，不遍历目标仓）
+│   └── upgrade-apps.yml                     # ② 场景二软件清单（apps=可升级；pending=待入库的独立软件）
 ├── scripts/
 │   ├── harness/
 │   │   ├── flow.py                          # 阶段一确定性编排入口
