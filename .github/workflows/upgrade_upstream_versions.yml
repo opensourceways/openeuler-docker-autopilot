@@ -1,165 +1,146 @@
-name: Version Update
+name: App Version Upgrade
 
-# Triggered by anitya webhook (repository_dispatch) or manual workflow_dispatch.
-# 1. Query anitya for apps with new upstream versions
-# 2. For each app: call _upgrade_versions.yml (build + test)
-# 3. If verify fails: run fixer, re-verify (up to 3 rounds)
-# 4. Create PR for successfully verified apps
+# 场景二：应用自动升级（替代社区 easysoftware-autoupgrade）。
+#
+#   每日定时（或手动）→ 用 upstream-dashboard /api/v1/version/resolve 解析每个
+#   软件的最新上游版本 → 与目标仓已有版本目录对比 → 对缺新版本的应用执行
+#   「补功能测试 + 确定性版本升级 + 双架构原生验证 + 跨仓 PR」，一应用一 PR。
+#
+# 版本源只认看板接口（文档见 opensourceways/upstream-dashboard docs/external-api.md）。
+# 接口目前只返回版本号；后续会补充采集到的上游证据，证据的归纳/透传见
+# scripts/lib/upstream_evidence.py（只作 AI 参考与 PR 留痕，不参与门禁）。
+#
+# 手动入口：app 指定单个应用；version 手动指定目标版本（跳过看板解析）。
 
 on:
-  repository_dispatch:
-    types: [anitya-version-update]
+  schedule:
+    - cron: '0 1 * * *'
   workflow_dispatch:
     inputs:
       app:
-        description: 'Specific app to update (blank = all)'
+        description: '只升级这一个应用（留空 = 全量扫描）'
         required: false
+        type: string
+      version:
+        description: '手动指定目标版本（配合 app 使用；留空 = 用看板解析的最新版）'
+        required: false
+        type: string
+      limit:
+        description: '本轮最多升级几个应用（0 = 不限）'
+        required: false
+        default: '0'
+        type: string
+      runner_labels:
+        description: '轻量 job 的 runner 标签（JSON 数组），留空用 Variable / 默认值'
+        required: false
+        type: string
+
+permissions:
+  contents: read
 
 env:
   PYTHONUNBUFFERED: "1"
+  TARGET_REPO: openeuler/openeuler-docker-images
+  TARGET_BRANCH: master
+  # 看板地址（可覆盖到其它部署）
+  UPSTREAM_DASHBOARD_BASE: ${{ vars.UPSTREAM_DASHBOARD_BASE || 'https://upstream-dashboard.test.osinfra.cn' }}
+
+concurrency:
+  group: app-version-upgrade-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  query:
-    name: Query new upstream versions
-    runs-on: [self-hosted, Linux, x64]
+
+  # ── 发现：看板解析 + 本地版本对比 → 升级矩阵 ─────────────────────
+  discover:
+    name: Discover upgradable apps
+    runs-on: >-
+      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-image-x86"]') }}
+    timeout-minutes: 60
     outputs:
-      updates: ${{ steps.q.outputs.updates }}
+      updates: ${{ steps.scan.outputs.updates }}
+      skipped: ${{ steps.scan.outputs.skipped }}
     steps:
       - name: Check out workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - id: q
-        name: Query new upstream versions
-        run: |
-          UPDATES=$(python scripts/harness/query_version.py \
-            ${%-%github.event.inputs.app%} --format json)
-          echo "updates=$UPDATES" >> "$GITHUB_OUTPUT"
 
-  # --- Per-app verify + fix ---
-  round-1:
-    name: "Round 1: verify images"
-    needs: query
-    if: needs.query.outputs.updates != '[]'
-    strategy:
-      fail-fast: false
-      max-parallel: ${{ vars.MAX_PARALLEL_IMAGES || 4 }}
-      matrix:
-        app: ${{ fromJSON(needs.query.outputs.updates) }}
-    uses: ./.github/workflows/_upgrade_versions.yml
-    secrets: inherit
-    with:
-      app: ${{ matrix.app.name }}
-      app_version: ${{ matrix.app.version }}
-      os_version: ${{ matrix.app.os_version }}
-      scenario: version-update
+      - name: Set up runner environment
+        uses: ./.github/actions/phase1-setup
 
-  fix-1:
-    name: "Fix failures (round 1)"
-    needs: round-1
-    if: failure()
-    strategy:
-      fail-fast: false
-      max-parallel: ${{ vars.MAX_PARALLEL_IMAGES || 4 }}
-      matrix:
-        app: ${{ fromJSON(needs.query.outputs.updates) }}
-    runs-on: [self-hosted, Linux, x64]
-    steps:
-      - name: Check out workflow source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install opencode
-        run: curl -fsSL https://opencode.ai/install | bash
-      - name: Download test results
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: test-results-${{ matrix.app.name }}-*
-          merge-multiple: true
-      - name: Fix build failures
-        env:
-          AI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY }}
-          DEEPSEEK_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY }}
-          AI_MODEL: ${{ vars.AI_MODEL || 'gateway/deepseek-v4-pro' }}
-          AI_PROVIDER_ID: ${{ vars.AI_PROVIDER_ID || 'gateway' }}
-          OPENAI_BASE_URL: >-
-            ${{ vars.OPENAI_BASE_URL || 'https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1' }}
-        run: python scripts/harness/run.py fix
-
-  round-2:
-    name: "Round 2: verify images"
-    needs: fix-1
-    if: always() && !failure()
-    strategy:
-      fail-fast: false
-      max-parallel: ${{ vars.MAX_PARALLEL_IMAGES || 4 }}
-      matrix:
-        app: ${{ fromJSON(needs.query.outputs.updates) }}
-    uses: ./.github/workflows/_upgrade_versions.yml
-    secrets: inherit
-    with:
-      app: ${{ matrix.app.name }}
-      app_version: ${{ matrix.app.version }}
-      os_version: ${{ matrix.app.os_version }}
-      scenario: version-update
-      retry: true
-
-  fix-2:
-    name: "Fix failures (round 2)"
-    needs: round-2
-    if: failure()
-    strategy:
-      matrix:
-        app: ${{ fromJSON(needs.query.outputs.updates) }}
-    runs-on: [self-hosted, Linux, x64]
-    steps:
-      - name: Check out workflow source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Fix build failures
-        env:
-          AI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY }}
-          DEEPSEEK_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY }}
-          AI_MODEL: ${{ vars.AI_MODEL || 'gateway/deepseek-v4-pro' }}
-          AI_PROVIDER_ID: ${{ vars.AI_PROVIDER_ID || 'gateway' }}
-          OPENAI_BASE_URL: >-
-            ${{ vars.OPENAI_BASE_URL || 'https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1' }}
-        run: python scripts/harness/run.py fix
-
-  round-3:
-    name: "Round 3: verify images"
-    needs: fix-2
-    if: always() && !failure()
-    strategy:
-      matrix:
-        app: ${{ fromJSON(needs.query.outputs.updates) }}
-    uses: ./.github/workflows/_upgrade_versions.yml
-    secrets: inherit
-    with:
-      app: ${{ matrix.app.name }}
-      app_version: ${{ matrix.app.version }}
-      os_version: ${{ matrix.app.os_version }}
-      scenario: version-update
-      retry: true
-  # --- End per-app verify + fix ---
-
-  compose-pr:
-    name: Compose and create PR
-    needs: [round-1, round-2, round-3]
-    if: always() && !failure()
-    runs-on: [self-hosted, Linux, x64]
-    steps:
-      - name: Check out workflow source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Download test results
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with: { pattern: test-results-*, merge-multiple: true }
-      - name: Gate diff on changed files
-        run: python scripts/harness/gate_diff.py
-      - name: Compose PR title and body
-        env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-        run: python scripts/harness/compose_pr.py --scenario version-update
-      - name: Create PR on GitCode
+      - name: Clone target repository
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
-          python scripts/utils/gitcode.py pr create \
-            --title "$(cat /tmp/pr-title)" \
-            --body-file /tmp/pr-body.md \
-            --head "$(git branch --show-current)"
+          git clone --depth 1 \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
+            source-repo
+
+      - name: Scan dashboard vs target repo
+        id: scan
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          SOURCE_REPO_DIR: ${{ github.workspace }}/source-repo
+          APP: ${{ inputs.app }}
+          VERSION: ${{ inputs.version }}
+          LIMIT: ${{ inputs.limit || '0' }}
+        run: |
+          ARGS=(--repo "$SOURCE_REPO_DIR" --format github-output --limit "${LIMIT:-0}")
+          if [ -n "$APP" ]; then
+            ARGS+=(--app "$APP")
+          fi
+          if [ -n "$VERSION" ]; then
+            ARGS+=(--version "$VERSION")
+          fi
+          SKIPPED=$(mktemp)
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_scan.py \
+            "${ARGS[@]}" > "$SKIPPED"
+          {
+            echo "skipped<<EOF"
+            cat "$SKIPPED"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  # ── 升级：一应用一 PR（独立的可复用 workflow，互不影响）────────────
+  upgrade:
+    name: "Upgrade ${{ matrix.item.app }}"
+    needs: discover
+    if: needs.discover.outputs.updates != '[]' && needs.discover.outputs.updates != ''
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ vars.MAX_PARALLEL_UPGRADES || 2 }}
+      matrix:
+        item: ${{ fromJSON(needs.discover.outputs.updates) }}
+    uses: ./.github/workflows/_upgrade_app.yml
+    secrets: inherit
+    with:
+      item: ${{ toJSON(matrix.item) }}
+      app: ${{ matrix.item.app }}
+      domain: ${{ matrix.item.domain }}
+      version: ${{ matrix.item.version }}
+      os_version: ${{ matrix.item.os_version }}
+      source_url: ${{ matrix.item.source_url }}
+
+  # ── 汇总：本轮跳过原因（含 blocked_reason / 已有版本 / 已有 PR）─────
+  summary:
+    name: Summarize round
+    needs: [discover, upgrade]
+    if: ${{ always() }}
+    runs-on: >-
+      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-image-x86"]') }}
+    steps:
+      - name: Write summary
+        env:
+          SKIPPED: ${{ needs.discover.outputs.skipped }}
+        run: |
+          {
+            echo "## 应用自动升级"
+            echo ""
+            echo "- 升级任务结果：\`${{ needs.upgrade.result || 'skipped' }}\`"
+            echo "- 跳过明细："
+            echo ""
+            echo '```json'
+            echo "${SKIPPED:-[]}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

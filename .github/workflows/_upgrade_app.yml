@@ -1,0 +1,236 @@
+name: Upgrade one app
+
+# 场景二的单应用流水线（由 upgrade_upstream_versions.yml 按应用矩阵调用）：
+#   prepare（补测试 + 确定性版本升级 + 推分支）→ 双架构原生验证 → 跨仓 PR
+#
+# 一应用一 PR：任一架构验证失败则不开 PR，分支保留供人工/修复组件继续处理。
+
+on:
+  workflow_call:
+    inputs:
+      item:
+        description: 'upgrade_scan 产出的单条 item JSON'
+        required: true
+        type: string
+      app:
+        required: true
+        type: string
+      domain:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      os_version:
+        required: true
+        type: string
+      source_url:
+        required: false
+        default: ''
+        type: string
+      x64_runner_labels:
+        required: false
+        default: '["self-hosted","Linux","X64","oe-image-x86"]'
+        type: string
+      arm64_runner_labels:
+        required: false
+        default: '["self-hosted","Linux","ARM64","oe-image-arm64"]'
+        type: string
+    secrets:
+      GITCODE_TOKEN:
+        required: true
+      AI_API_KEY:
+        required: false
+      DEEPSEEK_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  TARGET_REPO: openeuler/openeuler-docker-images
+  TARGET_BRANCH: master
+  AI_RUNNER: ${{ vars.AI_RUNNER || 'opencode' }}
+  AI_MODEL: ${{ vars.AI_MODEL || 'gateway/deepseek-v4-pro' }}
+  AI_PROVIDER_ID: ${{ vars.AI_PROVIDER_ID || 'gateway' }}
+  AI_TIMEOUT_MS: ${{ vars.AI_TIMEOUT_MS || '10800000' }}
+  AI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
+  OPENAI_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
+  DEEPSEEK_API_KEY: ${{ secrets.AI_API_KEY || secrets.DEEPSEEK_API_KEY || '' }}
+  OPENAI_BASE_URL: >-
+    ${{ vars.OPENAI_BASE_URL || 'https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1' }}
+
+jobs:
+
+  prepare:
+    name: "Prepare ${{ inputs.app }} -> ${{ inputs.version }}"
+    runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
+    timeout-minutes: 120
+    outputs:
+      branch: ${{ steps.apply.outputs.branch }}
+      test_status: ${{ steps.apply.outputs.test_status }}
+      push_repo: ${{ steps.apply.outputs.push_repo }}
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up runner environment
+        id: tools
+        uses: ./.github/actions/phase1-setup
+        with:
+          arch: x86_64
+          preflight: "true"
+
+      - name: Clone target repository
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          # 必须完整克隆：后面要 push 分支，GitCode 拒收浅克隆推上来的分支。
+          git clone \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
+            source-repo
+
+      - name: Apply deterministic upgrade
+        id: apply
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_FORK_REPO: ${{ vars.GITCODE_FORK_REPO }}
+          GIT_COMMIT_NAME: ${{ vars.GIT_COMMIT_NAME }}
+          GIT_COMMIT_EMAIL: ${{ vars.GIT_COMMIT_EMAIL }}
+          SOURCE_REPO_DIR: ${{ github.workspace }}/source-repo
+          OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
+          ITEM: ${{ inputs.item }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_apply.py \
+            --item "$ITEM" \
+            --task-spec-out "${RUNNER_TEMP}/task-spec.json"
+
+      - name: Upload task spec
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: upgrade-task-${{ inputs.app }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/task-spec.json
+
+  validate-x86_64:
+    name: "Validate x86_64"
+    needs: prepare
+    runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
+    timeout-minutes: 180
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up tooling
+        uses: ./.github/actions/phase1-setup
+        with:
+          arch: x86_64
+          preflight: "true"
+
+      - name: Download task spec
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: upgrade-task-${{ inputs.app }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/upgrade-task
+
+      - name: Clone upgrade branch
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          git clone --depth 1 --branch "${{ needs.prepare.outputs.branch }}" \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${{ needs.prepare.outputs.push_repo }}.git" \
+            source-repo
+
+      - name: Validate natively (x86_64)
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/upgrade-evidence"
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/flow.py \
+            phase1-native-validate \
+            --workspace source-repo \
+            --task-spec "${RUNNER_TEMP}/upgrade-task/task-spec.json" \
+            --architecture x86_64 \
+            --run-id "${{ github.run_id }}" \
+            --report "${RUNNER_TEMP}/upgrade-evidence/x86_64.json" \
+            --junit "${RUNNER_TEMP}/upgrade-evidence/x86_64.junit.xml"
+
+      - name: Upload evidence (x86_64)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: upgrade-evidence-${{ inputs.app }}-x86_64
+          path: ${{ runner.temp }}/upgrade-evidence/
+
+  validate-aarch64:
+    name: "Validate aarch64"
+    needs: prepare
+    runs-on: ${{ fromJSON(inputs.arm64_runner_labels) }}
+    timeout-minutes: 180
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up tooling
+        uses: ./.github/actions/phase1-setup
+        with:
+          arch: aarch64
+          preflight: "true"
+
+      - name: Download task spec
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: upgrade-task-${{ inputs.app }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/upgrade-task
+
+      - name: Clone upgrade branch
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          git clone --depth 1 --branch "${{ needs.prepare.outputs.branch }}" \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${{ needs.prepare.outputs.push_repo }}.git" \
+            source-repo
+
+      - name: Validate natively (aarch64)
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/upgrade-evidence"
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/flow.py \
+            phase1-native-validate \
+            --workspace source-repo \
+            --task-spec "${RUNNER_TEMP}/upgrade-task/task-spec.json" \
+            --architecture aarch64 \
+            --run-id "${{ github.run_id }}" \
+            --report "${RUNNER_TEMP}/upgrade-evidence/aarch64.json" \
+            --junit "${RUNNER_TEMP}/upgrade-evidence/aarch64.junit.xml"
+
+      - name: Upload evidence (aarch64)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: upgrade-evidence-${{ inputs.app }}-aarch64
+          path: ${{ runner.temp }}/upgrade-evidence/
+
+  open-pr:
+    name: "Open PR for ${{ inputs.app }}"
+    needs: [prepare, validate-x86_64, validate-aarch64]
+    if: ${{ success() }}
+    runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
+    timeout-minutes: 20
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up runner environment
+        uses: ./.github/actions/phase1-setup
+
+      - name: Create cross-repo PR
+        id: pr
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          ITEM: ${{ inputs.item }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_open_pr.py \
+            --item "$ITEM" \
+            --branch "${{ needs.prepare.outputs.branch }}" \
+            --push-repo "${{ needs.prepare.outputs.push_repo }}" \
+            --test-status "${{ needs.prepare.outputs.test_status }}"

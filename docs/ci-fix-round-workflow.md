@@ -7,17 +7,17 @@
 
 ## 1. 一句话定位
 
-`_ci_fix_round.yml` 是**场景二「PR CI 失败自动修复」中的单轮修复单元**：一轮 = 「arm64 首修（仅第 1 轮）→ amd64 续修/回修 → arm64 确定性复验」，复验结果以 `verify_passed` 输出给调用方，由调用方决定是否再开下一轮。
+`_ci_fix_round.yml` 是 **CI 修复组件（手动，原场景二能力）中的单轮修复单元**：一轮 = 「arm64 首修（仅第 1 轮）→ amd64 续修/回修 → arm64 确定性复验」，复验结果以 `verify_passed` 输出给调用方，由调用方决定是否再开下一轮。
 
 ---
 
-## 2. 所属场景
+## 2. 所属组件
 
-所属场景为**场景二：PR CI 失败自动修复**。该场景解决的问题是：
+所属组件为 **PR CI 失败修复组件**（`_ci_repair.yml`，由 `ci_fix_pipeline.yml` 手动 / 显式 dispatch 调用；Monitor 只保留手动扫描，不再 cron 轮询）。该组件解决的问题是：
 
 目标仓库（如 `openeuler/openeuler-docker-images`）的自动升级类 PR 在 CI 中构建失败，人工逐个看日志、改 Dockerfile 成本高。链路用 AI 读取失败日志、定位根因、修改 Dockerfile，并在真实架构上构建验证后，向源仓库提交 Fix PR。
 
-场景二整体链路（`ci_fix_pipeline.yml`）：
+组件整体链路（`ci_fix_pipeline.yml` → `_ci_repair.yml`）：
 
 ```
 prepare → ci-log-analysis → round-1 → [round-2] → [round-3] → code-fix
@@ -47,7 +47,7 @@ prepare → ci-log-analysis → round-1 → [round-2] → [round-3] → code-fix
 | 默认/当前唯一监控的源仓库 | `openeuler/openeuler-docker-images`（GitCode 平台） |
 | 监控名单配置 | `config/watchlist.json` 的 `watched_repos` |
 | 触发标签 | `ci_failed` |
-| 轮询周期 | `poll_interval_minutes: 1440`（每天一次，与 cron `0 0 * * *` 同步） |
+| 扫描方式 | 手动运行 **Watch CI failed PRs**（不再有 cron 自动轮询） |
 | 支持的平台 | `gitcode` / `github`，由 `source_platform` 决定检出与推送方式 |
 | 修复产物落点 | 源仓库的同名分支 `fix/<pr_number>`，并创建 Fix PR |
 
@@ -73,8 +73,8 @@ round-1:
 
 整条流水线的入口有两个（在 `ci_fix_pipeline.yml` 上）：
 
-- `repository_dispatch`（`run-ci-fix`）：Monitor 轮询发现 `ci_failed` PR 后自动触发
 - `workflow_dispatch`：人工指定 `source_repo` / `pr_number` 手动跑一次
+- `repository_dispatch`（`run-ci-fix`）：外部系统显式调用；Monitor 手动扫描后也走这条路径
 
 ---
 
@@ -187,7 +187,7 @@ Round 3  amd64 回修 → arm64 复验 ──通过──> code-fix
 1. **架构不可替换**：`arm64_runner_labels` 只能换成「另一台 arm64 机器」，不能换成 x64——arm64 复验本身就是双架构保证。
 2. **复验是唯一权威判据**：AI 的自我判断不作数，只有真实 `docker build` 成功才算本轮通过。
 3. **失败语义分级**：修不成功（`verify_passed=false`）≠ 流程失败；只有环境/脚本异常才让 job 失败。
-4. **轻量 job 与重 job 分离**：`prepare` / `ci-log-analysis` / `code-fix` 默认跑 GitHub 托管 runner，构建类 job 跑自托管 arm64/x64，避免排队阻塞。
+4. **轻量 job 与重 job 分离**：`prepare` / `ci-log-analysis` / `code-fix` 默认跑自托管 x64 Runner（本账号 GitHub 托管 Runner 额度不可用），构建类 job 跑自托管 arm64/x64，避免排队阻塞。
 5. **串行保证**：同一 PR 的修复由 `ci_fix_pipeline.yml` 的 `concurrency` 组串行化，不并发。
 
 ---

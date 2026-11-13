@@ -11,7 +11,7 @@
 | 你是… | 直接跳到 |
 |-------|---------|
 | **想提需求的社区用户**（希望某个软件有 openEuler 镜像） | [1. 提交新镜像需求](#1-提交新镜像需求) → [8. 常见问题](#8-常见问题) |
-| **仓库维护者**（部署 Runner、配置凭据、看流水线是否正常） | [2. 部署与配置](#2-部署与配置) → [3. 场景一：Issue 驱动新增镜像](#3-场景一issue-驱动新增镜像) → [4. 场景二：PR CI 失败自动修复](#4-场景二pr-ci-失败自动修复) → [8. 常见问题](#8-常见问题) |
+| **仓库维护者**（部署 Runner、配置凭据、看流水线是否正常） | [2. 部署与配置](#2-部署与配置) → [3. 场景一：Issue 驱动新增镜像](#3-场景一issue-驱动新增镜像) → [4. 场景二：应用自动升级](#4-场景二应用自动升级) → [8. 常见问题](#8-常见问题) |
 | **开发者**（读懂系统、扩展能力） | [6. 系统设计要点](#6-系统设计要点) → [9. 目录结构](#9-目录结构) → [10. 模块说明](#10-模块说明) |
 
 ## 目录
@@ -24,7 +24,7 @@
 - [1. 提交新镜像需求](#1-提交新镜像需求)
 - [2. 部署与配置](#2-部署与配置)
 - [3. 场景一：Issue 驱动新增镜像](#3-场景一issue-驱动新增镜像)
-- [4. 场景二：PR CI 失败自动修复](#4-场景二pr-ci-失败自动修复)
+- [4. 场景二：应用自动升级](#4-场景二应用自动升级)
 - [5. 场景三：openEuler 版本升级](#5-场景三openeuler-版本升级)
 - [6. 系统设计要点](#6-系统设计要点)
 - [7. 产物规范](#7-产物规范)
@@ -43,21 +43,21 @@ openEuler 社区维护着一批应用容器镜像。系统覆盖四个场景，�
 
 1. **社区希望新增一个应用镜像**（场景一）——需要研究上游构建方式，按仓库规范写 Dockerfile、`meta.yml`、README、`doc/image-info.yml`，还要补一套能证明镜像真的可用的功能测试。
 2. **openEuler 发布新版本**（场景三）——所有存量应用都要补齐新 openEuler 版本的镜像，批量且机械。
-3. **已有的版本升级 PR 卡在 CI**（场景二）——构建环境、依赖、编译参数一变就红，维护者要翻 Jenkins 日志、定位根因、改 Dockerfile 再重提，单条 PR 平均 15–30 分钟。
+3. **应用上游发布了新版本**（场景二）——需要为存量应用补一个新版本镜像目录（复制上一版、替换版本串、补 meta 与测试），机械但量大。
 4. **存量镜像缺功能测试脚本**（场景四）——目标仓把功能测试与 CI 构建绑定（Dockerfile 变更即构建 + 按 `tests/test.sh` 功能测试），但多数应用没有测试脚本，需要按 [KunpengTest 规范](https://github.com/opensourceways/upstream-dashboard/blob/KunpengTest/README.md)逐个补齐。
 
-场景一、三两类工作共享同一批固定规范，但也都夹着不确定的部分：上游依赖怎么装、服务怎么起、构建失败怎么修。前者适合代码，后者适合 Agent。场景二处理的就是失败本身——它的根因往往是已知的构建失败模式（缺编译依赖、链接参数变更、Makefile 路径假设失效），因此把「诊断 + 修复」整体交给 Agent，只把触发、阶段推进、确定性复验与交付留给代码。场景四与场景一共享「Agent 生成测试 + 静态校验」的质量机制，但脚本规范遵循目标仓 CI 的 KunpengTest 约定（禁 `set -e`、脚本内自拉服务、注入五个环境变量），走独立的**手动指定软件 → 定位镜像 → 生成 → 校验 → 提 PR** 链路。
+场景一、三两类工作共享同一批固定规范，但也都夹着不确定的部分：上游依赖怎么装、服务怎么起、构建失败怎么修。前者适合代码，后者适合 Agent。场景二处理的是版本发现与机械升级——版本号来自 upstream-dashboard，升级本身是确定性的复制与替换，因此代码承担全部动作，AI 只在「缺测试脚本时补测试」这一不确定环节介入。场景四与场景一共享「Agent 生成测试 + 静态校验」的质量机制，但脚本规范遵循目标仓 CI 的 KunpengTest 约定（禁 `set -e`、脚本内自拉服务、注入五个环境变量），走独立的**手动指定软件 → 定位镜像 → 生成 → 校验 → 提 PR** 链路。
 
-> 应用上游发布新版本（应用版本升级）已由社区运行中的服务承接：anitya 负责版本监控，easysoftware-autoupgrade 负责生成与提 PR。本系统不建设这条升级链路，只为这些 PR 修复 CI。
+> **PR CI 失败修复**不再作为独立场景自动轮询：它抽成可复用组件 [`_ci_repair.yml`](.github/workflows/_ci_repair.yml)，由 [`ci_fix_pipeline.yml`](.github/workflows/ci_fix_pipeline.yml) 手动或显式 dispatch 调用。升级 PR 的 CI 若失败，交人工决定是否触发修复。
 
 ### 解决方案
 
-本项目用一套流水线覆盖四个场景。场景一 / 三**共享同一套生成、门禁、双架构验证与交付能力**，差异只在触发输入与调度方式；场景二处理的是「别人已经提出、但 CI 失败」的 PR，走独立的**监控 → 诊断 → 容器内修复 → 复验 → 落回**链路；场景四为存量应用补功能测试脚本，走独立的**手动指定软件 → 定位镜像 → 生成 → 校验 → 提 PR** 链路：
+本项目用一套流水线覆盖四个场景。场景一 / 三**共享同一套生成、门禁、双架构验证与交付能力**，差异只在触发输入与调度方式；场景二用 upstream-dashboard 解析最新上游版本，对落后应用做**确定性版本升级 + 双架构原生验证 + 一应用一 PR**；场景四为存量应用补功能测试脚本，走独立的**手动指定软件 → 定位镜像 → 生成 → 校验 → 提 PR** 链路：
 
 | 场景 | 触发源 | 执行内容 | 输出 |
 |------|--------|----------|------|
 | **① 新增应用镜像** | GitCode Issue（标题含 `【new-image】`） | 解析需求 → 生成镜像文件与测试 → 门禁 → 双架构构建测试 → 有界修复 | 单个应用的完整镜像目录 PR |
-| **② PR CI 失败自动修复** | 目标仓 PR 被打上 `ci_failed` 标签（Monitor 轮询） | 抓 Jenkins 失败日志 → AI 诊断根因 → 容器内逐条执行 Dockerfile 并修复 → 反推 Dockerfile → 双架构复验 | 落回源码的最小 diff Fix PR（`fix:` 前缀） |
+| **② 应用自动升级** | 每日定时 / 手动（指定 `app`、`version`） | 看板解析最新版本 → 对比目标仓已有目录 → 补功能测试 → 确定性复制 + 版本串替换 + `meta.yml` → 双架构原生验证 | 一应用一 PR（`auto/version-update/...` 分支） |
 | **③ openEuler 版本升级** | `oe-new-version` 事件或手动 | 枚举全部应用 → Matrix 并行补齐缺失的 oe 版本 | 批量 PR + 失败应用报告 |
 | **④ 功能测试脚本补齐** | 手动触发（指定软件名） | 定位该软件最新镜像目录 → AI 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮） | 一软件一 PR（含 Dockerfile 空行触发目标仓构建 + 功能测试） |
 
@@ -94,36 +94,24 @@ openEuler 社区维护着一批应用容器镜像。系统覆盖四个场景，�
                         仍不收敛 → needs-human-review
 ```
 
-**关键约束：双架构必须在同一个候选上同时通过。** 构建在 x86_64 与 aarch64 的原生 Runner 上分别执行，不使用 QEMU 等跨架构模拟——模拟会掩盖架构差异，使双架构验证失去意义。场景二同样守这条线：容器内修复按 arm64 → amd64 串行推进（amd64 的修复必须架构中立或加架构守卫），最终 Dockerfile 再回到 arm64 从零 `docker build` 复验。
+**关键约束：双架构必须在同一个候选上同时通过。** 构建在 x86_64 与 aarch64 的原生 Runner 上分别执行，不使用 QEMU 等跨架构模拟——模拟会掩盖架构差异，使双架构验证失去意义。场景二同样守这条线：升级分支在 x86_64 / aarch64 上各自真实构建并跑功能测试，两个都通过才开 PR。
 
-场景二的骨架（一次修复 = 一个 run，轮次显式，详见 [4. 场景二：PR CI 失败自动修复](#4-场景二pr-ci-失败自动修复)）：
+场景二的骨架（一应用一 PR，详见 [4. 场景二：应用自动升级](#4-场景二应用自动升级)）：
 
 ```
-目标仓库 PR 获得 ci_failed 标签
+upgrade_upstream_versions.yml（每日定时 / 手动 app+version）
          ↓
-monitor_ci_failed_prs.yml（cron 轮询）→ 跳过规则过滤 → dispatch 一次完整修复
+discover：看板 version/resolve + 目标仓已有版本 → 升级矩阵（跳过 blocked / 已存在 / 已有 PR）
          ↓
-prepare：解析入口、现查 PR 元数据
+_升级应用（matrix，一应用一 PR）
+  prepare：完整克隆 → 缺测试则补 tests/test.sh → 确定性升级 → commit → 推 auto/version-update/... 分支
          ↓
-ci-log-analysis：只取实际失败架构的 Jenkins job 日志 + PR diff → AI 诊断报告
-         ↓
-Round 1：arm64 首修（容器内逐条执行 → 失败即修 → 反推 Dockerfile）→ amd64 续修 → arm64 从零复验
-         ├─ 通过 ────────────────────────────────┐
-         └─ 失败（仍有预算）→ Round 2：amd64 回修 → arm64 复验
-                 ├─ 通过 ────────────────────────┤
-                 └─ 失败 → Round 3：同上（预算用尽即终止，run 标红）┤
-                                                        ↓
-code-fix：最终 Dockerfile 作为最小 diff 落回源码 → commit → push → Fix PR
-         ↓
-Fix PR CI 结果
-  ├─ ci_successful   ─→ 评论原始 PR，通知 reviewer 合并
-  ├─ ci_processing   ─→ 等待，下次轮询再判断
-  ├─ ci_failed（< 6）─→ 重新 dispatch（attempt+1，对 Fix PR 追加 commit 重试）
-  └─ ci_failed（≥ 6）─→ 关闭 Fix PR，通知人工介入
-
-跨周期预算（按 run 计数，与 Fix PR 是否存在无关）：
-  同一 PR 的历史 ci-fix run ≥ 6 ─→ 停止自动重试，在源 PR 留一次性人工提示
+  validate-x86_64 ∥ validate-aarch64：原生构建 + 功能测试（证据 artifact）
+         ↓ 两个架构都通过
+  open-pr：跨仓 PR（变更说明 + 功能测试状态 + 上游证据）
 ```
+
+PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `_ci_repair.yml`（prepare → 分析 → 3 轮修复 → code-fix），同一 PR 最多 6 个 run，不再有 cron 自动轮询。
 
 ### 核心能力
 
@@ -137,11 +125,14 @@ Fix PR CI 结果
 | **双架构原生验证** | x86_64 与 aarch64 各自独立产出构建与测试结论，一个架构通过不代表整体通过 |
 | **健康驱动的就绪判定** | 有 `HEALTHCHECK` 时等待 `healthy`，没有时完整观察 120 秒容器行为；`EXPOSE` 端口不参与就绪调度 |
 | **有界自动修复** | Fixer 依据结构化失败证据做最小范围修复，超出轮次上限即停止并保留证据 |
-| **PR CI 失败自动修复** | 轮询带 `ci_failed` 标签的 PR，按 Fix PR 状态决策：不存在则首次修复、CI 再失败则追加 commit 重试；同一 PR 的历史 run 数达到 6 次（含没跑出 Fix PR 的那些）即停止自动重试并转人工 |
+| **上游版本自动发现** | 每日用 upstream-dashboard `version/resolve` 解析各应用最新版本，与目标仓已有目录对比，跳过 `blocked_reason` / 已存在 / 已有 open PR |
+| **确定性版本升级** | 复制最新版本目录、整串替换 Dockerfile / README / `doc/image-info.yml` 中的旧版本号、追加 `meta.yml`；找不到旧版本串即失败交人工 |
+| **上游证据适配** | 已知字段归一化、未知字段透传；证据缺失时自探 tag / release / 源码归档可达性；证据只作 AI 参考与 PR 留痕，不参与门禁 |
+| **PR CI 失败修复（手动组件）** | `_ci_repair.yml` 复用原自动修复链路：诊断 → 容器内逐条执行修复 → arm64 复验，同一 PR 最多 6 个 run；入口为手动 / 显式 dispatch，不再自动轮询 |
 | **容器内逐条执行式修复** | 不在文本上盲改：在自托管 Runner 的容器里逐条执行 Dockerfile 指令、失败即修，跑通后反推 Dockerfile 并用 `docker build` 验证 |
 | **精准日志抓取** | 从 PR 评论表格逐行解析 FAILED 行，只取实际失败架构的构建 job 日志、排除 trigger/编排层；日志与 `ci_failed` 状态矛盾时主动标记「证据不足」而不是猜根因 |
-| **CI 失败知识库** | [`docs/ci-failure-patterns.md`](docs/ci-failure-patterns.md) 按失败模式归档，修复通过 CI 后自动追加案例，下次诊断自动参考 |
-| **只能新增，不能修改** | 存量镜像目录只读，`meta.yml` / README 仅允许末尾追加，由 `gate_diff.py` 差分强制 |
+| **CI 失败知识库** | [`docs/ci-failure-patterns.md`](docs/ci-failure-patterns.md) 按失败模式归档，修复通过 CI 后追加案例，下次诊断参考 |
+| **生成类场景只增不改** | 场景一 / 三 / 四的存量镜像目录只读，`meta.yml` / README 仅允许末尾追加，由 `gate_diff.py` 差分强制；场景二升级只新增版本目录并追加 `meta.yml` |
 | **可复现工具链** | hadolint / jq / opencode 版本与 SHA256 锁定在 `.github/toolchain.lock.yml`，Python 依赖锁定在 `python-phase1.lock.txt` |
 | **失败可追踪** | 无法自动收敛时保留构建、测试与修复证据，Issue 转为 `needs-human-review` 交维护者判断 |
 
@@ -150,11 +141,11 @@ Fix PR CI 结果
 | 阶段 | 范围 | 状态 |
 |------|------|------|
 | 一 | 场景一：新增应用镜像 | **已打通**。完整走通「Issue 认领 → 生成 → 门禁 → 4 轮双架构验证 → 候选封存 → fork 分支 → 跨仓 PR」 |
-| 二 | 场景二：PR CI 失败自动修复 | **已集成**。移植上游 [docker-images-workflow](https://github.com/FdeCad/docker-images-workflow) 的修复链路（编排改造为单 run 串行、轮次显式）、Agent、脚本与测试；`config/watchlist.json` 默认 `enabled: false`，需显式开启后才会对目标仓 PR 动手 |
+| 二 | 场景二：应用自动升级 | **已打通**。upstream-dashboard 解析最新版本 → 对比目标仓已有目录 → 缺测试则补 → 确定性复制 + 版本串替换 + `meta.yml` → 双架构原生验证 → 一应用一 PR（`upgrade_upstream_versions.yml`）。原 PR CI 修复链路保留为手动组件 `_ci_repair.yml` |
 | 三 | 场景三：openEuler 版本升级 | 工作流骨架已就位（检测新 oe 版本 → Matrix 并行补齐 → 批量 PR），仍走 legacy `run.py` 链路，尚未接入阶段一的候选包 / 门禁 / 证据体系 |
 | 四 | 场景四：功能测试脚本补齐 | **已打通（手动触发）**。指定软件名 → 定位目标仓最新镜像目录 → Agent 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮）→ 一软件一 PR（`generate_test_scripts.yml`）；看板爬取已下线，需配置 `GITCODE_FORK_REPO` 与 `TESTGEN_RUNNER_LABELS` |
 
-> 应用上游版本升级由社区运行中的 anitya + easysoftware-autoupgrade 承接，不在本系统建设范围；本系统只为它产出的 PR 修复 CI（场景二）。
+> 上游版本发现只认 upstream-dashboard 的 `version/resolve` 接口，不再依赖 anitya；PR CI 失败修复不再自动轮询，改为手动 / 显式调用（见 [4.4](#44-pr-ci-修复组件手动)）。
 
 **写入目标分级：** 阶段一的交付固定为测试模式——推送到配置的 fork 仓库，再向 `openeuler/openeuler-docker-images` 提跨仓 PR。生产直推模式（`direct_branch_pr`）已在 `DeliveryConfig` 中定义但**尚未接入任何 workflow**，需要显式开启；配置缺失或错误时一律解析为测试模式，任何情况下都不回退到生产仓。
 
@@ -219,38 +210,32 @@ Fix PR CI 结果
 
 | Runner 标签 | 用途 |
 |------------|------|
-| `[self-hosted, Linux, X64, oe-image-x86]` | x86_64 原生构建与测试（场景一 / 三；场景二的 amd64 修复） |
-| `[self-hosted, Linux, ARM64, oe-image-arm64]` | aarch64 原生构建与测试（场景一 / 三；场景二的 arm64 修复与复验） |
-| `[self-hosted, Linux, X64]` | 监控、查询、生成、修复与交付等轻量 Job（场景二 / 三） |
+| `[self-hosted, Linux, X64, oe-image-x86]` | x86_64 原生构建与测试（场景一 / 二 / 三；CI 修复组件的 amd64 修复） |
+| `[self-hosted, Linux, ARM64, oe-image-arm64]` | aarch64 原生构建与测试（场景一 / 二 / 三；CI 修复组件的 arm64 修复与复验） |
+| `[self-hosted, Linux, X64]` | 监控、查询、生成、发现与交付等轻量 Job（场景二 / 三） |
 
 Runner 需预装 **Docker 与 buildx**。能力由 Job 启动时的 `scripts/runner_preflight.py` 自检把关——**缺失即失败，不做临时安装**。同一 Runner 上会有并发 Job，镜像 tag 与容器名均携带唯一标识，避免互相覆盖。
 
 Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 
-场景二的监控与交付 Job 只需要 Python、git 与网络；容器内修复 Job 额外需要 Docker（由 preflight 把关）。AI Agent 统一使用锁定工具链中的 opencode，**Runner 无需安装 Node.js**；只有把 `AI_RUNNER` 切到 `claude-code` / `claude-code-account` 时才需要 Node 与 Claude Code CLI。
+场景二的发现 / 交付 Job 只需要 Python、git 与网络；双架构验证 Job 额外需要 Docker（由 preflight 把关）。AI Agent 统一使用锁定工具链中的 opencode，**Runner 无需安装 Node.js**；只有把 `AI_RUNNER` 切到 `claude-code` / `claude-code-account` 时才需要 Node 与 Claude Code CLI。
 
-**场景二的机器可换，架构不可换。** 三类 Job 的标签都能在手动触发时覆盖，或用 Variables 固定（标签写 JSON 数组字符串）：
+**场景二的机器可换，架构不可换。** 发现 / 汇总 Job 的标签可用手动输入或 Variable `UPGRADE_RUNNER_LABELS` 覆盖；验证 Job 的默认标签是 `oe-image-x86` / `oe-image-arm64`，arm64 只能换成另一台 arm64 机器：
 
 | Job 类别 | 默认标签 | 覆盖方式 |
 |---------|---------|---------|
-| `prepare` / 日志分析 / `code-fix`（轻量） | `["ubuntu-latest"]`（GitHub 托管） | 输入 `x64_runner_labels`，Variables `CI_FIX_X64_RUNNER_LABELS` |
-| amd64 修复（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-fix-amd64"]` | 输入 `amd64_runner_labels`，Variables `CI_FIX_AMD64_RUNNER_LABELS` |
-| arm64 首修 / 复验（**必须 arm64**） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` | 输入 `arm64_runner_labels`，Variables `CI_FIX_ARM64_RUNNER_LABELS` |
-| 监控 / cron 同步 | 同轻量 Job | Variables `CI_FIX_X64_RUNNER_LABELS`（监控另有输入 `runner_labels`） |
+| `discover` / `summary`（轻量） | `["self-hosted","Linux","X64","oe-image-x86"]` | 输入 `runner_labels`，Variable `UPGRADE_RUNNER_LABELS` |
+| `validate-x86_64` | `["self-hosted","Linux","X64","oe-image-x86"]` | `_upgrade_app.yml` 的输入 `x64_runner_labels` |
+| `validate-aarch64`（**必须 arm64**） | `["self-hosted","Linux","ARM64","oe-image-arm64"]` | `_upgrade_app.yml` 的输入 `arm64_runner_labels` |
+| CI 修复组件（`_ci_repair.yml`） | 轻量 `oe-image-x86`；amd64 `oe-fix-amd64`；arm64 `oe-fix-arm64` | 输入 `x64_runner_labels` / `amd64_runner_labels` / `arm64_runner_labels`，Variables `CI_FIX_*_RUNNER_LABELS` |
 
 **arm64 复验使用持久 BuildKit 层缓存。** 复验是对 derived Dockerfile 的从零 `docker build`，重型镜像（例如 bolt：conan 从源码编 34 个依赖，x86_64 上实测单个编译层就要 4427.6s）每次都从头编，很容易撞 `BUILD_DOCKER_TIMEOUT`（默认 7200s）。因此 `verify-arm` 会带 `CI_FIX_BUILD_CACHE_DIR` 走 `buildx --load` + `type=local, mode=max` 把层缓存留在自托管机器上：同一 PR 下一轮 / 下一天复验同一份 derived Dockerfile 时前缀层直接命中，不同 PR 之间同 base、同版本的层也能复用。缓存目录默认在 `<runner.workspace>/ci-fix-buildkit-cache`（checkout 之外，不会被清理）；builder 不存在时会自动创建一个 docker-container builder，创建/启动失败则**自动退回普通 `docker build`**（缓存是加速手段，不能让它在环境不满足时把构建弄失败）。磁盘占用按需清理：`docker buildx prune -f --filter until=168h`，或直接删缓存目录。
 
 > ⚠️ 缓存只覆盖 `docker build` 的层。Dockerfile 内部的 conan / pip 下载与源码编译要复用，需要在 Dockerfile 里用 `RUN --mount=type=cache`（属于源仓库的改动，不在本仓控制范围内）。
 
-**轻量 Job 跑在 GitHub 托管 Runner 上（`ubuntu-latest`）。** 一个自托管 runner 实例同时只跑一个 Job，轻量 Job（`prepare` / 分析 / `code-fix` / 监控）若与 amd64 构建 Job 共用同一实例，一个耗时 40 分钟的 `amd64-fix` 会把其他 PR 的 `prepare` 全堵在后面。改为托管 Runner 后两者天然分道、互不阻塞。托管 Runner 上 `/opt` 不可写，工具链缓存自动降级到 Job 临时目录（[`phase1-setup`](.github/actions/phase1-setup/action.yml) 已处理），代价是每个 Job 重新下载一次工具链。
+**轻量 Job 默认也走自托管 Runner。** CI 修复组件的 `prepare` / 分析 / `code-fix` 与 Monitor 默认跑 `oe-image-x86`：本仓库所在账号的 GitHub 托管 Runner 额度不可用（`ubuntu-latest` 会在 `prepare` 阶段直接失败），自托管是当前唯一可跑通的选择。若账号额度可用，可通过 `CI_FIX_X64_RUNNER_LABELS` 等 Variable 切到 `["ubuntu-latest"]`——托管 Runner 上 `/opt` 不可写，工具链缓存会自动降级到 Job 临时目录（[`phase1-setup`](.github/actions/phase1-setup/action.yml) 已处理），代价是每个 Job 重新下载一次工具链。
 
-> ⚠️ **私有仓库的托管 Runner 会消耗额度**：本仓是 private，GitHub 托管 Runner 按分钟计入套餐额度（免费版 2000 分钟/月，超出自付）。其中「日志分析」会跑 AI Agent，可能占用较长时间。若想省额度，把 `CI_FIX_X64_RUNNER_LABELS` 指回自托管标签（如 `["self-hosted","Linux","X64"]`）即可，代码默认值只作兜底。
-
-例如把重活放到免费托管 Runner：`["ubuntu-latest"]`（x86）与 `["ubuntu-24.04-arm"]`（arm64，公开仓免费）。
-
-⚠️ 标签必须是合法 JSON 数组字符串（写成 `ubuntu-latest` 这种不带方括号的形式就是错的），否则 Job 会在**调度阶段**直接失败——这类错误发生在 `prepare` 能启动之前，GitHub 只会给一句 invalid expression，所以改完建议先手动触发一次验证。`prepare` 里另有一次内容校验：空数组、非字符串元素会得到一句可读报错。
-
-托管 Runner 上 `/opt/oe-image-tools` 不可写时，工具链缓存自动降级到 Job 临时目录——不需要 sudo，代价是每个 Job 重新下载一次工具链。
+⚠️ 标签必须是合法 JSON 数组字符串（写成 `ubuntu-latest` 这种不带方括号的形式就是错的），否则 Job 会在**调度阶段**直接失败——这类错误发生在 `prepare` 能启动之前，GitHub 只会给一句 invalid expression，所以改完建议先手动触发一次验证。
 
 ### 2.2 Secrets
 
@@ -258,10 +243,10 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 
 | Secret | 用途 | 必需 |
 |--------|------|------|
-| `GITCODE_TOKEN` | GitCode 读写：读 Issue/PR、克隆目标仓、推送分支、创建 PR、评论与打标签；场景二读 CI 日志同样依赖它 | 必填 |
+| `GITCODE_TOKEN` | GitCode 读写：读 Issue/PR、克隆目标仓、推送升级分支、创建 PR、评论与打标签；CI 修复组件读日志同样依赖它 | 必填 |
 | `AI_API_KEY` | **所有场景统一的模型 Key**（当前为火山引擎 API 网关 Key）；留空时回退 `DEEPSEEK_API_KEY` | 除 `pipeline_smoke` 外必填 |
 | `DEEPSEEK_API_KEY` | 兼容别名：仅在未配置 `AI_API_KEY` 时作为 Key 使用 | 可选 |
-| `DISPATCH_TOKEN` | 场景二专用：触发本仓 `repository_dispatch`、读写 `ci-fix-log` 数据分支、checkout 源仓库、推送 fix 分支、创建 Fix PR（GitHub PAT，需 `repo` + `workflow` scope） | 场景二必填 |
+| `DISPATCH_TOKEN` | CI 修复组件专用：触发本仓 `repository_dispatch`、读写 `ci-fix-log` 数据分支、checkout 源仓库、推送 fix 分支、创建 Fix PR（GitHub PAT，需 `repo` + `workflow` scope） | 使用 CI 修复组件时必填 |
 | `CLAUDE_CREDENTIALS_JSON` | `AI_RUNNER=claude-code-account` 时的 Claude.ai OAuth 凭证 | 可选 |
 
 > `pipeline_smoke` 确定性收敛、绝不触发修复，因此调用方**不向它传递 API Key**——这是一条被工作流签名固化的约束，也是验证部署是否正确最省成本的方式。
@@ -273,18 +258,21 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `MAX_PARALLEL_IMAGES` | 场景三 Matrix 并行的镜像数上限 | `4` |
+| `MAX_PARALLEL_UPGRADES` | 场景二同一轮并发升级的应用数上限 | `2` |
+| `UPSTREAM_DASHBOARD_BASE` | 场景二版本看板地址 | `https://upstream-dashboard.test.osinfra.cn` |
 | `GITCODE_BOT_USERNAME` | 交付阶段用于推送分支的 GitCode 账号名 | _(无)_ |
 | `AI_RUNNER` | 所有场景的 AI 后端：`opencode` / `claude-code-account` | `opencode` |
 | `AI_MODEL` | 所有场景统一的模型名（`provider/model`） | `gateway/deepseek-v4-pro` |
 | `AI_PROVIDER_ID` | 自定义 OpenAI 兼容服务商的 provider id（与模型名前缀一致） | `gateway` |
 | `AI_TIMEOUT_MS` | 所有场景单次 Agent 调用超时（毫秒） | `10800000` |
-| `GITCODE_FORK_REPO` | 场景二 fix 分支的推送去向（`owner/repo`）；留空则直推源仓库 | _(空)_ |
-| `PR_COMMENT_ON_FAILURE` | 场景二自动修复连续失败时是否回帖源 PR（回帖是 outward-facing 动作，故默认不回；覆盖位置：arm64 复验三轮失败、Monitor 跑满 6 个 run 停手） | _(空)_ |
-| `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二 Fix commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
+| `GITCODE_FORK_REPO` | 场景二 / 四分支的推送去向（`owner/repo`）；留空则直推目标仓 | _(空)_ |
+| `PR_COMMENT_ON_FAILURE` | CI 修复组件连续失败时是否回帖源 PR（回帖是 outward-facing 动作，故默认不回；覆盖位置：arm64 复验三轮失败、同一 PR 跑满 6 个 run 停手） | _(空)_ |
+| `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二升级 commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
 | `OPENAI_BASE_URL` | 所有场景统一的模型 API 地址（OpenAI 兼容） | `https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1` |
-| `CI_FIX_X64_RUNNER_LABELS` | 场景二轻量 Job（prepare / 分析 / code-fix / 监控 / cron 同步）的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
-| `CI_FIX_AMD64_RUNNER_LABELS` | 场景二 amd64 修复 Job 的 runner 标签（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-fix-amd64"]` |
-| `CI_FIX_ARM64_RUNNER_LABELS` | 场景二 arm64 首修 / 复验 Job 的 runner 标签（必须 arm64） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` |
+| `UPGRADE_RUNNER_LABELS` | 场景二发现 / 汇总 Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
+| `CI_FIX_X64_RUNNER_LABELS` | CI 修复组件轻量 Job（prepare / 分析 / code-fix / 监控）的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
+| `CI_FIX_AMD64_RUNNER_LABELS` | CI 修复组件 amd64 修复 Job 的 runner 标签（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-fix-amd64"]` |
+| `CI_FIX_ARM64_RUNNER_LABELS` | CI 修复组件 arm64 首修 / 复验 Job 的 runner 标签（必须 arm64） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` |
 | `CI_FIX_BUILD_CACHE_DIR` | arm64 复验的持久 BuildKit 层缓存目录（自托管机器上的路径，跨 run 复用；留空则退化为不缓存的 `docker build`） | `<runner.workspace>/ci-fix-buildkit-cache` |
 | `CI_FIX_BUILDKIT_BUILDER` | 缓存用的 buildx builder 名（不存在则自动创建 docker-container builder） | `oe-ci-fix` |
 | `TESTGEN_RUNNER_LABELS` | 场景四 generate Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
@@ -305,7 +293,9 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 
 部署完成后，从 Actions 页面手动运行 **Create New Images**，`operation` 选 `pipeline_smoke`：它跑完整编排链路，但不调用 AI、不做任何 GitCode 写操作，用于确认 Runner、工具链与编排本身健康。
 
-场景二的入口是 **Fix PR CI failures**：`workflow_dispatch` 指定 `source_repo` / `pr_number` / `source_platform` 可手动触发一次完整修复链（会真实写 fix 分支与 Fix PR），同时可用 `x64_runner_labels` / `amd64_runner_labels` / `arm64_runner_labels` 临时指定跑在哪些机器上。日常运行由 **Watch CI failed PRs** 按 `config/watchlist.json` 轮询驱动（跑在哪台机器由 `CI_FIX_X64_RUNNER_LABELS` 决定），首次接入时建议先保持 `enabled: false`，确认凭据与 Runner 就绪后再开启。
+场景二的入口是 **App Version Upgrade**：默认每日定时运行；接入新环境时建议先用 `workflow_dispatch` 指定单个 `app`（可配 `version` 跳过看板解析）验证一次，确认 discover 输出、双架构验证与 PR 正文都符合预期后再放开全量扫描。`limit` 控制单轮最多升级几个应用。
+
+CI 修复组件（**Fix PR CI failures**）只保留手动 / 显式调用：`workflow_dispatch` 指定 `source_repo` / `pr_number` / `source_platform` 触发一次完整修复链（会真实写 fix 分支与 Fix PR），可用 `x64_runner_labels` / `amd64_runner_labels` / `arm64_runner_labels` 临时指定机器。**Watch CI failed PRs** 也只保留手动触发，不再有 cron。
 
 场景四的入口是 **Generate Test Scripts**：只支持 `workflow_dispatch` 手动触发，`app` 必填（目标仓目录名，如 `kvrocks`），同名应用跨域时用 `domain` 消歧，`source_url` 可选（仅作为生成提示）。应用不存在、已有 `tests/test.sh` 或缺 Dockerfile 会直接失败，不会静默跳过。
 
@@ -362,36 +352,60 @@ create_new_images.yml  (operation = scenario_one)
 
 ---
 
-## 4. 场景二：PR CI 失败自动修复
+## 4. 场景二：应用自动升级
 
-> 本能力完整移植自 [FdeCad/docker-images-workflow](https://github.com/FdeCad/docker-images-workflow)，并适配本仓的 Runner 标签、锁定工具链与凭据约定。
+> 取代社区 anitya + easysoftware-autoupgrade 的升级链路。版本源只认 [upstream-dashboard](https://github.com/opensourceways/upstream-dashboard/blob/main/docs/external-api.md) 的 `GET /api/v1/version/resolve`；升级动作是确定性的复制与版本串替换，AI 只在应用缺测试脚本时介入。
 
-### 4.1 触发与决策
+### 4.1 触发与候选发现
 
-[`monitor_ci_failed_prs.yml`](.github/workflows/monitor_ci_failed_prs.yml) 按 `config/watchlist.json` 的 `poll_interval_minutes` 定时轮询（cron 由 [`sync_ci_poll_interval.yml`](.github/workflows/sync_ci_poll_interval.yml) 自动同步），对每条带 `ci_failed` 标签的 PR 决策：
+[`upgrade_upstream_versions.yml`](.github/workflows/upgrade_upstream_versions.yml) 每天 UTC 1:00 运行，也可手动触发：
 
-| Fix PR 状态 | 动作 |
-|-------------|------|
-| 不存在 | dispatch 一次完整修复（`run-ci-fix`，`attempt = 该 PR 的历史 run 数 + 1`） |
-| open + `ci_successful` | 评论原始 PR 通知 reviewer 合并（一次性），并把本次修复模式写入知识库 |
-| open + `ci_processing` | CI 运行中，跳过等待 |
-| open + `ci_failed`，commit 次数 < 6 | 重新 dispatch，对 Fix PR 追加 commit 重试 |
-| open + `ci_failed`，commit 次数 ≥ 6 | 关闭 Fix PR，通知人工介入 |
-| open + 无状态标签 | CI 尚未开始，跳过 |
-| closed | 重新 dispatch（可能被人工关闭后需重试） |
-| merged | 已合并，跳过 |
+| 输入 | 含义 |
+|------|------|
+| `app` | 只处理这一个应用（留空 = 扫描全部应用） |
+| `version` | 手动指定目标版本（跳过看板解析，配合 `app` 使用） |
+| `limit` | 本轮最多升级几个应用（`0` = 不限） |
+| `runner_labels` | 发现 / 汇总 job 的 runner 标签（JSON 数组） |
 
-**跨周期预算按 run 计数，不按 Fix PR 计。** run 标题里的 `PR#<n>` 由本仓自己写入，所以
-「修不成功 → 没跑出 Fix PR → 每次都算第一次」这种自我循环也能被数到：同一 PR 的历史
-ci-fix run 数达到 `MAX_RETRIES`（6）就停止自动重试——默认只留日志，把
-`PR_COMMENT_ON_FAILURE` 设为 true 时会在源 PR 上回帖提示人工，并在 `ci-fix-log` 分支写
-`ci-fix-log/<pr>/exhausted` 标记（有标记就不再重复评论）。要再自动跑一次，直接手动触发
-**Fix PR CI Fix Pipeline**；`attempt` 也改为按 run 数推进，run 标题不再出现连着的两个
-`attempt 1`。
+`discover` job 浅克隆目标仓后调用 [`upgrade_scan.py`](scripts/harness/upgrade_scan.py)：
 
-**跳过规则：** 预发布版本（标题含 `-alpha` / `-beta` / `-rc` / `-preview` / `-dev` / `-snapshot` / `-nightly`）与工作流自身创建的 Fix PR（标题以 `fix:` 开头）不触发修复。
+- 遍历 `{domain}/{app}/{version}/{os}/Dockerfile`，对每个应用请求看板解析最新版本；
+- `blocked_reason` 非空、最新版本目录已存在、目标分支已有同名升级分支的 open PR → 跳过并记录原因；
+- 命中 → `{app, domain, version, os_version, source_url, evidence}` 组成升级矩阵，`os_version` 沿用该应用最新的 os 目录。
 
-### 4.2 单 run 串行的修复链路
+看板地址默认 `https://upstream-dashboard.test.osinfra.cn`，可用 Variable `UPSTREAM_DASHBOARD_BASE` 覆盖。接口 400/404 视为确定性失败（跳过该应用），502 重试，503 直接失败。
+
+### 4.2 单应用升级链路
+
+每个应用由可复用组件 [`_upgrade_app.yml`](.github/workflows/_upgrade_app.yml) 独立执行（一应用一 PR，互不影响）：
+
+```
+prepare            完整克隆目标仓 → 缺测试则补 tests/test.sh → 确定性升级 → commit → 推分支
+   ↓
+validate-x86_64    x86_64 原生构建 + 功能测试（flow.py phase1-native-validate）
+validate-aarch64   aarch64 原生构建 + 功能测试（与 x86 并行）
+   ↓ 两者都通过
+open-pr            跨仓 PR：变更说明 + 功能测试状态 + 上游证据
+```
+
+- **确定性升级**（[`version_upgrade.py`](scripts/lib/version_upgrade.py)）：把该应用最新的 `{old_version}/{os}/` 复制为 `{new_version}/{os}/`，在新 Dockerfile 与应用根目录的 `README.md` / `doc/image-info.yml` 中整串替换旧版本号，并向 `meta.yml` 追加 `{new_version}-{oe_tag}` 条目。Dockerfile 里找不到旧版本串 → 直接失败（特化写法需人工），不产出半成品目录。
+- **补测试**（复用场景四）：应用没有 `tests/test.sh` 时调用 `testgen_generate.generate_test_script`，把上游证据作为额外上下文；生成失败**不阻断**升级，PR 正文标注「测试脚本待补」。
+- **双架构原生验证**：x86_64 / aarch64 各自真实构建并跑功能测试，不使用 QEMU；任一架构失败则不开 PR，证据留在 artifact，分支保留供人工或修复组件继续处理。
+- **分支**：`auto/version-update/<app>/<version>-<oe_tag>`，推送到 `GITCODE_FORK_REPO`（留空则直推目标仓），再从 fork 向目标仓提跨仓 PR。
+
+### 4.3 上游证据
+
+接口目前只返回版本号，后续会补充采集到的上游证据。系统按「透传 + 适配」处理，**证据只作 AI 参考与 PR 留痕，不参与门禁**：
+
+- [`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把已知字段（`tag` / `tag_url` / `commit_sha` / `source` / `fetched_at` 等）归一化，未知字段原样保留在 `raw`，并把 `evidence` / `checks` 等常见键提升为 `collector` 列表；
+- 证据缺失时**自探兜底**：探测 GitHub tag、release 与源码归档是否可达，结果写入 `probe`；
+- PR 正文与测试生成提示都会带上证据段；证据缺失或探测失败只告警，不影响升级主流程。
+
+### 4.4 PR CI 修复组件（手动）
+
+入口是 [`ci_fix_pipeline.yml`](.github/workflows/ci_fix_pipeline.yml)，真正链路在可复用组件 [`_ci_repair.yml`](.github/workflows/_ci_repair.yml)。`workflow_dispatch` 指定 `source_repo` / `pr_number`，或 `repository_dispatch`（`run-ci-fix`）由外部系统显式调用；Monitor [`monitor_ci_failed_prs.yml`](.github/workflows/monitor_ci_failed_prs.yml) 只保留手动触发，**不再有 cron 自动轮询**。需要批量重扫时人工运行 Monitor。
+
+#### 4.4.1 单 run 串行的修复链路
 
 [`ci_fix_pipeline.yml`](.github/workflows/ci_fix_pipeline.yml) **一次 run 跑完整个修复**（与场景一 `create_new_images.yml` 同构），修复轮次是显式 job，不是隐式 dispatch：
 
@@ -416,11 +430,11 @@ code-fix                  最终 Dockerfile 作为最小 diff 落回源码 → c
 | Round 1 | arm64 → x86 → arm64 | arm64 首修（容器内逐条执行、失败即修）→ amd64 续修 → arm64 从零 `docker build` 复验 |
 | Round 2 / 3 | x86 → arm64 | 在 arm64 冻结版之上回修（修复必须架构中立或加架构守卫）→ arm64 复验 |
 
-**轮次怎么推进：** 复验把 `verify_passed` 交给 workflow——失败且仍有预算时开下一轮（job 名字里直接写着第几轮），预算用尽（`MAX_VERIFY_ROUNDS=2`，合计 3 轮）时该轮 job 失败、链路终止并保留证据。跨周期的重试另计：Monitor 对同一条 PR 最多派 6 个 run（按 run 计数，见 4.1），是第几次修复写在 run 标题的 `attempt` 上（`ci-fix PR#1234 · attempt 3 · <repo>`）；跑满 6 次即停止自动重试并在源 PR 上提示人工。
+**轮次怎么推进：** 复验把 `verify_passed` 交给 workflow——失败且仍有预算时开下一轮（job 名字里直接写着第几轮），预算用尽（`MAX_VERIFY_ROUNDS=2`，合计 3 轮）时该轮 job 失败、链路终止并保留证据。跨周期预算按 run 计数：同一 PR 最多 6 个 run，是第几次修复写在 run 标题的 `attempt` 上（`ci-fix PR#1234 · attempt 3 · <repo>`）；跑满 6 次即停止重试并在源 PR 上提示人工。
 
 **日志抓取策略：** 从 PR 评论表格逐行（`<tr>`）解析，排除 `/trigger/`、`/gate/`、`/pre-check/` 编排层 URL，只取同行带 FAILED 标记的架构构建 URL，并按架构标识加权评分；日志取末尾 500 行（失败几乎总在尾部）。重试时 CI 结果表格出现在 Fix PR 评论中，会自动切换到 Fix PR 编号查询。若日志末尾是 `Finished: SUCCESS` 却仍带 `ci_failed` 标签，说明拉到的是编排层日志，诊断报告会标记「证据不足」而不是猜根因。
 
-### 4.3 Agent 分工
+#### 4.4.2 Agent 分工
 
 | Agent | 职责 |
 |-------|------|
@@ -429,16 +443,16 @@ code-fix                  最终 Dockerfile 作为最小 diff 落回源码 → c
 
 两个 Agent 只产出报告与 Dockerfile，不做任何 git / 平台写操作；写操作集中在 `code-fix` 阶段由确定性代码执行。
 
-### 4.4 数据分支与知识库
+#### 4.4.3 数据分支与知识库
 
 | 分支 | 内容 |
 |------|------|
 | `main` | 工作流代码 + [`docs/ci-failure-patterns.md`](docs/ci-failure-patterns.md)（按失败模式分类的知识库） |
 | `ci-fix-log` | `{pr-number}/ci-analysis.md`（诊断报告）+ `fix-summary.md`（修复摘要） |
 
-修复通过 CI 后，Monitor 会把该 PR 的诊断与修复摘要自动追加进知识库；下次诊断时作为历史模式注入提示，同类问题置信度显著提升。
+修复通过 CI 后，再次手动运行 Monitor 会把该 PR 的诊断与修复摘要追加进知识库；下次诊断时作为历史模式注入提示，同类问题置信度显著提升。
 
-### 4.5 本地验证
+#### 4.4.4 本地验证
 
 ```bash
 python -m pytest tests/test_ci_fix_workflow.py tests/test_ci_gitcode_api.py \
@@ -453,17 +467,15 @@ python -m pytest tests/test_ci_fix_workflow.py tests/test_ci_gitcode_api.py \
 
 ## 5. 场景三：openEuler 版本升级
 
-上游应用版本升级不在本系统范围（由社区 anitya + easysoftware-autoupgrade 承接）。这里只保留 openEuler 大版本升级链路，验证组件 [`_upgrade_versions.yml`](.github/workflows/_upgrade_versions.yml) 负责：生成候选 → 双架构构建 → 运行既有测试套件；重试时跳过生成，只重跑构建与测试（Fixer 的改动已落盘）。
+上游应用版本升级由[场景二](#4-场景二应用自动升级)承接。场景三只保留 openEuler 大版本升级链路，验证组件 [`_upgrade_versions.yml`](.github/workflows/_upgrade_versions.yml) 负责：生成候选 → 双架构构建 → 运行既有测试套件；重试时跳过生成，只重跑构建与测试（Fixer 的改动已落盘）。
 
 | 工作流 | 触发 | 流程 |
 |--------|------|------|
 | [`upgrade_openeuler_versions.yml`](.github/workflows/upgrade_openeuler_versions.yml) | `repository_dispatch: oe-new-version` / 手动 | 检测新 oe 版本 → 枚举全部应用 Matrix 并行（`fail-fast: false`）→ 成功者汇总批量 PR，失败者出报告 |
 
-> [`upgrade_upstream_versions.yml`](.github/workflows/upgrade_upstream_versions.yml) 是早期上游版本升级骨架，未接入克隆 / 提交 / 推送，已不再作为场景维护；上游版本升级以社区运行中的服务为准。
+**新应用的版本发现**依赖 upstream-dashboard 能按应用名解析出上游版本；解析不到（`blocked_reason` 非空或 404）时跳过并记录原因，仍可用场景二的手动入口指定 `app` + `version` 完成升级。
 
-**新应用仍需接入 [anitya](https://easysoftware-monitoring.test.osinfra.cn/)。** 应用名即 anitya 的查找键，新应用只需在 `doc/image-info.yml` 中补齐 `upstream` 块与顶层 `homepage`，社区服务即可持续追踪其上游版本。
-
-**PR 去重**按标题精确匹配：相同场景 + 相同应用 + 相同版本只会存在一个 PR。
+**PR 去重**：场景一 / 三 / 四按标题精确匹配；场景二按升级分支 `auto/version-update/<app>/<version>-<oe_tag>` 判断目标仓是否已有 open PR。
 
 ---
 
@@ -585,7 +597,7 @@ Git 与平台写操作集中在验证完成后的交付阶段，由确定性代�
 
 不会。hadolint / jq / opencode 的版本、下载地址与 SHA256 锁定在 [`.github/toolchain.lock.yml`](.github/toolchain.lock.yml)，Python 依赖锁定在 [`.github/python-phase1.lock.txt`](.github/python-phase1.lock.txt)，缓存于 Runner 的 `/opt/oe-image-tools`。场景二的 AI Agent 同样用这份锁定工具链里的 opencode。
 
-### Q: 场景二跑了但没有触发修复，怎么排查？
+### Q: CI 修复组件手动跑了但没有触发修复，怎么排查？
 
 1. 目标仓 PR 是否确实带 `ci_failed` 标签（不是拼写变体）；
 2. `config/watchlist.json` 中该仓库的 `enabled` 是否为 `true`；
@@ -595,15 +607,15 @@ Git 与平台写操作集中在验证完成后的交付阶段，由确定性代�
 
 ### Q: Fix PR 的 CI 又失败了怎么办？
 
-无需人工操作。Fix PR 再次带上 `ci_failed` 后，下次轮询会对**原始 PR** 重新发起 `ci-log-analysis`，AI 结合新的失败日志对 Fix PR 追加 commit；累计 6 次仍未通过则自动关闭 Fix PR 并评论通知人工介入。
+手动再触发一次修复：对**原始 PR** 重新 dispatch，`ci-log-analysis` 会结合新的失败日志，AI 对 Fix PR 追加 commit 重试；同一 PR 累计 6 个 run 仍未通过则停止并提示人工介入。
 
-### Q: 场景二为什么要在容器里逐条执行，而不是直接改 Dockerfile？
+### Q: CI 修复组件为什么要在容器里逐条执行，而不是直接改 Dockerfile？
 
 文本层面的盲改无法证明改动真的能构建通过。在容器里逐条执行 `RUN` 并即时修复，跑通的命令序列才是"已被证明可行"的；再反推回 Dockerfile 并用 `docker build` 从零复验一次，确保反推没有引入偏差。
 
 ### Q: 想手动跳过某条 PR 怎么做？
 
-移除该 PR 的 `ci_failed` 标签即可，下次轮询不再处理它。
+移除该 PR 的 `ci_failed` 标签即可，下次手动扫描不再处理它。
 
 ### Q: 不想搭自托管机器，能直接跑在 GitHub 托管 Runner 上吗？
 
@@ -613,7 +625,7 @@ Git 与平台写操作集中在验证完成后的交付阶段，由确定性代�
 2. **6 小时/job 上限**：托管 Runner 超过即被砍；自托管没有这个限制。重型镜像（如源码编译的 milvus）整轮修复可能被砍在构建中途——那属于预算不足，不是修复失败。
 3. **预装差异**：托管的 Ubuntu Runner 自带 Docker、buildx 与 `gh`；自托管机器需要自己装（`gh` 只在 GitHub 平台的 Fix PR 创建路径上用到）。
 
-要把选择固定下来（自动轮询也生效）就设对应 Variables。
+要把选择固定下来就设对应 Variables。
 
 ---
 
@@ -628,20 +640,22 @@ openeuler-docker-images-workflow/
 │   │   └── phase1-emit-patch/               # 候选补丁产出
 │   ├── agents/
 │   │   ├── image-creator.md                 # ① 镜像生成者
-│   │   ├── testcase-creator.md              # ① 测试生成者
-│   │   ├── testcase-qa.md                   # ① 测试挑战者
-│   │   ├── ci-failure-analyst.md            # ② CI 失败诊断师
-│   │   ├── dockerfile-builder.md            # ② 容器构建修复工程师
+│   │   ├── testcase-creator.md              # ①④ 测试生成者
+│   │   ├── testcase-qa.md                   # ①④ 测试挑战者
+│   │   ├── ci-failure-analyst.md            # CI 修复组件：失败诊断师
+│   │   ├── dockerfile-builder.md            # CI 修复组件：容器构建修复工程师
 │   │   └── code-fixer.md                    # ①③ 修复者（内置故障诊断）
 │   ├── workflows/
 │   │   ├── monitor_new_image_issues.yml     # ① Issue 扫描与认领（cron */5）
 │   │   ├── create_new_images.yml            # ① 主编排（prepare → 4 轮 → 交付）
 │   │   ├── _create_new_image_rounds.yml     # ① 单轮验证-修复-决策组件
-│   │   ├── monitor_ci_failed_prs.yml        # ② ci_failed PR 轮询（cron，间隔由 watchlist 控制）
-│   │   ├── ci_fix_pipeline.yml              # ② 修复主编排（prepare → 分析 → 3 轮修复 → 落回）
-│   │   ├── _ci_fix_round.yml                # ② 单轮修复组件（arm64 首修 → amd64 → arm64 复验）
-│   │   ├── sync_ci_poll_interval.yml        # ② watchlist 变更时同步 cron 表达式
-│   │   ├── upgrade_upstream_versions.yml    # legacy：上游版本更新（已由社区服务承接）
+│   │   ├── upgrade_upstream_versions.yml    # ② 应用自动升级主编排（每日定时 / 手动）
+│   │   ├── _upgrade_app.yml                 # ② 单应用升级组件（prepare → 双架构验证 → PR）
+│   │   ├── generate_test_scripts.yml        # ④ 存量补功能测试（手动单应用）
+│   │   ├── monitor_ci_failed_prs.yml        # CI 修复组件：扫 ci_failed PR（仅手动）
+│   │   ├── ci_fix_pipeline.yml              # CI 修复组件入口薄壳（手动 / repository_dispatch）
+│   │   ├── _ci_repair.yml                   # CI 修复组件（prepare → 分析 → 3 轮修复 → 落回）
+│   │   ├── _ci_fix_round.yml                # CI 修复组件：单轮修复（arm64 首修 → amd64 → arm64 复验）
 │   │   ├── upgrade_openeuler_versions.yml   # ③ openEuler 版本升级
 │   │   ├── _upgrade_versions.yml            # ③ 共享验证组件
 │   │   ├── issue_contract_test.yml          # GitCode Issue API 契约冒烟
@@ -649,7 +663,7 @@ openeuler-docker-images-workflow/
 │   ├── toolchain.lock.yml                   # 工具链版本 + SHA256 锁
 │   └── python-phase1.lock.txt               # Python 依赖锁
 ├── config/
-│   └── watchlist.json                       # ② 监控仓库列表与轮询参数
+│   └── watchlist.json                       # CI 修复组件的仓库列表与轮询参数（仅手动扫描使用）
 ├── scripts/
 │   ├── harness/
 │   │   ├── flow.py                          # 阶段一确定性编排入口
@@ -658,9 +672,14 @@ openeuler-docker-images-workflow/
 │   │   ├── query_version.py                 # 上游 / oe 版本对比查询
 │   │   ├── validate_meta.py                 # meta.yml schema 校验
 │   │   ├── gate_diff.py                     # "只能新增"差分门禁
-│   │   └── compose_pr.py                    # PR 内容组装
-│   ├── stages/                              # ② 阶段脚本：ci-log-analysis / build-fix / code-fix
-│   ├── watch/                               # ② PR 轮询、入口解析与 cron 同步
+│   │   ├── compose_pr.py                    # PR 内容组装
+│   │   ├── upgrade_scan.py                  # ② 版本发现（看板 vs 目标仓 → 升级矩阵）
+│   │   ├── upgrade_apply.py                 # ② 单应用升级（补测试 + bump + 推分支）
+│   │   ├── upgrade_open_pr.py               # ② 升级 PR 正文与跨仓 PR
+│   │   ├── testgen_scan.py                  # ④ 指定应用解析
+│   │   └── testgen_generate.py              # ④ 测试脚本生成与静态校验
+│   ├── stages/                              # CI 修复组件阶段脚本：ci-log-analysis / build-fix / code-fix
+│   ├── watch/                               # CI 修复组件：PR 轮询与入口解析
 │   ├── lib/                                 # 见下节模块说明
 │   ├── utils/scoring.py                     # 置信度计算
 │   ├── bootstrap_tools.py                   # 工具链落地
@@ -668,18 +687,18 @@ openeuler-docker-images-workflow/
 ├── docs/
 │   ├── failure-patterns.yml                 # verified 结构化故障模式
 │   ├── failure-patterns.md                  # 知识库维护策略
-│   ├── ci-failure-patterns.md               # ② CI 失败模式知识库（自动维护）
+│   ├── ci-failure-patterns.md               # CI 修复组件的失败模式知识库
 │   └── runbooks/                            # 运维手册
 ├── templates/
 │   ├── new-image-issue.md                   # Issue 模板
 │   └── pr.md                                # PR 模板
 ├── tests/                                   # 本仓单元、契约与工作流回归测试
-├── requirements.txt                         # ② 阶段脚本运行时依赖（requests）
+├── requirements.txt                         # 运行时依赖（requests）
 ├── DESIGN.md                                # 系统设计与关键决策
 └── REQUIREMENTS.md                          # 项目目标与约束
 ```
 
-> ① = 场景一　② = 场景二（PR CI 失败自动修复）　③ = 场景三（openEuler 版本升级）　其余为共享能力
+> ① = 场景一（新增镜像）　② = 场景二（应用自动升级）　③ = 场景三（openEuler 版本升级）　④ = 场景四（补功能测试）　其余为共享能力（CI 修复组件为手动入口）
 
 ---
 
@@ -725,15 +744,25 @@ openeuler-docker-images-workflow/
 | [`scripts/lib/git_workspace.py`](scripts/lib/git_workspace.py) | 目标仓克隆与工作区隔离 |
 | [`scripts/lib/toolchain.py`](scripts/lib/toolchain.py) | 锁文件驱动的工具链解析与校验 |
 
-### 10.5 场景二：CI 修复（独立子系统）
-
-场景二自带一套平台与 AI 调用层（`ci_*` 与 `ai_runner` / `opencode_run`），与场景一的 `gitcode_client.py` / `agent_runtime.py` 并存且互不依赖——它面向的是"修复别人仓库里已有的 PR"，与场景一的生成交付链路没有共享状态。
+### 10.5 场景二：应用自动升级
 
 | 模块 | 职责 |
 |------|------|
-| [`scripts/watch/process_pr_events.py`](scripts/watch/process_pr_events.py) | PR 轮询、Fix PR 状态决策、跳过规则与 dispatch（含 attempt 计数） |
+| [`scripts/lib/upstream_dashboard.py`](scripts/lib/upstream_dashboard.py) | `/api/v1/version/resolve` 客户端：浏览器 UA、400/404 确定性失败、502 重试、503 失败，返回原始 payload |
+| [`scripts/lib/upstream_evidence.py`](scripts/lib/upstream_evidence.py) | 上游证据适配：已知字段归一化、未知字段透传、`collector` 提升、自探兜底与 PR / 提示词渲染 |
+| [`scripts/harness/upgrade_scan.py`](scripts/harness/upgrade_scan.py) | 版本发现：看板解析 × 目标仓已有版本 → 升级矩阵（跳过 blocked / 已存在 / 已有 PR） |
+| [`scripts/lib/version_upgrade.py`](scripts/lib/version_upgrade.py) | 确定性升级：复制版本目录、整串替换版本号、追加 `meta.yml`；找不到旧版本串即失败 |
+| [`scripts/harness/upgrade_apply.py`](scripts/harness/upgrade_apply.py) | 单应用升级：切分支、缺测试则补、执行 bump、commit、推送，并产出 `task-spec.json` |
+| [`scripts/harness/upgrade_open_pr.py`](scripts/harness/upgrade_open_pr.py) | 升级 PR 正文（变更 + 功能测试状态 + 上游证据）与跨仓 PR 创建 |
+
+### 10.6 CI 修复组件（手动，独立子系统）
+
+CI 修复组件自带一套平台与 AI 调用层（`ci_*` 与 `ai_runner` / `opencode_run`），与场景一的 `gitcode_client.py` / `agent_runtime.py` 并存且互不依赖——它面向的是"修复别人仓库里已有的 PR"，与场景一的生成交付链路没有共享状态。
+
+| 模块 | 职责 |
+|------|------|
+| [`scripts/watch/process_pr_events.py`](scripts/watch/process_pr_events.py) | 手动扫描：PR 状态、Fix PR 决策、跳过规则与 dispatch（含 attempt 计数） |
 | [`scripts/watch/resolve_pr.py`](scripts/watch/resolve_pr.py) | 入口解析（prepare）：两种入口统一成一份 PR 元数据并写入 `$GITHUB_OUTPUT` |
-| [`scripts/watch/sync_poll_interval.py`](scripts/watch/sync_poll_interval.py) | `poll_interval_minutes` → cron 表达式同步 |
 | [`scripts/stages/ci-log-analysis.py`](scripts/stages/ci-log-analysis.py) | 阶段 1：取 PR diff + 失败日志 + 知识库 → AI 诊断报告 → 写入 `ci-fix-log` |
 | [`scripts/stages/build-fix.py`](scripts/stages/build-fix.py) | 阶段 2/3：容器内逐条执行与修复、反推 Dockerfile、arm64 复验 |
 | [`scripts/stages/code-fix.py`](scripts/stages/code-fix.py) | 阶段 4：最终 Dockerfile 落回源码树 |
@@ -757,8 +786,8 @@ openeuler-docker-images-workflow/
 | [`REQUIREMENTS.md`](REQUIREMENTS.md) | 项目目标、部署约束、测试策略结论及其论证 |
 | [`DESIGN.md`](DESIGN.md) | 系统设计全文：仓库规范、工作流、Agent 协作、构建流水线、命名规范、风险与缓解 |
 | [`docs/failure-patterns.md`](docs/failure-patterns.md) | 场景一 / 三 故障知识库的组织与维护策略 |
-| [`docs/ci-failure-patterns.md`](docs/ci-failure-patterns.md) | 场景二 CI 失败模式知识库（按模式分类，修复通过 CI 后自动追加） |
+| [`docs/ci-failure-patterns.md`](docs/ci-failure-patterns.md) | CI 修复组件的失败模式知识库（按模式分类，修复通过 CI 后追加） |
 | [`docs/runbooks/`](docs/runbooks/) | 运维手册 |
 | [openeuler-docker-images](https://gitcode.com/openeuler/openeuler-docker-images) | 目标仓库与其现行规范 |
-| [easysoftware-autoupgrade](https://github.com/opensourceways/easysoftware-autoupgrade) | 社区已有的镜像升级系统，本项目复用了其版本监控与批量更新模式 |
-| [docker-images-workflow](https://github.com/FdeCad/docker-images-workflow) | 场景二的来源仓库：CI 失败自动修复流水线（容器内逐条修复、arm64 复验、Fix PR 自管理） |
+| [easysoftware-autoupgrade](https://github.com/opensourceways/easysoftware-autoupgrade) | 社区已有的镜像升级系统；场景二取代其升级链路（版本源改为 upstream-dashboard） |
+| [docker-images-workflow](https://github.com/FdeCad/docker-images-workflow) | CI 修复组件的来源仓库：CI 失败自动修复流水线（容器内逐条修复、arm64 复验、Fix PR 自管理） |

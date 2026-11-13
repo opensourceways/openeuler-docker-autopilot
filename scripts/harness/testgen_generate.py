@@ -116,6 +116,7 @@ def build_prompt(
     latest_version: str,
     sample_paths: list[str],
     findings: list[dict] | None = None,
+    extra_context: str = "",
 ) -> str:
     """Assemble the creator prompt: role file + contract (+ repair report)."""
     prompt = Path(agent_prompt_file("testgen-creator")).read_text(encoding="utf-8")
@@ -136,6 +137,8 @@ def build_prompt(
         "移动或删除任何现有文件。\n"
         "- 不得运行任何 git 写操作或平台 API。\n"
     )
+    if extra_context:
+        prompt += "\n\n" + extra_context.strip() + "\n"
     if findings:
         prompt += (
             "\n## Static contract report to resolve\n\n"
@@ -206,6 +209,7 @@ def generate_test_script(
     latest_version: str,
     api_key: str,
     executable: Path,
+    extra_context: str = "",
 ) -> list[dict]:
     """Run the creator with repair rounds. Returns the final findings."""
     test_rel = f"{domain}/{app}/tests/test.sh"
@@ -221,6 +225,7 @@ def generate_test_script(
             latest_version=latest_version,
             sample_paths=_sample_paths(repo_dir, domain, app),
             findings=findings or None,
+            extra_context=extra_context,
         )
         log_stage("testgen", f"{app}: agent round {round_no + 1}")
         run_agent(

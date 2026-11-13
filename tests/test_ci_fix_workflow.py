@@ -19,9 +19,9 @@ sys.path.insert(0, str(ROOT))
 from scripts.watch.resolve_pr import _resolve_platform, resolve_runner_labels  # noqa: E402
 
 PIPELINE = ROOT / '.github' / 'workflows' / 'ci_fix_pipeline.yml'
+REPAIR = ROOT / '.github' / 'workflows' / '_ci_repair.yml'
 ROUND = ROOT / '.github' / 'workflows' / '_ci_fix_round.yml'
 MONITOR = ROOT / '.github' / 'workflows' / 'monitor_ci_failed_prs.yml'
-SYNC = ROOT / '.github' / 'workflows' / 'sync_ci_poll_interval.yml'
 ROUNDS = ('round-1', 'round-2', 'round-3')
 
 
@@ -45,20 +45,27 @@ def _names(value) -> set:
     return {value} if isinstance(value, str) else set(value)
 
 
-def test_one_run_covers_the_whole_repair_chain():
+def test_pipeline_is_a_thin_shell_over_the_reusable_component():
     jobs = _workflow(PIPELINE)['jobs']
+    assert list(jobs) == ['repair']
+    assert jobs['repair']['uses'] == './.github/workflows/_ci_repair.yml'
+    assert jobs['repair']['secrets'] == 'inherit'
+
+
+def test_one_run_covers_the_whole_repair_chain():
+    jobs = _workflow(REPAIR)['jobs']
 
     assert list(jobs) == [
         'prepare', 'ci-log-analysis', 'round-1', 'round-2', 'round-3', 'code-fix',
     ]
     # 链路内部不再有第二处 dispatch：阶段推进全部走 job 依赖
-    body = PIPELINE.read_text(encoding='utf-8').split('jobs:')[1]
+    body = REPAIR.read_text(encoding='utf-8').split('jobs:')[1]
     assert 'repository_dispatch' not in body
     assert 'dispatches' not in body
 
 
 def test_entry_resolves_pr_metadata_before_analysis():
-    jobs = _workflow(PIPELINE)['jobs']
+    jobs = _workflow(REPAIR)['jobs']
     prepare = jobs['prepare']
 
     assert 'resolve_pr.py' in _squash(str(prepare['steps']))
@@ -71,7 +78,7 @@ def test_entry_resolves_pr_metadata_before_analysis():
 
 
 def test_repair_rounds_are_visible_and_gated_on_the_previous_verify():
-    jobs = _workflow(PIPELINE)['jobs']
+    jobs = _workflow(REPAIR)['jobs']
 
     for number, job_id in enumerate(ROUNDS, start=1):
         assert jobs[job_id]['name'] == f'Round {number}: fix and verify'
@@ -84,7 +91,7 @@ def test_repair_rounds_are_visible_and_gated_on_the_previous_verify():
 
 
 def test_round_one_fixes_arm64_first_and_later_rounds_only_refix_amd64():
-    jobs = _workflow(PIPELINE)['jobs']
+    jobs = _workflow(REPAIR)['jobs']
 
     assert jobs['round-1']['with']['include_arm64_fix'] is True
     assert jobs['round-2']['with']['include_arm64_fix'] is False
@@ -93,7 +100,7 @@ def test_round_one_fixes_arm64_first_and_later_rounds_only_refix_amd64():
 
 
 def test_code_fix_runs_only_after_a_passing_verify():
-    job = _workflow(PIPELINE)['jobs']['code-fix']
+    job = _workflow(REPAIR)['jobs']['code-fix']
     condition = _squash(job['if'])
 
     for job_id in ROUNDS:
@@ -130,7 +137,7 @@ UNSUPPORTED_BACKEND = {'ANTHROPIC_API_KEY', 'CLAUDE_CODE_BIN'}
 
 # 每个跑阶段脚本的 job 必须把脚本要读的 env 都声明到位
 JOB_SCRIPTS = {
-    PIPELINE: {
+    REPAIR: {
         'prepare': ('scripts/watch/resolve_pr.py',),
         'ci-log-analysis': ('scripts/stages/ci-log-analysis.py',
                             'scripts/lib/ai_runner.py',
@@ -174,7 +181,7 @@ def test_every_job_declares_the_env_its_scripts_read():
 
 def test_infra_error_skips_rounds_and_retests():
     """analyze 判 infra-error → 评论 /retest 并跳过全部修复轮次。"""
-    jobs = _workflow(PIPELINE)['jobs']
+    jobs = _workflow(REPAIR)['jobs']
 
     analysis = jobs['ci-log-analysis']
     assert 'skip_repair' in analysis['outputs']
@@ -234,16 +241,17 @@ def test_monitor_dispatches_one_repair_attempt_per_run():
 
     monitor = (ROOT / 'scripts' / 'watch' / 'process_pr_events.py').read_text(encoding='utf-8')
     assert "'event_type': 'run-ci-fix'" in monitor
-    # attempt 写在载荷里 → 出现在 run 标题上，Monitor 的 6 次重试逐次可辨
+    # attempt 写在载荷里 → 出现在 run 标题上，逐次可辨
     assert "'attempt': attempt" in monitor
     assert 'attempt' in _workflow(PIPELINE)['run-name']
-    assert _trigger(_workflow(MONITOR))['schedule']
+    # 自动轮询已下线：Monitor 只保留手动触发
+    assert 'schedule' not in _trigger(_workflow(MONITOR))
 
 
 def test_runner_labels_are_configurable_and_stay_arch_safe():
     """机器可换、架构不许换：arm64 的默认标签必须是 arm64，x64 的必须落在 x86。"""
-    doc = _workflow(PIPELINE)
-    inputs = _trigger(doc)['workflow_dispatch']['inputs']
+    doc = _workflow(REPAIR)
+    inputs = _trigger(doc)['workflow_call']['inputs']
     defaults = {name: inputs[name]['default'] for name in (
         'x64_runner_labels', 'amd64_runner_labels', 'arm64_runner_labels',
     )}
@@ -273,13 +281,13 @@ def test_runner_labels_are_configurable_and_stay_arch_safe():
         assert passed['amd64_runner_labels'] == \
             '${{ needs.prepare.outputs.amd64_runner_labels }}'
 
-    # 轮询与 cron 同步共用同一个 Variable；监控手动运行可临时覆盖
-    for path, job_id in ((MONITOR, 'monitor'), (SYNC, 'sync')):
-        runner = _squash(_workflow(path)['jobs'][job_id]['runs-on'])
-        assert 'vars.CI_FIX_X64_RUNNER_LABELS' in runner
-        # 轻量 Job 默认跑 GitHub 托管 Runner（与自托管构建 Job 分道）
-        assert 'ubuntu-latest' in runner
-    assert 'inputs.runner_labels' in _squash(_workflow(MONITOR)['jobs']['monitor']['runs-on'])
+    # 轮询入口保留手动触发：默认自托管 X64，且不再有 cron
+    monitor = _workflow(MONITOR)
+    runner = _squash(monitor['jobs']['monitor']['runs-on'])
+    assert 'vars.CI_FIX_X64_RUNNER_LABELS' in runner
+    assert 'self-hosted' in runner
+    assert 'inputs.runner_labels' in runner
+    assert 'schedule' not in _trigger(monitor)
 
 
 def test_toolchain_cache_falls_back_when_opt_is_not_writable():
