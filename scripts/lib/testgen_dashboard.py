@@ -25,15 +25,6 @@ DASHBOARD_BASE = os.environ.get(
 _PAGE_SIZE = 100
 _MAX_PAGES = 50
 _REQUEST_TIMEOUT_SECONDS = 30
-# 看板测试环境前面有 WAF：python-requests 的默认 UA 会被直接拒绝（HTTP 418），
-# 换成常规浏览器 UA 才能拿到 JSON。
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json",
-}
 
 
 @dataclass(frozen=True)
@@ -75,7 +66,7 @@ def fetch_dashboard_software(
         last_error: Exception | None = None
         for attempt in (1, 2):
             try:
-                response = requests.get(url, params=params, headers=_HEADERS, timeout=timeout)
+                response = requests.get(url, params=params, timeout=timeout)
                 response.raise_for_status()
                 payload = response.json()
                 break
