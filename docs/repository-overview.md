@@ -65,8 +65,8 @@
 | ① 新增镜像 | 生成 | `image-creator.md` | Issue 解析出的 TaskSpec、上游源码、目标仓规范 | Dockerfile、`meta.yml`、README、`doc/image-info.yml` |
 | ① 新增镜像 | 测试 | `testcase-creator.md` ⇄ `testcase-qa.md` | 已生成的镜像与规范 | 共享测试入口 `tests/test.sh`（Creator 生成、QA 对抗复核，最多 2 轮） |
 | ①③ | 有界修复 | `code-fixer.md` | 双架构失败证据（构建/测试报告） | 白名单范围内的最小修复 |
-| ② 应用升级 | 生成 Dockerfile | `upgrade-creator.md` | 旧版本 Dockerfile、目标版本、看板 L1 证据包（3 条 `check`） | 新版本完整 Dockerfile（不做版本串机械替换；缺目标版本号/`FROM` 即重写或失败） |
-| ② 已是最新 | 审计 + 修复 | `upgrade-auditor.md` → `upgrade-fixer.md` | 现有 Dockerfile、meta.yml、测试脚本、image-info、看板 L1 证据与 tag/commit | 审计报告 + 修复 PR（Dockerfile 与 doc/image-info.yml 按测试脚本同步） |
+| ② 应用升级 | 生成 Dockerfile | `upgrade-creator.md` | 旧版本 Dockerfile、目标版本、看板证据包（优先 L1 的 3 条 `check`，缺失时回退到实际等级） | 新版本完整 Dockerfile（不做版本串机械替换；缺目标版本号/`FROM` 即重写或失败） |
+| ② 已是最新 | 审计 + 修复 | `upgrade-auditor.md` → `upgrade-fixer.md` | 现有 Dockerfile、meta.yml、测试脚本、image-info、看板证据（优先 L1，缺失时回退到实际等级）与 tag/commit | 审计报告 + 修复 PR（Dockerfile 与 doc/image-info.yml 按测试脚本同步） |
 | ② 应用升级 | 补测试 | `testgen-creator.md` | 应用镜像目录、KunpengTest 契约、上游证据 | `tests/test.sh`（静态校验失败最多回修 2 轮；生成失败不阻断升级） |
 | CI 修复组件 | 诊断 | `ci-failure-analyst.md` | 失败架构的 Jenkins 日志尾部 + PR diff + 知识库 | 结构化诊断报告（失败类型、根因、修复建议） |
 | CI 修复组件 | 修复 | `dockerfile-builder.md` | 诊断报告 + 源码 | 容器内逐条执行并跑通的命令序列 → 反推出的 Dockerfile |

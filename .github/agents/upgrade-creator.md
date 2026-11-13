@@ -40,11 +40,14 @@
 
 ## 证据包怎么用
 
-看板证据固定是 **L1 的 3 条 check**，每条有 `check_id` + `result` + `excerpt` + `source_url`：
+看板证据优先给 **L1 的 check**（kunpeng 域通常正好 3 条），每条有 `check_id` + `result` + `excerpt` + `source_url`：
 
 - `kp.l1.arm_ci`：上游在该版本的 ARM 原生 CI（构建/测试）是否通过，以及测试深度。
 - `kp.l1.doc_declared`：上游 README / 文档是否声明 aarch64 / ARM64 / ARMv8 支持。
 - `kp.l1.release_artifact`：上游 release 是否提供 ARM 产物（二进制/安装包），还是只有源码包。
+
+该版本没有 L1 时会回退到实际存在的等级（如 `kp.l3.*`、`kp.l4.*`），
+每条证据都带 `support_level`，语义相同，按同样规则使用。
 
 使用规则：
 

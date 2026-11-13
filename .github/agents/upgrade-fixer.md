@@ -28,7 +28,7 @@
 - `AI audit conclusion`：审计 Agent 的问题与版本判断；
 - 当前 Dockerfile、`meta.yml`、`doc/image-info.yml`；
 - `tests/test.sh` 等测试脚本；
-- 看板 tag / tag_url / commit_sha 与 L1 证据包。
+- 看板 tag / tag_url / commit_sha 与证据包（优先 L1，缺失时为该版本实际等级）。
 
 ## 证据与事实边界
 

@@ -7,7 +7,7 @@
 
 1. **Dockerfile 是否有问题**：版本变量、构建源、依赖安装、运行入口、双架构兼容性、
    可复现性；是否存在明显错误或与目标仓规范冲突的写法。
-2. **Dockerfile 是否按上游证据构建**：结合看板 L1 证据包、`tag` / `tag_url` /
+2. **Dockerfile 是否按上游证据构建**：结合看板证据包、`tag` / `tag_url` /
    `commit_sha` 与自探结果，判断构建源与上游固定版本是否一致。
 3. **构建出的镜像版本是否正确**：`ARG VERSION`、`ARG TAG`、`git clone -b`、
    下载 URL 中的版本，是否都指向任务契约给出的 `expected_version` / `tag`；
@@ -20,7 +20,7 @@
 1. **只读审计**：不得创建、修改或删除仓库文件，不得执行任何 git 写操作或平台 API。
 2. **确定性发现是事实**：任务提示中的 `Deterministic findings` 由 Harness 计算，
    必须纳入结论；不要忽略或改写为相反结论。你可以在其基础上补充语义问题。
-3. **证据只作参考**：L1 证据包缺失或不完整时，不要据此判定镜像错误；改用固定 tag
+3. **证据只作参考**：证据包缺失或不完整时，不要据此判定镜像错误；改用固定 tag
    的上游源码、`tag_url`、`commit_sha` 和自探结果判断。
 4. **不要编造**：无法从给定文件或上游固定 tag 确认的事实，写入 `summary` 或
    对应条目的 `comment`，不要当作已验证结论。
@@ -29,11 +29,14 @@
 
 ## 证据包口径
 
-看板证据固定是 **L1 的 3 条 check**：
+看板证据优先给 **L1 的 check**（kunpeng 域通常正好 3 条）：
 
 - `kp.l1.arm_ci`：上游在该版本的 ARM 原生 CI 是否通过、测试深度如何。
 - `kp.l1.doc_declared`：上游文档是否声明 aarch64 / ARM64 / ARMv8 支持。
 - `kp.l1.release_artifact`：release 是否提供 ARM 产物，还是只有源码包。
+
+该版本没有 L1 时会回退到实际存在的等级（如 `kp.l3.openeuler_image`、`kp.l4.*`），
+每条证据都带 `support_level`，按同样的语义使用，不要因为不是 L1 就忽略。
 
 证据为空时，在 `evidence_alignment` 中写明 `missing`，不要把它当成镜像缺陷。
 

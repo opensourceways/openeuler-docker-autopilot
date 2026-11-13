@@ -26,7 +26,9 @@ import requests
 DEFAULT_BASE = "https://upstream-dashboard.test.osinfra.cn"
 DEFAULT_TIMEOUT_SECONDS = 30
 _EVIDENCE_PAGE_SIZE = 50
-# 场景二的证据包固定取 L1 的 3 条：上游 ARM CI、文档声明、release 产物。
+# 证据等级优先取 L1（上游 ARM CI、文档声明、release 产物）；看板对不同软件
+# 给出的等级不同（kunpeng 域多为 L1，slurm 只有 L3，OpenCV 是 L4），没有 L1 时
+# 回退到该版本实际存在的等级，否则这些软件永远拿不到证据。
 _EVIDENCE_LEVEL = "L1"
 
 # 看板测试环境前面有 WAF：默认 python-requests UA 会被拒绝（HTTP 418），
@@ -171,11 +173,12 @@ def fetch_evidence(
     *,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> list[dict[str, Any]]:
-    """取看板采集到的上游证据包（固定 L1 的 3 条 check）。
+    """取看板采集到的上游证据包。
 
     ``version/resolve`` 只返回版本号，证据在 ``/api/v1/software`` 的
-    ``versions[].levels[].evidence`` 里；场景二只取 L1：
-    ``kp.l1.arm_ci`` / ``kp.l1.doc_declared`` / ``kp.l1.release_artifact``。
+    ``versions[].levels[].evidence`` 里。优先取 L1（kunpeng 域通常是
+    ``kp.l1.arm_ci`` / ``kp.l1.doc_declared`` / ``kp.l1.release_artifact``），
+    该版本没有 L1 时回退到实际存在的等级（如 slurm 的 L3、OpenCV 的 L4）。
     证据只作 AI 参考与 PR 留痕，因此这里任何失败都返回空列表，绝不阻断升级主流程。
     """
     url = f"{base_url()}/api/v1/software"
@@ -230,18 +233,21 @@ def _evidence_entries(
     entry = _pick_version(versions, version, software.get("latest_version"))
     if entry is None:
         return []
-    return _level_evidence(entry, _EVIDENCE_LEVEL)
+    return _level_evidence(entry)
 
 
-def _level_evidence(
-    entry: dict[str, Any], support_level: str
-) -> list[dict[str, Any]]:
-    """只取指定等级的 check；场景二的证据包固定用 L1 的 3 条。"""
-    for level in entry.get("levels") or []:
-        if not isinstance(level, dict):
-            continue
-        if str(level.get("support_level") or "").upper() != support_level:
-            continue
+def _level_evidence(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """取该版本的证据：优先 L1，没有 L1 时回退到实际存在的等级。"""
+    levels = [
+        level for level in entry.get("levels") or [] if isinstance(level, dict)
+    ]
+    preferred = [
+        level
+        for level in levels
+        if str(level.get("support_level") or "").upper() == _EVIDENCE_LEVEL
+    ]
+    ordered = preferred + [level for level in levels if level not in preferred]
+    for level in ordered:
         evidence: list[dict[str, Any]] = []
         for item in level.get("evidence") or []:
             if not isinstance(item, dict):
@@ -249,7 +255,8 @@ def _level_evidence(
             enriched = dict(item)
             enriched.setdefault("support_level", level.get("support_level"))
             evidence.append(enriched)
-        return evidence
+        if evidence:
+            return evidence
     return []
 
 
@@ -281,4 +288,4 @@ def _pick_version(
 
 
 def _has_evidence(entry: dict[str, Any]) -> bool:
-    return bool(_level_evidence(entry, _EVIDENCE_LEVEL))
+    return bool(_level_evidence(entry))

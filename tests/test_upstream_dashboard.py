@@ -199,7 +199,7 @@ class FetchEvidenceTest(unittest.TestCase):
         # 每条证据都带上所属等级
         self.assertTrue(all(item["support_level"] == "L1" for item in evidence))
 
-    def test_l3_only_software_has_no_l1_evidence(self) -> None:
+    def test_l3_only_software_falls_back_to_its_level(self) -> None:
         payload = _software_payload()
         payload["items"][0]["versions"][1]["levels"] = [
             payload["items"][0]["versions"][1]["levels"][1]
@@ -207,7 +207,31 @@ class FetchEvidenceTest(unittest.TestCase):
         with mock.patch.object(
             upstream_dashboard.requests, "get", return_value=_Response(200, payload)
         ):
-            self.assertEqual(upstream_dashboard.fetch_evidence("Nginx", "1.31.8"), [])
+            evidence = upstream_dashboard.fetch_evidence("Nginx", "1.31.8")
+
+        self.assertEqual(
+            [item["check_id"] for item in evidence],
+            [
+                "kp.l3.openeuler_conda",
+                "kp.l3.openeuler_image",
+                "kp.l3.openeuler_rpm",
+            ],
+        )
+        self.assertTrue(all(item["support_level"] == "L3" for item in evidence))
+
+    def test_empty_l1_level_falls_back_to_the_next_level(self) -> None:
+        payload = _software_payload()
+        levels = payload["items"][0]["versions"][1]["levels"]
+        payload["items"][0]["versions"][1]["levels"] = [
+            {"support_level": "L1", "evidence": []},
+            levels[1],
+        ]
+        with mock.patch.object(
+            upstream_dashboard.requests, "get", return_value=_Response(200, payload)
+        ):
+            evidence = upstream_dashboard.fetch_evidence("Nginx", "1.31.8")
+        self.assertTrue(evidence)
+        self.assertTrue(all(item["support_level"] == "L3" for item in evidence))
 
     def test_v_prefix_and_latest_version_fallback(self) -> None:
         with mock.patch.object(

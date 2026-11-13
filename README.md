@@ -391,7 +391,7 @@ validate-aarch64   aarch64 原生构建 + 功能测试（与 x86 并行）
 open-pr            跨仓 PR：变更说明 + 功能测试状态 + 上游证据
 ```
 
-- **Dockerfile 生成**（[`upgrade_apply.py`](scripts/harness/upgrade_apply.py)）：把旧版本 Dockerfile、目标版本与看板上游证据包（L1 的 3 条 `check`）一起注入升级 Agent，重新生成完整 Dockerfile；**不做版本串机械替换**，生成结果缺目标版本号或 `FROM` 即失败。
+- **Dockerfile 生成**（[`upgrade_apply.py`](scripts/harness/upgrade_apply.py)）：把旧版本 Dockerfile、目标版本与看板上游证据包（优先 L1 的 3 条 `check`，缺失时回退到该版本实际存在的等级）一起注入升级 Agent，重新生成完整 Dockerfile；**不做版本串机械替换**，生成结果缺目标版本号或 `FROM` 即失败。
 - **确定性落盘**（[`version_upgrade.py`](scripts/lib/version_upgrade.py)）：把该应用最新的 `{old_version}/{os}/` 复制为 `{new_version}/{os}/`，写入 AI 生成的 Dockerfile，更新应用根目录 `README.md` / `doc/image-info.yml` 的版本号，并向 `meta.yml` 追加 `{new_version}-{oe_tag}` 条目。失败时清理半成品目录。
 - **补测试**（复用场景四）：应用没有 `tests/test.sh` 时调用 `testgen_generate.generate_test_script`，把上游证据作为额外上下文；生成失败**不阻断**升级，PR 正文标注「测试脚本待补」。
 - **双架构原生验证**：x86_64 / aarch64 各自真实构建并跑功能测试，不使用 QEMU；任一架构失败则不开 PR，证据留在 artifact，分支保留供人工或修复组件继续处理。
@@ -414,9 +414,9 @@ clone 目标仓 → 确定性检查 → upgrade_auditor Agent → upgrade_fixer 
 
 ### 4.4 上游证据
 
-`version/resolve` 返回版本定位信息，`/api/v1/software` 返回看板采集的上游证据（L1 的 3 条 `check`：ARM CI / 文档声明 / release 产物）。系统按「透传 + 适配」处理，**证据只作 AI 参考与 PR 留痕，不参与门禁**：
+`version/resolve` 返回版本定位信息，`/api/v1/software` 返回看板采集的上游证据（优先 L1 的 3 条 `check`：ARM CI / 文档声明 / release 产物；该版本没有 L1 时回退到实际等级，如 slurm 的 L3、OpenCV 的 L4）。系统按「透传 + 适配」处理，**证据只作 AI 参考与 PR 留痕，不参与门禁**：
 
-- [`upstream_dashboard.py`](scripts/lib/upstream_dashboard.py) 额外抓取 `/api/v1/software` 的 L1 `evidence` 并拍平成 `collector` 列表；抓取失败返回空，不阻断升级；
+- [`upstream_dashboard.py`](scripts/lib/upstream_dashboard.py) 额外抓取 `/api/v1/software` 的 `evidence`（优先 L1，缺失时回退到该版本实际等级）并拍平成 `collector` 列表；抓取失败返回空，不阻断升级；
 - [`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把已知字段（`tag` / `tag_url` / `commit_sha` / `source` / `fetched_at` 等）归一化，未知字段原样保留在 `raw`，并把 `evidence` / `checks` 等常见键提升为 `collector` 列表；
 - 证据缺失时**自探兜底**：探测 GitHub tag、release 与源码归档是否可达，结果写入 `probe`；
 - PR 正文与测试生成提示都会带上证据段；证据缺失或探测失败只告警，不影响升级主流程。
@@ -769,7 +769,7 @@ openeuler-docker-images-workflow/
 
 | 模块 | 职责 |
 |------|------|
-| [`scripts/lib/upstream_dashboard.py`](scripts/lib/upstream_dashboard.py) | `/api/v1/version/resolve` 客户端：浏览器 UA、400/404 确定性失败、502 重试、503 失败，返回原始 payload；并从 `/api/v1/software` 抓取 L1 证据包（3 条 `check`） |
+| [`scripts/lib/upstream_dashboard.py`](scripts/lib/upstream_dashboard.py) | `/api/v1/version/resolve` 客户端：浏览器 UA、400/404 确定性失败、502 重试、503 失败，返回原始 payload；并从 `/api/v1/software` 抓取证据包（优先 L1 的 3 条 `check`，缺失时回退到该版本实际等级） |
 | [`scripts/lib/upstream_evidence.py`](scripts/lib/upstream_evidence.py) | 上游证据适配：已知字段归一化、未知字段透传、`collector` 提升、自探兜底与 PR / 提示词渲染 |
 | [`scripts/harness/upgrade_scan.py`](scripts/harness/upgrade_scan.py) | 版本发现：读 `config/upgrade-apps.yml` × 看板解析 × 目标仓已有版本 → 升级矩阵 + 已是最新版本的审计矩阵 |
 | [`scripts/harness/upgrade_audit.py`](scripts/harness/upgrade_audit.py) | 已是最新版本审计与修复：确定性检查版本/tag/meta/测试脚本/image-info，AI 审计后调修复 Agent，更新 Dockerfile 与 doc/image-info.yml，推分支开 PR |
