@@ -712,6 +712,9 @@ apps:
 - name: Glibc
   app: glibc
   domain: Others
+- name: Golang
+  app: go
+  domain: Others
 - name: Gradle
   app: gradle
   domain: Others
@@ -738,6 +741,9 @@ apps:
   domain: Others
 - name: horovod
   app: horovod
+  domain: Others
+- name: Apache HTTP Server
+  app: httpd
   domain: Others
 - name: Hyperscan
   app: hyperscan
@@ -822,6 +828,9 @@ apps:
   domain: Others
 - name: Next.js
   app: next
+  domain: Others
+- name: Node.js
+  app: node
   domain: Others
 - name: npm
   app: npm
