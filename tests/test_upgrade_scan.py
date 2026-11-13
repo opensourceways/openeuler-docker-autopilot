@@ -45,6 +45,10 @@ class FindUpdatesTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def _scan(self, payload, **overrides):
+        overrides.setdefault(
+            "apps",
+            [{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
+        )
         overrides.setdefault("resolve", lambda name: payload)
         overrides.setdefault("probe", lambda p: {"source": "self-probe", "status": "ok"})
         return upgrade_scan.find_updates(repo_dir=self.repo, **overrides)
@@ -60,6 +64,27 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertEqual(item["source_url"], "https://github.com/apache/kvrocks")
         self.assertEqual(item["evidence"]["probe"]["status"], "ok")
         self.assertEqual(result["skipped"], [])
+
+    def test_only_configured_apps_are_scanned(self) -> None:
+        _make_app(self.repo, "Database", "unlisted")
+        result = self._scan(_payload("2.17.0"))
+        self.assertEqual([item["app"] for item in result["updates"]], ["kvrocks"])
+
+    def test_configured_app_missing_from_repo_is_skipped(self) -> None:
+        result = self._scan(
+            _payload("2.17.0"),
+            apps=[{"name": "gone", "app": "gone", "domain": "Database"}],
+        )
+        self.assertEqual(result["updates"], [])
+        self.assertIn("目标仓没有", result["skipped"][0]["reason"])
+
+    def test_filter_matches_the_dashboard_name(self) -> None:
+        result = self._scan(
+            _payload("2.17.0"),
+            app_filter="Kvrocks",
+            apps=[{"name": "Kvrocks", "app": "kvrocks", "domain": "Database"}],
+        )
+        self.assertEqual(len(result["updates"]), 1)
 
     def test_existing_version_is_skipped(self) -> None:
         result = self._scan(_payload("v2.16.0"))
@@ -103,6 +128,7 @@ class FindUpdatesTest(unittest.TestCase):
             repo_dir=self.repo,
             app_filter="kvrocks",
             forced_version="2.18.0",
+            apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
             resolve=fail,
             probe=lambda p: {},
         )
@@ -114,8 +140,40 @@ class FindUpdatesTest(unittest.TestCase):
 
     def test_limit_stops_after_n_updates(self) -> None:
         _make_app(self.repo, "Database", "redis", versions=("1.0.0",))
-        result = self._scan(_payload("2.17.0"), limit=1)
+        result = self._scan(
+            _payload("2.17.0"),
+            apps=[
+                {"name": "kvrocks", "app": "kvrocks", "domain": "Database"},
+                {"name": "Redis", "app": "redis", "domain": "Database"},
+            ],
+            limit=1,
+        )
         self.assertEqual(len(result["updates"]), 1)
+
+
+class LoadAppsTest(unittest.TestCase):
+    def test_parses_yaml_and_defaults_name_to_app(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "apps.yml"
+            path.write_text(
+                "apps:\n"
+                "- name: ClickHouse\n"
+                "  app: clickhouse\n"
+                "  domain: Database\n"
+                "- app: nginx\n"
+                "  domain: Cloud\n",
+                encoding="utf-8",
+            )
+            apps = upgrade_scan.load_apps(path)
+        self.assertEqual(apps[0], {"name": "ClickHouse", "app": "clickhouse", "domain": "Database"})
+        self.assertEqual(apps[1], {"name": "nginx", "app": "nginx", "domain": "Cloud"})
+
+    def test_missing_app_or_domain_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "apps.yml"
+            path.write_text("apps:\n- name: broken\n", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                upgrade_scan.load_apps(path)
 
 
 class NormalizeVersionTest(unittest.TestCase):

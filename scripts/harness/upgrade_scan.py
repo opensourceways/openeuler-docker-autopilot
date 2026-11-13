@@ -9,14 +9,17 @@ Stage: 场景二 —— 应用升级候选发现（upgrade_scan）
     [{app, domain, version, os_version, source_url, evidence}]
 
 规则：
-- 只看 ``{domain}/{app}/{version}/{os}/Dockerfile``（复用 testgen_scan 的索引与排序）；
+- 软件清单来自 ``config/upgrade-apps.yml``（人工维护，初始由
+  ``scripts/utils/scrape_upgrade_apps.py`` 从看板生成），**不遍历目标仓**；
+- 每个软件按 ``{domain}/{app}/{version}/{os}/Dockerfile`` 定位（复用
+  testgen_scan 的排序）；
 - ``blocked_reason`` 非 null → 跳过（记录原因；看板未解析出可用版本）；
 - 最新版本已存在同名目录（去 ``v`` 前缀、忽略大小写）→ 跳过；
 - 目标分支已有 open PR → 跳过；
 - os 目录沿用该应用最新的一个（不补齐所有 os 版本）；
 - 证据：``upstream_evidence.normalize`` + ``probe``（自探兜底），只作参考。
 
-输入: --repo <目标仓克隆>，可选 --app / --version / --limit
+输入: --repo <目标仓克隆>，可选 --app / --version / --apps-file / --limit
 输出: --format github-output → GITHUB_OUTPUT 写 updates=<json>；--format json → stdout
 """
 
@@ -28,6 +31,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
+import yaml
+
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
@@ -37,6 +42,7 @@ from scripts.lib.stage_common import log_stage  # noqa: E402
 from scripts.lib.task_spec import _os_tag  # noqa: E402
 
 DEFAULT_TARGET_REPO = "openeuler/openeuler-docker-images"
+DEFAULT_APPS_FILE = os.path.join(PROJECT_ROOT, "config", "upgrade-apps.yml")
 MAX_WORKERS = 8
 # 矩阵 payload 走 workflow output，证据只保留参考价值最高的部分，避免超长。
 _MAX_RAW_CHARS = 400
@@ -68,20 +74,57 @@ def _trim_evidence(evidence: dict) -> dict:
     return trimmed
 
 
-def _candidate_apps(repo_dir: Path, app_filter: str) -> list[tuple[str, str]]:
-    index = testgen_scan.index_target_apps(repo_dir)
-    names = [app_filter] if app_filter else sorted(index)
-    resolved: list[tuple[str, str]] = []
-    for name in names:
-        matches = index.get(testgen_scan.normalize_name(name), [])
-        if len(matches) != 1:
-            if app_filter:
-                raise SystemExit(
-                    f"{name}: 在目标仓里找不到唯一应用目录（命中 {matches}）"
-                )
+def load_apps(path: str | Path | None = None) -> list[dict]:
+    """读取人工维护的软件清单；格式错误直接失败，避免静默少扫。"""
+    apps_file = Path(path or DEFAULT_APPS_FILE)
+    if not apps_file.is_file():
+        raise SystemExit(f"apps file not found: {apps_file}")
+    data = yaml.safe_load(apps_file.read_text(encoding="utf-8")) or {}
+    entries = data.get("apps") if isinstance(data, dict) else data
+    if not isinstance(entries, list) or not entries:
+        raise SystemExit(f"{apps_file}: 需要非空的 apps 列表")
+
+    apps: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise SystemExit(f"{apps_file}: apps 里的每一项必须是对象")
+        name = str(entry.get("name") or entry.get("app") or "").strip()
+        app = str(entry.get("app") or "").strip()
+        domain = str(entry.get("domain") or "").strip()
+        if not app or not domain:
+            raise SystemExit(f"{apps_file}: app / domain 不能为空（{entry!r}）")
+        key = (domain, app)
+        if key in seen:
             continue
-        resolved.append(matches[0])
-    return resolved
+        seen.add(key)
+        apps.append({"name": name or app, "app": app, "domain": domain})
+    return apps
+
+
+def _select_apps(apps: list[dict], app_filter: str) -> list[dict]:
+    if not app_filter:
+        return apps
+    key = testgen_scan.normalize_name(app_filter)
+    matches = [
+        entry
+        for entry in apps
+        if key
+        in {
+            testgen_scan.normalize_name(entry["app"]),
+            testgen_scan.normalize_name(entry["name"]),
+        }
+    ]
+    if not matches:
+        raise SystemExit(
+            f"{app_filter}: 不在软件清单里（app=config/upgrade-apps.yml）"
+        )
+    if len(matches) > 1:
+        raise SystemExit(
+            f"{app_filter}: 软件清单命中多个条目 "
+            f"{[(m['domain'], m['app']) for m in matches]}"
+        )
+    return matches
 
 
 def _resolve_one(
@@ -100,23 +143,41 @@ def find_updates(
     app_filter: str = "",
     forced_version: str = "",
     limit: int = 0,
+    apps: list[dict] | None = None,
+    apps_file: str | Path | None = None,
     resolve: Callable[..., dict | None] = upstream_dashboard.resolve_version,
     probe: Callable[[dict | None], dict] = upstream_evidence.probe,
     pr_exists: Callable[[str, str, str], dict | None] | None = None,
     target_repo: str = DEFAULT_TARGET_REPO,
     token: str = "",
 ) -> dict:
-    apps = _candidate_apps(repo_dir, app_filter.strip())
-    if not apps:
-        return {"updates": [], "skipped": []}
+    entries = _select_apps(apps if apps is not None else load_apps(apps_file), app_filter.strip())
 
     skipped: list[dict] = []
+    pairs: list[tuple[dict, Path]] = []
+    for entry in entries:
+        app_dir = repo_dir / entry["domain"] / entry["app"]
+        if not app_dir.is_dir():
+            skipped.append(
+                {
+                    "app": entry["app"],
+                    "reason": (
+                        f"目标仓没有 {entry['domain']}/{entry['app']}"
+                        "（软件清单配置过期）"
+                    ),
+                }
+            )
+            continue
+        pairs.append((entry, app_dir))
+    if not pairs:
+        return {"updates": [], "skipped": skipped}
+
     if forced_version:
         # 手动指定版本：不查看板，其余照常对比本地目录。
         payloads: list[tuple[dict | None, dict]] = [
             (
                 {
-                    "name": app,
+                    "name": entry["name"],
                     "version": forced_version,
                     "tag": forced_version,
                     "source": "manual",
@@ -127,21 +188,23 @@ def find_updates(
                     "reason": "手动指定版本，未做自探",
                 },
             )
-            for _, app in apps
+            for entry, _ in pairs
         ]
     elif app_filter:
-        payloads = [_resolve_one(apps[0][1], resolve=resolve, probe=probe)]
+        payloads = [_resolve_one(pairs[0][0]["name"], resolve=resolve, probe=probe)]
     else:
-        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(apps))) as pool:
+        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(pairs))) as pool:
             payloads = list(
                 pool.map(
-                    lambda pair: _resolve_one(pair[1], resolve=resolve, probe=probe),
-                    apps,
+                    lambda pair: _resolve_one(pair[0]["name"], resolve=resolve, probe=probe),
+                    pairs,
                 )
             )
 
     updates: list[dict] = []
-    for (domain, app), (payload, probe_result) in zip(apps, payloads):
+    for (entry, app_dir), (payload, probe_result) in zip(pairs, payloads):
+        app = entry["app"]
+        domain = entry["domain"]
         if payload is None:
             skipped.append({"app": app, "reason": "看板 400/404（软件不存在或入参非法）"})
             continue
@@ -154,7 +217,6 @@ def find_updates(
             )
             continue
 
-        app_dir = repo_dir / domain / app
         dockerfile = testgen_scan.latest_dockerfile(app_dir)
         if dockerfile is None:
             skipped.append({"app": app, "reason": "应用目录下没有 */*/Dockerfile"})
@@ -198,6 +260,11 @@ def main() -> int:
     parser.add_argument("--repo", default=os.environ.get("SOURCE_REPO_DIR", ""))
     parser.add_argument("--app", default="", help="只处理这一个应用")
     parser.add_argument("--version", default="", help="手动指定目标版本（跳过看板解析）")
+    parser.add_argument(
+        "--apps-file",
+        default=os.environ.get("UPGRADE_APPS_FILE", ""),
+        help=f"软件清单（默认 {DEFAULT_APPS_FILE}）",
+    )
     parser.add_argument("--limit", type=int, default=0, help="最多产出几个升级（0=不限）")
     parser.add_argument("--format", choices=("json", "github-output"), default="json")
     args = parser.parse_args()
@@ -213,6 +280,7 @@ def main() -> int:
         app_filter=args.app,
         forced_version=args.version,
         limit=args.limit,
+        apps_file=args.apps_file or None,
         pr_exists=find_any_pr_by_head_branch,
         target_repo=os.environ.get("TARGET_REPO", DEFAULT_TARGET_REPO),
         token=os.environ.get("GITCODE_TOKEN", "").strip(),
