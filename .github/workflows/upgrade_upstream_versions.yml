@@ -4,8 +4,8 @@ name: App Version Upgrade
 #
 #   按 config/upgrade-apps.yml 清单调用 upstream-dashboard
 #   /api/v1/version/resolve，拿到最新版本 + 上游证据包 → 与目标仓已有版本目录
-#   对比 → 对缺新版本的应用执行「补功能测试 + 确定性版本升级 + 双架构原生验证
-#   + 跨仓 PR」，一应用一 PR。
+#   对比 → 对缺新版本的应用执行「补功能测试 + AI 依证据包生成 Dockerfile +
+#   双架构原生验证 + 跨仓 PR」，一应用一 PR。
 #
 # 版本源只认看板接口（文档见 opensourceways/upstream-dashboard docs/external-api.md）。
 # 证据包的归纳/透传见 scripts/lib/upstream_evidence.py，作为镜像构建与测试生成的

@@ -41,6 +41,14 @@ def _build_app(root: Path) -> Path:
     return app
 
 
+def _new_dockerfile(version: str) -> str:
+    return (
+        "FROM openeuler/openeuler:24.03-lts-sp4\n"
+        f"ARG VERSION={version}\n"
+        f"RUN curl -o /tmp/x.tar.gz https://example.com/myapp-{version}.tar.gz\n"
+    )
+
+
 class PlanUpgradeTest(unittest.TestCase):
     def test_picks_highest_version_then_os(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -58,19 +66,18 @@ class PlanUpgradeTest(unittest.TestCase):
 
 
 class ApplyUpgradeTest(unittest.TestCase):
-    def test_copies_tree_rewrites_versions_and_appends_meta(self) -> None:
+    def test_copies_tree_writes_generated_dockerfile_and_appends_meta(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _build_app(Path(tmp))
             plan = version_upgrade.plan_upgrade(app)
-            changed = version_upgrade.apply_upgrade(app, plan, "2.2.0")
+            changed = version_upgrade.apply_upgrade(
+                app, plan, "2.2.0", _new_dockerfile("2.2.0")
+            )
 
             target = app / "2.2.0" / "22.03-lts-sp3"
             self.assertTrue((target / "Dockerfile").is_file())
             dockerfile = (target / "Dockerfile").read_text(encoding="utf-8")
-            self.assertIn("ARG VERSION=2.2.0", dockerfile)
-            self.assertIn("myapp-2.2.0.tar.gz", dockerfile)
-            # 基础镜像的 os 版本不能被误替换
-            self.assertIn("openeuler:24.03-lts-sp4", dockerfile)
+            self.assertEqual(dockerfile, _new_dockerfile("2.2.0"))
 
             # README / image-info 在应用根目录，原地更新
             self.assertIn("myapp:2.2.0", (app / "README.md").read_text(encoding="utf-8"))
@@ -88,12 +95,30 @@ class ApplyUpgradeTest(unittest.TestCase):
             self.assertIn("doc/image-info.yml", relative)
             self.assertIn("meta.yml", relative)
 
+    def test_generated_dockerfile_is_not_mechanically_replaced(self) -> None:
+        """AI 产出的构建方式必须原样落盘，不能被旧文件的版本替换覆盖。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _build_app(Path(tmp))
+            plan = version_upgrade.plan_upgrade(app)
+            custom = (
+                "FROM openeuler/openeuler:24.03-lts-sp4\n"
+                "ARG VERSION=2.2.0\n"
+                "RUN git clone --branch v2.2.0 https://example.com/other-source.git\n"
+            )
+            version_upgrade.apply_upgrade(app, plan, "2.2.0", custom)
+
+            written = (app / "2.2.0" / "22.03-lts-sp3" / "Dockerfile").read_text(
+                encoding="utf-8"
+            )
+            self.assertEqual(written, custom)
+            self.assertNotIn("myapp-2.2.0.tar.gz", written)
+
     def test_same_version_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _build_app(Path(tmp))
             plan = version_upgrade.plan_upgrade(app)
             with pytest.raises(version_upgrade.UpgradeError):
-                version_upgrade.apply_upgrade(app, plan, "2.1.0")
+                version_upgrade.apply_upgrade(app, plan, "2.1.0", _new_dockerfile("2.1.0"))
 
     def test_existing_target_directory_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -101,18 +126,24 @@ class ApplyUpgradeTest(unittest.TestCase):
             plan = version_upgrade.plan_upgrade(app)
             (app / "2.2.0" / "22.03-lts-sp3").mkdir(parents=True)
             with pytest.raises(version_upgrade.UpgradeError):
-                version_upgrade.apply_upgrade(app, plan, "2.2.0")
+                version_upgrade.apply_upgrade(app, plan, "2.2.0", _new_dockerfile("2.2.0"))
 
-    def test_dockerfile_without_old_version_fails_closed_and_cleans_up(self) -> None:
+    def test_generated_dockerfile_without_new_version_fails_closed_and_cleans_up(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _build_app(Path(tmp))
             plan = version_upgrade.plan_upgrade(app)
-            (plan.src_dir / "Dockerfile").write_text(
-                "FROM openeuler/openeuler:24.03-lts-sp4\n", encoding="utf-8"
-            )
-            with pytest.raises(version_upgrade.UpgradeError, match="旧版本串"):
-                version_upgrade.apply_upgrade(app, plan, "2.2.0")
+            with pytest.raises(version_upgrade.UpgradeError, match="目标版本"):
+                version_upgrade.apply_upgrade(
+                    app, plan, "2.2.0", _new_dockerfile("9.9.9")
+                )
             self.assertFalse((app / "2.2.0" / "22.03-lts-sp3").exists())
+
+    def test_empty_generated_dockerfile_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _build_app(Path(tmp))
+            plan = version_upgrade.plan_upgrade(app)
+            with pytest.raises(version_upgrade.UpgradeError, match="为空"):
+                version_upgrade.apply_upgrade(app, plan, "2.2.0", "   \n")
 
     def test_missing_meta_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -120,5 +151,21 @@ class ApplyUpgradeTest(unittest.TestCase):
             plan = version_upgrade.plan_upgrade(app)
             (app / "meta.yml").unlink()
             with pytest.raises(version_upgrade.UpgradeError, match="meta.yml"):
-                version_upgrade.apply_upgrade(app, plan, "2.2.0")
+                version_upgrade.apply_upgrade(app, plan, "2.2.0", _new_dockerfile("2.2.0"))
             self.assertFalse((app / "2.2.0" / "22.03-lts-sp3").exists())
+
+
+class CheckDockerfileTest(unittest.TestCase):
+    def test_accepts_v_prefixed_and_bare_versions(self) -> None:
+        self.assertEqual(version_upgrade.check_dockerfile(_new_dockerfile("2.2.0"), "2.2.0"), [])
+        self.assertEqual(
+            version_upgrade.check_dockerfile(
+                "FROM x\nARG VERSION=v2.2.0\n", "2.2.0"
+            ),
+            [],
+        )
+
+    def test_rejects_missing_from_and_wrong_version(self) -> None:
+        self.assertIn("FROM", version_upgrade.check_dockerfile("ARG VERSION=2.2.0\n", "2.2.0")[0])
+        findings = version_upgrade.check_dockerfile("FROM x\nARG VERSION=2.1.0\n", "2.2.0")
+        self.assertTrue(any("2.2.0" in item for item in findings))

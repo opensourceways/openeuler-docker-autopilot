@@ -1,7 +1,8 @@
 name: Upgrade one app
 
 # 场景二的单应用流水线（由 upgrade_upstream_versions.yml 按应用矩阵调用）：
-#   prepare（补测试 + 确定性版本升级 + 推分支）→ 双架构原生验证 → 跨仓 PR
+#   prepare（AI 依证据包生成 Dockerfile + 补测试 + 确定性元数据登记 + 推分支）
+#   → 双架构原生验证 → 跨仓 PR
 #
 # 一应用一 PR：任一架构验证失败则不开 PR，分支保留供人工/修复组件继续处理。
 
@@ -96,7 +97,7 @@ jobs:
             "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
             source-repo
 
-      - name: Apply deterministic upgrade
+      - name: Generate Dockerfile and apply upgrade
         id: apply
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}

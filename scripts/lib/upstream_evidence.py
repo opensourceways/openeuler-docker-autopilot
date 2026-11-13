@@ -169,7 +169,7 @@ def render_markdown(evidence: dict[str, Any] | None) -> str:
         lines.append(f"- 看板获取时间：{evidence['fetched_at']}")
     lines.append(
         "- 看板采集证据："
-        + (f"{len(collector)} 条（见下）" if collector else "本次未返回（接口改造后自动纳入）")
+        + (f"{len(collector)} 条（见下）" if collector else "本次未返回（看板未提供或抓取失败）")
     )
 
     if probe_result:
@@ -212,6 +212,7 @@ def render_prompt(evidence: dict[str, Any] | None) -> str:
         f"- source: {evidence.get('source') or 'unknown'}",
         f"- tag: {evidence.get('tag') or 'unknown'}",
         f"- tag_url: {evidence.get('tag_url') or 'unknown'}",
+        f"- commit_sha: {evidence.get('commit_sha') or 'unknown'}",
     ]
     if probe_result:
         parts.append(f"- self-probe status: {probe_result.get('status')}")
@@ -220,11 +221,50 @@ def render_prompt(evidence: dict[str, Any] | None) -> str:
         if "archive_status" in probe_result:
             parts.append(f"- archive HTTP status: {probe_result.get('archive_status')}")
     if collector:
-        parts.append("- collector entries: " + _json_block(collector))
+        parts.append("")
+        parts.append(
+            f"### Dashboard checks ({len(collector)} entries; each entry is one "
+            "collected fact, not a gate)"
+        )
+        parts.extend(_render_collector(collector))
+    raw = evidence.get("raw") or {}
+    if raw:
+        parts += ["", "### Other dashboard fields (pass-through)", "", "```json"]
+        parts.append(_json_block(raw))
+        parts.append("```")
     parts.append(
         "- 该证据只作参考，最终是否需要特殊构建参数以上游仓库与构建结果为准。"
     )
     return "\n".join(parts)
+
+
+def _render_collector(entries: list[Any]) -> list[str]:
+    """把看板证据渲染成可读条目；excerpt 截断，避免撑爆提示。"""
+    lines: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        check = entry.get("check_id") or entry.get("check") or "unknown"
+        result = entry.get("result") or entry.get("status") or "unknown"
+        fields = [f"- `{check}`: result=`{result}`"]
+        for key, label in (
+            ("support_level", "level"),
+            ("artifact", "artifact"),
+            ("nearest_version", "nearest_version"),
+            ("matched_version", "matched_version"),
+        ):
+            value = entry.get(key)
+            if value:
+                fields.append(f"{label}=`{value}`")
+        line = " ".join(fields)
+        excerpt = str(entry.get("excerpt") or "").strip()
+        if excerpt:
+            line += f"\n  excerpt: {excerpt[:600]}"
+        source_url = str(entry.get("source_url") or "").strip()
+        if source_url:
+            line += f"\n  source: {source_url}"
+        lines.append(line)
+    return lines
 
 
 def _json_block(value: Any) -> str:

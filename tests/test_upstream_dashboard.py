@@ -95,3 +95,154 @@ class ResolveVersionTest(unittest.TestCase):
         ) as getter:
             upstream_dashboard.resolve_version("x265", "3.4")
         assert getter.call_args.kwargs["params"] == {"name": "x265", "version": "3.4"}
+
+
+def _software_payload() -> dict:
+    return {
+        "items": [
+            {
+                "id": 453,
+                "name": "Nginx",
+                "latest_version": "1.31.8",
+                "versions": [
+                    {
+                        "version": "1.31.7",
+                        "version_type": "superseded",
+                        "levels": [
+                            {
+                                "support_level": "L1",
+                                "evidence": [
+                                    {
+                                        "check_id": "kp.l1.arm_ci",
+                                        "result": "supported",
+                                        "matched_version": "1.31.7",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "version": "1.31.8",
+                        "version_type": "latest_release",
+                        "levels": [
+                            {
+                                "support_level": "L1",
+                                "evidence": [
+                                    {
+                                        "check_id": "kp.l1.arm_ci",
+                                        "result": "supported",
+                                        "matched_version": "1.31.8",
+                                    },
+                                    {
+                                        "check_id": "kp.l1.doc_declared",
+                                        "result": "not_found",
+                                    },
+                                    {
+                                        "check_id": "kp.l1.release_artifact",
+                                        "result": "not_found",
+                                    },
+                                ],
+                            },
+                            {
+                                "support_level": "L3",
+                                "evidence": [
+                                    {"check_id": "kp.l3.openeuler_conda", "result": "blocked"},
+                                    {"check_id": "kp.l3.openeuler_image", "result": "supported"},
+                                    {"check_id": "kp.l3.openeuler_rpm", "result": "not_found"},
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }
+        ]
+    }
+
+
+class FetchEvidenceTest(unittest.TestCase):
+    def test_returns_only_the_three_l1_checks(self) -> None:
+        with mock.patch.object(
+            upstream_dashboard.requests,
+            "get",
+            return_value=_Response(200, _software_payload()),
+        ):
+            evidence = upstream_dashboard.fetch_evidence("Nginx", "1.31.8")
+
+        self.assertEqual(len(evidence), 3)
+        self.assertEqual(
+            [item["check_id"] for item in evidence],
+            [
+                "kp.l1.arm_ci",
+                "kp.l1.doc_declared",
+                "kp.l1.release_artifact",
+            ],
+        )
+        # 每条证据都带上所属等级
+        self.assertTrue(all(item["support_level"] == "L1" for item in evidence))
+
+    def test_l3_only_software_has_no_l1_evidence(self) -> None:
+        payload = _software_payload()
+        payload["items"][0]["versions"][1]["levels"] = [
+            payload["items"][0]["versions"][1]["levels"][1]
+        ]
+        with mock.patch.object(
+            upstream_dashboard.requests, "get", return_value=_Response(200, payload)
+        ):
+            self.assertEqual(upstream_dashboard.fetch_evidence("Nginx", "1.31.8"), [])
+
+    def test_v_prefix_and_latest_version_fallback(self) -> None:
+        with mock.patch.object(
+            upstream_dashboard.requests,
+            "get",
+            return_value=_Response(200, _software_payload()),
+        ):
+            evidence = upstream_dashboard.fetch_evidence("Nginx", "v1.31.8")
+        self.assertEqual(len(evidence), 3)
+
+        with mock.patch.object(
+            upstream_dashboard.requests,
+            "get",
+            return_value=_Response(200, _software_payload()),
+        ):
+            evidence = upstream_dashboard.fetch_evidence("Nginx")
+        self.assertEqual(len(evidence), 3)
+
+    def test_exact_name_wins_over_fuzzy_matches(self) -> None:
+        payload = _software_payload()
+        payload["items"].insert(
+            0,
+            {
+                "id": 99,
+                "name": "Nginx (old)",
+                "versions": [
+                    {
+                        "version": "0.9.0",
+                        "version_type": "latest_release",
+                        "levels": [{"support_level": "L1", "evidence": [{"check_id": "wrong"}]}],
+                    }
+                ],
+            },
+        )
+        with mock.patch.object(
+            upstream_dashboard.requests, "get", return_value=_Response(200, payload)
+        ):
+            evidence = upstream_dashboard.fetch_evidence("Nginx", "1.31.8")
+        self.assertEqual(len(evidence), 3)
+        self.assertNotIn("wrong", [item["check_id"] for item in evidence])
+
+    def test_evidence_failures_never_raise(self) -> None:
+        for response in (
+            _Response(500, {"detail": "boom"}),
+            _Response(200, None),
+        ):
+            with mock.patch.object(
+                upstream_dashboard.requests, "get", return_value=response
+            ):
+                self.assertEqual(upstream_dashboard.fetch_evidence("Nginx"), [])
+
+        with mock.patch.object(
+            upstream_dashboard.requests,
+            "get",
+            side_effect=upstream_dashboard.requests.RequestException("offline"),
+        ):
+            self.assertEqual(upstream_dashboard.fetch_evidence("Nginx"), [])

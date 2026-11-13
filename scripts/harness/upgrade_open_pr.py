@@ -34,7 +34,8 @@ def build_body(item: dict, test_status: str) -> str:
         "## 变更",
         "",
         f"- 新增镜像目录：`{domain}/{app}/{version}/{os_version}/`",
-        f"- 复用上一版本目录结构，确定性替换版本号：`{domain}/{app}/<旧版本>/{os_version}` → 新版本",
+        f"- 复用上一版本目录结构；Dockerfile 由 AI 结合上游证据包与固定 tag 源码重新生成"
+        f"（非机械替换版本号）：`{domain}/{app}/<旧版本>/{os_version}` → 新版本",
         f"- `meta.yml` 追加 `{version}` 条目",
         "",
         f"## 功能测试",

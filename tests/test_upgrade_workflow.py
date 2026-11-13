@@ -71,7 +71,7 @@ def test_each_app_runs_prepare_dual_arch_validation_then_pr():
     assert 'upgrade_open_pr.py' in _squash(jobs['open-pr']['steps'])
 
 
-def test_prepare_generates_tests_and_applies_the_deterministic_bump():
+def test_prepare_generates_tests_and_applies_the_upgrade():
     prepare = _workflow(APP)['jobs']['prepare']
     text = _squash(prepare['steps'])
     assert 'upgrade_apply.py' in text

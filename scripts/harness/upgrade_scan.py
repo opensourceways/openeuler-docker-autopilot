@@ -17,7 +17,9 @@ Stage: 场景二 —— 应用升级候选发现（upgrade_scan）
 - 最新版本已存在同名目录（去 ``v`` 前缀、忽略大小写）→ 跳过；
 - 目标分支已有 open PR → 跳过；
 - os 目录沿用该应用最新的一个（不补齐所有 os 版本）；
-- 证据：``upstream_evidence.normalize`` + ``probe``（自探兜底），只作参考。
+- 证据：``upstream_evidence.normalize`` + ``upstream_dashboard.fetch_evidence``
+  （看板 ``/api/v1/software`` 采集证据，通常 3 条）+ ``probe``（自探兜底），只作参考，
+  抓取失败不阻断升级。
 
 输入: --repo <目标仓克隆>，可选 --app / --version / --apps-file / --limit
 输出: --format github-output → GITHUB_OUTPUT 写 updates=<json>；--format json → stdout
@@ -65,13 +67,21 @@ def existing_versions(app_dir: Path) -> set[str]:
 def _trim_evidence(evidence: dict) -> dict:
     trimmed = dict(evidence)
     collector = trimmed.get("collector") or []
-    trimmed["collector"] = collector[:_MAX_COLLECTOR_ITEMS]
+    trimmed["collector"] = [
+        _trim_mapping(item) for item in collector[:_MAX_COLLECTOR_ITEMS]
+    ]
     raw = trimmed.get("raw") or {}
-    trimmed["raw"] = {
-        key: (value if len(str(value)) <= _MAX_RAW_CHARS else str(value)[:_MAX_RAW_CHARS] + "…")
-        for key, value in raw.items()
-    }
+    trimmed["raw"] = _trim_mapping(raw)
     return trimmed
+
+
+def _trim_mapping(value: dict) -> dict:
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: (item if len(str(item)) <= _MAX_RAW_CHARS else str(item)[:_MAX_RAW_CHARS] + "…")
+        for key, item in value.items()
+    }
 
 
 def load_apps(path: str | Path | None = None) -> list[dict]:
@@ -147,6 +157,9 @@ def find_updates(
     apps_file: str | Path | None = None,
     resolve: Callable[..., dict | None] = upstream_dashboard.resolve_version,
     probe: Callable[[dict | None], dict] = upstream_evidence.probe,
+    fetch_evidence: Callable[[str, str], list[dict]] | None = (
+        upstream_dashboard.fetch_evidence
+    ),
     pr_exists: Callable[[str, str, str], dict | None] | None = None,
     target_repo: str = DEFAULT_TARGET_REPO,
     token: str = "",
@@ -239,6 +252,16 @@ def find_updates(
 
         evidence = upstream_evidence.normalize(payload)
         evidence["probe"] = probe_result
+        collector = list(evidence.get("collector") or [])
+        if fetch_evidence is not None:
+            try:
+                collector.extend(fetch_evidence(entry["name"], new_version))
+            except Exception as error:  # 证据只作参考，抓取失败不能阻断升级
+                log_stage(
+                    "upgrade-scan",
+                    f"{app}: 证据包抓取失败（非阻断）: {error}",
+                )
+        evidence["collector"] = collector
         updates.append(
             {
                 "app": app,

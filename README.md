@@ -126,7 +126,7 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 | **健康驱动的就绪判定** | 有 `HEALTHCHECK` 时等待 `healthy`，没有时完整观察 120 秒容器行为；`EXPOSE` 端口不参与就绪调度 |
 | **有界自动修复** | Fixer 依据结构化失败证据做最小范围修复，超出轮次上限即停止并保留证据 |
 | **上游版本自动发现** | 手动按清单调用 upstream-dashboard `version/resolve`（版本 + 上游证据包），与目标仓已有目录对比，跳过 `blocked_reason` / 已存在 / 已有 open PR；每日定时测试期关闭 |
-| **确定性版本升级** | 复制最新版本目录、整串替换 Dockerfile / README / `doc/image-info.yml` 中的旧版本号、追加 `meta.yml`；找不到旧版本串即失败交人工 |
+| **确定性版本升级** | 复制最新版本目录，Dockerfile 由 AI 依据上游证据包与固定 tag 源码重新生成（禁止机械替换版本号）；README / `doc/image-info.yml` 更新版本、追加 `meta.yml`；生成内容缺目标版本号即失败交人工 |
 | **上游证据适配** | 已知字段归一化、未知字段透传；证据缺失时自探 tag / release / 源码归档可达性；证据作为镜像构建与测试生成的输入，是否通过仍由构建与测试决定 |
 | **PR CI 失败修复（手动组件）** | `_ci_repair.yml` 复用原自动修复链路：诊断 → 容器内逐条执行修复 → arm64 复验，同一 PR 最多 6 个 run；入口为手动 / 显式 dispatch，不再自动轮询 |
 | **容器内逐条执行式修复** | 不在文本上盲改：在自托管 Runner 的容器里逐条执行 Dockerfile 指令、失败即修，跑通后反推 Dockerfile 并用 `docker build` 验证 |
@@ -389,15 +389,17 @@ validate-aarch64   aarch64 原生构建 + 功能测试（与 x86 并行）
 open-pr            跨仓 PR：变更说明 + 功能测试状态 + 上游证据
 ```
 
-- **确定性升级**（[`version_upgrade.py`](scripts/lib/version_upgrade.py)）：把该应用最新的 `{old_version}/{os}/` 复制为 `{new_version}/{os}/`，在新 Dockerfile 与应用根目录的 `README.md` / `doc/image-info.yml` 中整串替换旧版本号，并向 `meta.yml` 追加 `{new_version}-{oe_tag}` 条目。Dockerfile 里找不到旧版本串 → 直接失败（特化写法需人工），不产出半成品目录。
+- **Dockerfile 生成**（[`upgrade_apply.py`](scripts/harness/upgrade_apply.py)）：把旧版本 Dockerfile、目标版本与看板上游证据包（L1 的 3 条 `check`）一起注入升级 Agent，重新生成完整 Dockerfile；**不做版本串机械替换**，生成结果缺目标版本号或 `FROM` 即失败。
+- **确定性落盘**（[`version_upgrade.py`](scripts/lib/version_upgrade.py)）：把该应用最新的 `{old_version}/{os}/` 复制为 `{new_version}/{os}/`，写入 AI 生成的 Dockerfile，更新应用根目录 `README.md` / `doc/image-info.yml` 的版本号，并向 `meta.yml` 追加 `{new_version}-{oe_tag}` 条目。失败时清理半成品目录。
 - **补测试**（复用场景四）：应用没有 `tests/test.sh` 时调用 `testgen_generate.generate_test_script`，把上游证据作为额外上下文；生成失败**不阻断**升级，PR 正文标注「测试脚本待补」。
 - **双架构原生验证**：x86_64 / aarch64 各自真实构建并跑功能测试，不使用 QEMU；任一架构失败则不开 PR，证据留在 artifact，分支保留供人工或修复组件继续处理。
 - **分支**：`auto/version-update/<app>/<version>-<oe_tag>`，推送到 `GITCODE_FORK_REPO`（留空则直推目标仓），再从 fork 向目标仓提跨仓 PR。
 
 ### 4.3 上游证据
 
-接口目前只返回版本号，后续会补充采集到的上游证据。系统按「透传 + 适配」处理，**证据只作 AI 参考与 PR 留痕，不参与门禁**：
+`version/resolve` 返回版本定位信息，`/api/v1/software` 返回看板采集的上游证据（L1 的 3 条 `check`：ARM CI / 文档声明 / release 产物）。系统按「透传 + 适配」处理，**证据只作 AI 参考与 PR 留痕，不参与门禁**：
 
+- [`upstream_dashboard.py`](scripts/lib/upstream_dashboard.py) 额外抓取 `/api/v1/software` 的 L1 `evidence` 并拍平成 `collector` 列表；抓取失败返回空，不阻断升级；
 - [`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把已知字段（`tag` / `tag_url` / `commit_sha` / `source` / `fetched_at` 等）归一化，未知字段原样保留在 `raw`，并把 `evidence` / `checks` 等常见键提升为 `collector` 列表；
 - 证据缺失时**自探兜底**：探测 GitHub tag、release 与源码归档是否可达，结果写入 `probe`；
 - PR 正文与测试生成提示都会带上证据段；证据缺失或探测失败只告警，不影响升级主流程。
@@ -750,12 +752,12 @@ openeuler-docker-images-workflow/
 
 | 模块 | 职责 |
 |------|------|
-| [`scripts/lib/upstream_dashboard.py`](scripts/lib/upstream_dashboard.py) | `/api/v1/version/resolve` 客户端：浏览器 UA、400/404 确定性失败、502 重试、503 失败，返回原始 payload |
+| [`scripts/lib/upstream_dashboard.py`](scripts/lib/upstream_dashboard.py) | `/api/v1/version/resolve` 客户端：浏览器 UA、400/404 确定性失败、502 重试、503 失败，返回原始 payload；并从 `/api/v1/software` 抓取 L1 证据包（3 条 `check`） |
 | [`scripts/lib/upstream_evidence.py`](scripts/lib/upstream_evidence.py) | 上游证据适配：已知字段归一化、未知字段透传、`collector` 提升、自探兜底与 PR / 提示词渲染 |
 | [`scripts/harness/upgrade_scan.py`](scripts/harness/upgrade_scan.py) | 版本发现：读 `config/upgrade-apps.yml` × 看板解析 × 目标仓已有版本 → 升级矩阵（不遍历目标仓） |
 | [`scripts/utils/scrape_upgrade_apps.py`](scripts/utils/scrape_upgrade_apps.py) | 一次性工具：从看板拉软件列表（`--domain kunpeng` / `ascend`），匹配目标仓目录，生成初始 `config/upgrade-apps.yml` |
-| [`scripts/lib/version_upgrade.py`](scripts/lib/version_upgrade.py) | 确定性升级：复制版本目录、整串替换版本号、追加 `meta.yml`；找不到旧版本串即失败 |
-| [`scripts/harness/upgrade_apply.py`](scripts/harness/upgrade_apply.py) | 单应用升级：切分支、缺测试则补、执行 bump、commit、推送，并产出 `task-spec.json` |
+| [`scripts/lib/version_upgrade.py`](scripts/lib/version_upgrade.py) | 确定性落盘：复制版本目录、写入 AI 生成的 Dockerfile、更新 README/doc 版本号、追加 `meta.yml`；生成内容不符合目标版本即失败并清理 |
+| [`scripts/harness/upgrade_apply.py`](scripts/harness/upgrade_apply.py) | 单应用升级：切分支、AI 依证据包生成 Dockerfile、缺测试则补、确定性落盘、commit、推送，并产出 `task-spec.json` |
 | [`scripts/harness/upgrade_open_pr.py`](scripts/harness/upgrade_open_pr.py) | 升级 PR 正文（变更 + 功能测试状态 + 上游证据）与跨仓 PR 创建 |
 
 ### 10.6 CI 修复组件（手动，独立子系统）

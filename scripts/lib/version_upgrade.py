@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""确定性应用版本升级（场景二）。
+"""应用版本升级的确定性落盘（场景二）。
 
-社区 easysoftware-autoupgrade 的做法是「机械替换版本串 + 提 PR」，本模块把这步
-做成确定性代码，不做 AI 生成：
+Dockerfile 不再机械替换版本串：升级目标 Dockerfile 由 AI 结合看板证据包与上游
+源码生成（见 ``scripts/harness/upgrade_apply.py``），本模块只做确定性的目录复制、
+校验和元数据登记：
 
 1. 复制该应用最新的 ``{old_version}/{os_version}/`` 目录为 ``{new_version}/{os_version}/``；
-2. 新目录里的 ``Dockerfile``、应用根目录的 ``README.md`` / ``doc/image-info.yml`` 中把旧版本整串替换成新版本
-   （README 与 doc 在目标仓里位于应用根目录，与版本目录同级，不随版本复制）；
-3. 往 ``meta.yml`` 追加 ``<new_version>-<oe_tag>: {path: ...}`` 条目。
+2. 用 AI 生成的完整 Dockerfile 覆盖新目录中的 Dockerfile，并做最小可用性校验；
+3. 应用根目录的 ``README.md`` / ``doc/image-info.yml`` 中把旧版本整串替换成新版本；
+4. 往 ``meta.yml`` 追加 ``<new_version>-<oe_tag>: {path: ...}`` 条目。
 
-Fail closed：Dockerfile 里找不到旧版本串说明是特化写法（不是简单版本号拼接），
-直接报错交人工，绝不产出半成品目录。
+Fail closed：生成内容为空、缺 ``FROM`` 或没有出现新版本号时直接报错并清理目录，
+绝不产出半成品。
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from scripts.lib.task_spec import _os_tag
 
 
 class UpgradeError(RuntimeError):
-    """无法安全地做确定性升级。"""
+    """无法安全地完成升级落盘。"""
 
 
 @dataclass(frozen=True)
@@ -74,10 +75,37 @@ def _replace_version(text: str, old_version: str, new_version: str) -> tuple[str
     return pattern.subn(new_version, text)
 
 
-def apply_upgrade(app_dir: Path, plan: UpgradePlan, new_version: str) -> list[Path]:
-    """执行复制 + 版本串替换 + meta.yml 追加，返回被改动的文件列表。"""
+def check_dockerfile(text: str, new_version: str) -> list[str]:
+    """校验 AI 生成的 Dockerfile 是否真的表达新版本；返回可读问题列表。"""
+    findings: list[str] = []
+    stripped = (text or "").strip()
+    if not stripped:
+        findings.append("生成的 Dockerfile 为空")
+        return findings
+    if re.search(r"(?im)^\s*FROM\s+\S+", stripped) is None:
+        findings.append("生成的 Dockerfile 缺少 FROM 指令")
+    pattern = re.compile(
+        rf"(?<![0-9A-Za-z])v?{re.escape(new_version)}(?![0-9A-Za-z])",
+        re.IGNORECASE,
+    )
+    if pattern.search(stripped) is None:
+        findings.append(f"生成的 Dockerfile 没有出现目标版本 {new_version}")
+    return findings
+
+
+def apply_upgrade(
+    app_dir: Path,
+    plan: UpgradePlan,
+    new_version: str,
+    dockerfile_text: str,
+) -> list[Path]:
+    """复制目录、写入 AI 生成的 Dockerfile、更新版本元数据。"""
     if new_version == plan.old_version:
         raise UpgradeError(f"{app_dir.name}: 目标版本与当前版本相同（{new_version}）")
+
+    findings = check_dockerfile(dockerfile_text, new_version)
+    if findings:
+        raise UpgradeError(f"{app_dir.name}: " + "；".join(findings))
 
     dst_dir = app_dir / new_version / plan.os_version
     if dst_dir.exists():
@@ -99,20 +127,10 @@ def apply_upgrade(app_dir: Path, plan: UpgradePlan, new_version: str) -> list[Pa
         changed.append(path)
 
     try:
-        # 版本目录内：Dockerfile 随目录复制，在新目录里替换
         dockerfile = dst_dir / "Dockerfile"
-        hits = 0
-        if dockerfile.is_file():
-            text = dockerfile.read_text(encoding="utf-8")
-            updated, hits = _replace_version(text, plan.old_version, new_version)
-            if hits:
-                dockerfile.write_text(updated, encoding="utf-8")
-                changed.append(dockerfile)
-        if hits == 0:
-            raise UpgradeError(
-                f"{app_dir.name}: Dockerfile 中没有出现旧版本串 {plan.old_version}，"
-                "无法确定性升级（需要人工处理）"
-            )
+        dockerfile.write_text(dockerfile_text.rstrip() + "\n", encoding="utf-8")
+        changed.append(dockerfile)
+
         # 应用级文件：README / doc/image-info.yml 位于应用根目录，原地更新
         for rel in _ROOT_VERSION_FILES:
             path = app_dir / rel

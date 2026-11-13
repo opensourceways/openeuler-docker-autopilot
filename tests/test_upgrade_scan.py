@@ -51,6 +51,7 @@ class FindUpdatesTest(unittest.TestCase):
         )
         overrides.setdefault("resolve", lambda name: payload)
         overrides.setdefault("probe", lambda p: {"source": "self-probe", "status": "ok"})
+        overrides.setdefault("fetch_evidence", lambda name, version: [])
         return upgrade_scan.find_updates(repo_dir=self.repo, **overrides)
 
     def test_new_version_becomes_an_upgrade_item(self) -> None:
@@ -64,6 +65,34 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertEqual(item["source_url"], "https://github.com/apache/kvrocks")
         self.assertEqual(item["evidence"]["probe"]["status"], "ok")
         self.assertEqual(result["skipped"], [])
+
+    def test_dashboard_evidence_is_attached_to_the_item(self) -> None:
+        checks = [
+            {"check_id": "kp.l1.arm_ci", "result": "supported"},
+            {"check_id": "kp.l1.doc_declared", "result": "not_found"},
+            {"check_id": "kp.l1.release_artifact", "result": "not_found"},
+        ]
+        result = self._scan(
+            _payload("2.17.0"),
+            fetch_evidence=lambda name, version: checks,
+        )
+        item = result["updates"][0]
+        self.assertEqual(
+            [entry["check_id"] for entry in item["evidence"]["collector"]],
+            [
+                "kp.l1.arm_ci",
+                "kp.l1.doc_declared",
+                "kp.l1.release_artifact",
+            ],
+        )
+
+    def test_evidence_fetch_failure_does_not_block_the_upgrade(self) -> None:
+        def boom(name, version):
+            raise RuntimeError("dashboard offline")
+
+        result = self._scan(_payload("2.17.0"), fetch_evidence=boom)
+        self.assertEqual(len(result["updates"]), 1)
+        self.assertEqual(result["updates"][0]["evidence"]["collector"], [])
 
     def test_only_configured_apps_are_scanned(self) -> None:
         _make_app(self.repo, "Database", "unlisted")
@@ -131,6 +160,7 @@ class FindUpdatesTest(unittest.TestCase):
             apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
             resolve=fail,
             probe=lambda p: {},
+            fetch_evidence=lambda name, version: [],
         )
         self.assertEqual(result["updates"][0]["version"], "2.18.0")
 

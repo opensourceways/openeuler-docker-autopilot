@@ -5,11 +5,13 @@ Stage: 场景二单应用升级（upgrade_apply）
 在目标仓完整克隆上，对一个应用执行：
 
 1. 切出升级分支 ``auto/version-update/<app>/<ver>-<oe_tag>``；
-2. 若该应用缺功能测试脚本，复用场景四的 ``generate_test_script`` 生成
+2. AI 结合看板证据包与上游源码生成新版本 Dockerfile（**不做版本串机械替换**）；
+3. 若该应用缺功能测试脚本，复用场景四的 ``generate_test_script`` 生成
    ``tests/test.sh``（**只写工作树，不提交、不建 PR**）；生成失败不阻断升级；
-3. 确定性复制 + 版本串替换 + meta.yml 追加（:mod:`scripts.lib.version_upgrade`）；
-4. commit，推送到 fork，并把 ``self-probe`` 之外的上游证据写入
-   ``$RUNNER_TEMP/task-spec.json`` 供双架构验证复用。
+4. 确定性复制目录 + 写入 AI 生成的 Dockerfile + README/doc 版本更新 +
+   meta.yml 追加（:mod:`scripts.lib.version_upgrade`）；
+5. commit，推送到 fork，并把上游证据写入 ``$RUNNER_TEMP/task-spec.json``
+   供双架构验证复用。
 
 输入: --item '<json>'（upgrade_scan 的产物）
 环境: GITCODE_TOKEN, GITCODE_FORK_REPO(可选), SOURCE_REPO_DIR, TARGET_REPO,
@@ -30,12 +32,24 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.lib import ai_provider, upstream_evidence, version_upgrade  # noqa: E402
-from scripts.lib.stage_common import log_stage, normalize_repo  # noqa: E402
+from scripts.lib.agent_runtime import run_agent  # noqa: E402
+from scripts.lib.stage_common import (  # noqa: E402
+    agent_prompt_file,
+    log_stage,
+    normalize_repo,
+)
 from scripts.lib.task_spec import TaskSpec, _os_tag  # noqa: E402
 
 DEFAULT_SOURCE_REPO_DIR = os.path.join(PROJECT_ROOT, "source-repo")
 DEFAULT_TARGET_REPO = "openeuler/openeuler-docker-images"
 DEFAULT_TARGET_BRANCH = "master"
+
+DOCKERFILE_AGENT_ROLE = "upgrade_creator"
+DOCKERFILE_REQUIRED_KEYS = ("success", "dockerfile", "summary")
+# 首次生成 + 最多 1 轮按校验问题重写。
+MAX_DOCKERFILE_ROUNDS = 2
+# prepare job 还要补测试与推送，单轮生成不能占满整个 job 预算。
+DOCKERFILE_AGENT_TIMEOUT_SECONDS = 1800
 
 
 def _env(name: str, default: str = "") -> str:
@@ -110,6 +124,129 @@ def _ensure_test_script(
     return "added"
 
 
+def build_dockerfile_prompt(
+    *,
+    app: str,
+    domain: str,
+    plan: version_upgrade.UpgradePlan,
+    item: dict,
+    old_dockerfile: str,
+    findings: list[str] | None = None,
+) -> str:
+    """组装升级 Dockerfile 生成提示：角色规则 + 任务契约 + 旧文件 + 证据包。"""
+    prompt = Path(agent_prompt_file("upgrade-creator")).read_text(encoding="utf-8")
+    evidence = item.get("evidence") or {}
+    contract = {
+        "app": app,
+        "domain": domain,
+        "old_version": plan.old_version,
+        "new_version": str(item["version"]),
+        "os_version": plan.os_version,
+        "dockerfile_path": (
+            f"{domain}/{app}/{plan.old_version}/{plan.os_version}/Dockerfile"
+        ),
+        "source_url": str(item.get("source_url") or ""),
+        "tag": evidence.get("tag"),
+        "tag_url": evidence.get("tag_url"),
+        "commit_sha": evidence.get("commit_sha"),
+        "output_field": "dockerfile",
+    }
+    prompt += (
+        "\n\n## Immutable task contract\n\n"
+        + json.dumps(contract, indent=2, ensure_ascii=False)
+        + "\n\n## Current Dockerfile (previous version)\n\n```dockerfile\n"
+        + old_dockerfile.rstrip()
+        + "\n```\n"
+    )
+    prompt += "\n\n" + upstream_evidence.render_prompt(evidence).strip() + "\n"
+    if findings:
+        prompt += (
+            "\n## Validation report to resolve\n\n"
+            "上一轮生成的 Dockerfile 未通过确定性校验，逐条修正后重新生成完整文件：\n"
+            + json.dumps(findings, indent=2, ensure_ascii=False)
+            + "\n"
+        )
+    prompt += (
+        "\n## Final response contract\n\n"
+        "最终响应必须恰好是一个 JSON 对象，包含以下键："
+        "success(bool)、dockerfile(str，完整 Dockerfile 文本)、"
+        "summary(str)、error(null 或 str)。"
+        "不得修改工作区文件；只返回 JSON。\n"
+    )
+    return prompt
+
+
+def _reset_workspace(repo_dir: Path) -> None:
+    """清掉 Agent 可能写下的改动；Dockerfile 只通过 JSON 返回。"""
+    _git(repo_dir, "checkout", "--", ".", check=False)
+    _git(repo_dir, "clean", "-fd", check=False)
+
+
+def _generate_dockerfile(
+    *,
+    repo_dir: Path,
+    app: str,
+    domain: str,
+    plan: version_upgrade.UpgradePlan,
+    item: dict,
+) -> str:
+    """让 AI 结合证据包生成新版本 Dockerfile；失败即终止，不回落机械替换。"""
+    api_key = ai_provider.api_key()
+    executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
+    if not api_key or not executable:
+        raise version_upgrade.UpgradeError(
+            f"{app}: 缺少 AI 凭证/opencode，无法生成 Dockerfile"
+            "（场景二禁止机械替换版本串）"
+        )
+
+    old_dockerfile = (plan.src_dir / "Dockerfile").read_text(encoding="utf-8")
+    findings: list[str] = []
+    for round_no in range(MAX_DOCKERFILE_ROUNDS):
+        prompt = build_dockerfile_prompt(
+            app=app,
+            domain=domain,
+            plan=plan,
+            item=item,
+            old_dockerfile=old_dockerfile,
+            findings=findings or None,
+        )
+        log_stage(
+            "upgrade-apply",
+            f"{app}: dockerfile agent round {round_no + 1}",
+        )
+        try:
+            result = run_agent(
+                executable=Path(executable),
+                role=DOCKERFILE_AGENT_ROLE,
+                prompt=prompt,
+                workspace=repo_dir,
+                api_key=api_key,
+                required_keys=DOCKERFILE_REQUIRED_KEYS,
+                timeout=DOCKERFILE_AGENT_TIMEOUT_SECONDS,
+            )
+        finally:
+            _reset_workspace(repo_dir)
+
+        payload = result.payload
+        if not bool(payload.get("success")):
+            findings = [str(payload.get("error") or "Agent 报告生成失败")]
+        else:
+            candidate = payload.get("dockerfile")
+            if not isinstance(candidate, str) or not candidate.strip():
+                findings = ["Agent 未返回非空的 dockerfile 字符串"]
+            else:
+                findings = version_upgrade.check_dockerfile(
+                    candidate, str(item["version"])
+                )
+                if not findings:
+                    return candidate
+        log_stage("upgrade-apply", f"{app}: dockerfile findings={findings}")
+
+    raise version_upgrade.UpgradeError(
+        f"{app}: AI 生成的 Dockerfile 未通过校验：{'；'.join(findings)}"
+    )
+
+
 def run(item: dict, *, task_spec_out: Path) -> int:
     app = str(item["app"])
     domain = str(item["domain"])
@@ -134,10 +271,15 @@ def run(item: dict, *, task_spec_out: Path) -> int:
         "upgrade-apply",
         f"{app}: {plan.old_version} -> {new_version} (os={plan.os_version})",
     )
+    dockerfile_text = _generate_dockerfile(
+        repo_dir=repo_dir, app=app, domain=domain, plan=plan, item=item
+    )
     test_status = _ensure_test_script(
         repo_dir=repo_dir, app=app, domain=domain, plan=plan, item=item
     )
-    changed = version_upgrade.apply_upgrade(app_dir, plan, new_version)
+    changed = version_upgrade.apply_upgrade(
+        app_dir, plan, new_version, dockerfile_text
+    )
 
     _git(repo_dir, "add", "-A", str(app_dir.relative_to(repo_dir)))
     commit_name = _env("GIT_COMMIT_NAME", "github-actions[bot]")

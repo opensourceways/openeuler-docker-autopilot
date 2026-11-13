@@ -56,7 +56,7 @@
 | 上游版本监控 | easysoftware 的 `projectsInfoUrl` 数据来自 anitya，覆盖 GitHub / PyPI / npm / Rubygems / CPAN 等生态的上游版本跟踪 | **直接复用**。应用名作为 anitya 查找 key（`projectsInfoUrl + appName`），新应用在 `doc/image-info.yml` 中补齐 `upstream` 块与顶层 `homepage`（见 2.3 节），新版本由 webhook 触发，无需轮询 |
 | PR 去重 | `checkHasCreatePR()` 遍历已有 open PR，按 title 精确匹配，命中则跳过 | 同样按 title 匹配去重，PR 生成前检查，防止重复提交 |
 | 批量更新 | `batchUpdatePremiumApp()` 遍历 DockerHub 上所有 openEuler OS 版本，对缺最新镜像的版本生成 Dockerfile | oe-upgrade 场景的 Matrix 并行策略直接借鉴此模式 |
-| 差异化 Dockerfile | 复制已有版本的目录树，替换 Dockerfile 中的版本字符串，更新 meta.yml | Creator Agent 在版本更新场景下的标准操作：复制 → 替换 → 追加 |
+| 差异化 Dockerfile | 复制已有版本的目录树，替换 Dockerfile 中的版本字符串，更新 meta.yml | 复制已有版本目录 + 追加 meta.yml；Dockerfile 不机械替换版本串，由升级 Agent 结合看板上游证据包与固定 tag 源码重新生成，再经双架构构建裁决 |
 | 分支策略 | Fork 到 bot 账号 → 跨仓库 PR | **按凭据权限二选一**：无目标仓写权限时推 fork、提跨仓 PR；有写权限时直推目标仓、提同仓 PR。两者只差一个配置项（见 8.3 节） |
 
 **调整的决策：**

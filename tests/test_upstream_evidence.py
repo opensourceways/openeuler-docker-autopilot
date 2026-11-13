@@ -115,3 +115,22 @@ class RenderTest(unittest.TestCase):
 
         self.assertIn("reference only", text)
         self.assertIn("v26.8.2.7-lts", text)
+
+    def test_prompt_renders_each_dashboard_check(self) -> None:
+        payload = dict(
+            _PAYLOAD,
+            upstream_evidence=[
+                {
+                    "check_id": "kp.l1.release_artifact",
+                    "result": "not_found",
+                    "excerpt": "release 只有源码包，无 arm64 资产",
+                    "source_url": "https://github.com/nginx/nginx/releases/tag/release-1.31.8",
+                }
+            ],
+        )
+        text = upstream_evidence.render_prompt(upstream_evidence.normalize(payload))
+
+        self.assertIn("Dashboard checks (1 entries", text)
+        self.assertIn("kp.l1.release_artifact", text)
+        self.assertIn("release 只有源码包，无 arm64 资产", text)
+        self.assertIn("https://github.com/nginx/nginx/releases/tag/release-1.31.8", text)

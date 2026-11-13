@@ -94,7 +94,13 @@ _VISIBLE_ACTION_TOOLS = {
     "webfetch",
     "write",
 }
-_WRITE_ROLES = {"image_creator", "testcase_creator", "testgen_creator", "fixer"}
+_WRITE_ROLES = {
+    "image_creator",
+    "testcase_creator",
+    "testgen_creator",
+    "upgrade_creator",
+    "fixer",
+}
 _READ_ONLY_ROLES = {"testcase_qa"}
 _ROLES = _WRITE_ROLES | _READ_ONLY_ROLES
 SCRATCH_DIR = ".oe-scratch"
