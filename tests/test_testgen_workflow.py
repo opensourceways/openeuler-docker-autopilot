@@ -97,7 +97,11 @@ def _workflow_text() -> str:
 
 def test_runner_labels_resolve_from_inputs_then_vars():
     text = _workflow_text()
-    assert text.count("vars.TESTGEN_RUNNER_LABELS ||\n          '[\"ubuntu-latest\"]'") == 2
+    # GitHub 托管 Runner 在本账号不可用（额度），默认走自托管 X64
+    assert text.count(
+        "vars.TESTGEN_RUNNER_LABELS ||\n"
+        '          \'["self-hosted","Linux","X64","oe-image-x86"]\''
+    ) == 2
 
 
 def test_target_repo_is_pinned_to_gitcode_images():

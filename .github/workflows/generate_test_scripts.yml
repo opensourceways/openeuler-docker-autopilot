@@ -28,7 +28,9 @@ on:
         type: string
 
 permissions:
-  contents: read
+  # testgen-log 状态分支（done/exhausted 标记）需要写权限；
+  # 未配置 DISPATCH_TOKEN 时脚本回退到本仓库 token
+  contents: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -44,7 +46,7 @@ jobs:
     name: Scan dashboard vs target repo
     runs-on: >-
       ${{ fromJSON(inputs.runner_labels || vars.TESTGEN_RUNNER_LABELS ||
-          '["ubuntu-latest"]') }}
+          '["self-hosted","Linux","X64","oe-image-x86"]') }}
     timeout-minutes: 20
     outputs:
       candidates: ${{ steps.scan.outputs.candidates }}
@@ -73,6 +75,7 @@ jobs:
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN || github.token }}
           TESTGEN_LIMIT: ${{ inputs.limit || vars.TESTGEN_MAX_PER_ROUND || '10' }}
         run: |
           ARGS=(--repo source-repo --format github-output)
@@ -93,7 +96,7 @@ jobs:
         item: ${{ fromJSON(needs.scan.outputs.candidates) }}
     runs-on: >-
       ${{ fromJSON(inputs.runner_labels || vars.TESTGEN_RUNNER_LABELS ||
-          '["ubuntu-latest"]') }}
+          '["self-hosted","Linux","X64","oe-image-x86"]') }}
     timeout-minutes: 90
     steps:
       - name: Check out workflow source
@@ -128,6 +131,7 @@ jobs:
             ${{ vars.OPENAI_BASE_URL || 'https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1' }}
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.DISPATCH_TOKEN || github.token }}
           GITCODE_FORK_REPO: ${{ vars.GITCODE_FORK_REPO }}
           GIT_COMMIT_NAME: ${{ vars.GIT_COMMIT_NAME }}
           GIT_COMMIT_EMAIL: ${{ vars.GIT_COMMIT_EMAIL }}
