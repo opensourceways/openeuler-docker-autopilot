@@ -18,6 +18,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -69,13 +70,27 @@ def _env(name: str, default: str = "") -> str:
     return (os.environ.get(name) or default).strip()
 
 
+def _redact(text: str) -> str:
+    """Strip the push token out of anything destined for the logs."""
+    return re.sub(r"oauth2:[^@]+@", "oauth2:***@", text)
+
+
 def _git(repo_dir: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    completed = subprocess.run(
         ["git", "-C", str(repo_dir), *args],
         capture_output=True,
         text=True,
-        check=check,
+        check=False,
     )
+    if check and completed.returncode != 0:
+        # git 的失败原因只在 stderr 里；不显式打出来，Actions 日志里就只剩一个
+        # 退出码，排查得靠猜。
+        detail = _redact((completed.stderr or completed.stdout or "").strip())
+        raise RuntimeError(
+            f"git {_redact(' '.join(args))} failed "
+            f"({completed.returncode}): {detail[:2000]}"
+        )
+    return completed
 
 
 def branch_name(app: str) -> str:
