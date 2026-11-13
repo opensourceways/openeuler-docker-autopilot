@@ -6,7 +6,8 @@ name: App Version Upgrade
 #   /api/v1/version/resolve，拿到最新版本 + 上游证据包 → 与目标仓已有版本目录
 #   对比 → 缺新版本的应用执行「补功能测试 + AI 依证据包生成 Dockerfile +
 #   双架构原生验证 + 跨仓 PR」；已是最新版本的应用**不跳过**，交给 audit 做
-#   AI 审计（Dockerfile 问题 / 证据对齐 / 镜像版本 / 测试脚本），只出报告不开 PR。
+#   AI 审计（Dockerfile 问题 / 证据对齐 / 镜像版本 / 测试脚本），再由修复 Agent
+#   更新 Dockerfile 与 doc/image-info.yml，推分支开 PR。
 #
 # 版本源只认看板接口（文档见 opensourceways/upstream-dashboard docs/external-api.md）。
 # 证据包的归纳/透传见 scripts/lib/upstream_evidence.py，作为镜像构建与测试生成的
@@ -128,9 +129,9 @@ jobs:
       os_version: ${{ matrix.item.os_version }}
       source_url: ${{ matrix.item.source_url }}
 
-  # ── 审计：已是最新版本也不跳过，AI 检查 Dockerfile/证据/版本/测试 ────
+  # ── 审计并修复：已是最新版本也不跳过，AI 检查后提 PR ──────────────
   audit:
-    name: "Audit ${{ matrix.item.app }}"
+    name: "Audit and fix ${{ matrix.item.app }}"
     needs: discover
     if: needs.discover.outputs.audits != '[]' && needs.discover.outputs.audits != ''
     strategy:
@@ -167,7 +168,7 @@ jobs:
             echo "## 应用自动升级"
             echo ""
             echo "- 升级任务结果：\`${{ needs.upgrade.result || 'skipped' }}\`"
-            echo "- 审计任务结果：\`${{ needs.audit.result || 'skipped' }}\`"
+            echo "- 审计/修复任务结果：\`${{ needs.audit.result || 'skipped' }}\`"
             echo "- 跳过明细："
             echo ""
             echo '```json'

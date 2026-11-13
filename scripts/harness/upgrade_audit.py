@@ -9,14 +9,16 @@ Stage: 场景二「已是最新版本」的 AI 审计（upgrade_audit）
 3. 构建出的镜像版本是否正确（Dockerfile ARG、clone tag、meta.yml 是否一致）；
 4. 是否有功能测试脚本，脚本质量是否足够。
 
-先跑确定性检查（版本、tag、meta、测试脚本存在性），再把 Dockerfile、meta.yml、
-测试脚本和上游证据一起交给 ``upgrade_auditor`` Agent 做语义审计。
-``--dry-run`` 只输出确定性检查与将发送给 Agent 的上下文，不调用 AI。
+先跑确定性检查（版本、tag、meta、测试脚本、image-info），再把 Dockerfile、meta.yml、
+测试脚本和上游证据一起交给 ``upgrade_auditor`` Agent 做语义审计。``--deliver`` 时
+继续调用 ``upgrade_fixer`` Agent，修正 Dockerfile 并按测试脚本更新
+``doc/image-info.yml``，过确定性校验后推分支并开 PR。
 
 输入: --item '<json>'（upgrade_scan 的 audits 条目）
-环境: SOURCE_REPO_DIR（默认 PROJECT_ROOT/source-repo）、AI_API_KEY、OPENCODE_BIN
+环境: SOURCE_REPO_DIR（默认 PROJECT_ROOT/source-repo）、AI_API_KEY、OPENCODE_BIN；
+      --deliver 还需要 GITCODE_TOKEN / GITCODE_FORK_REPO（可选）/ TARGET_*
 输出: --out <dir> 下的 audit.json / audit.md；同时写入 GITHUB_STEP_SUMMARY
-退出码: 0 审计完成（无论是否发现问题）；AI 调用/契约失败 → 1
+退出码: 0 审计/修复完成；AI 调用/契约/修复校验失败 → 1
 """
 
 import argparse
@@ -28,18 +30,27 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
-from scripts.lib import ai_provider, upstream_evidence  # noqa: E402
+from scripts.lib import ai_provider, upstream_evidence, version_upgrade  # noqa: E402
 from scripts.lib.agent_runtime import run_agent  # noqa: E402
+from scripts.lib.ci_gitcode_api import (  # noqa: E402
+    create_pull_request,
+    find_any_pr_by_head_branch,
+)
 from scripts.lib.stage_common import (  # noqa: E402
     agent_prompt_file,
     log_stage,
+    normalize_repo,
 )
 from scripts.lib.task_spec import _os_tag  # noqa: E402
 
 DEFAULT_SOURCE_REPO_DIR = os.path.join(PROJECT_ROOT, "source-repo")
+DEFAULT_TARGET_REPO = "openeuler/openeuler-docker-images"
+DEFAULT_TARGET_BRANCH = "master"
 AUDIT_AGENT_ROLE = "upgrade_auditor"
 AUDIT_REQUIRED_KEYS = (
     "success",
@@ -48,6 +59,14 @@ AUDIT_REQUIRED_KEYS = (
     "evidence_alignment",
     "version_check",
     "test_script",
+    "summary",
+)
+FIX_AGENT_ROLE = "upgrade_fixer"
+FIX_REQUIRED_KEYS = (
+    "success",
+    "dockerfile",
+    "image_info",
+    "changes",
     "summary",
 )
 AUDIT_AGENT_TIMEOUT_SECONDS = 1800
@@ -109,7 +128,6 @@ def collect_context(repo_dir: Path, item: dict) -> dict:
 
     meta = _read(app_dir / "meta.yml")
     readme = _read(app_dir / "README.md")
-    info = _read(app_dir / "doc" / "image-info.yml")
     scripts = find_test_scripts(app_dir)
 
     return {
@@ -121,7 +139,7 @@ def collect_context(repo_dir: Path, item: dict) -> dict:
         "dockerfile": _truncate(_read(dockerfile_path)),
         "meta_yml": _truncate(meta),
         "readme": _truncate(readme[:4000]),
-        "image_info": _truncate(info[:4000]),
+        "image_info": _read(app_dir / "doc" / "image-info.yml"),
         "test_scripts": [
             {
                 "path": path.relative_to(repo_dir).as_posix(),
@@ -132,6 +150,94 @@ def collect_context(repo_dir: Path, item: dict) -> dict:
         "evidence": item.get("evidence") or {},
         "source_url": str(item.get("source_url") or ""),
     }
+
+
+def _test_commands(scripts: list[dict]) -> list[str]:
+    """Commands the test script actually invokes; used to align image-info usage."""
+    commands: set[str] = set()
+    noise = {
+        "if", "then", "else", "fi", "for", "while", "do", "done", "case",
+        "esac", "function", "local", "return", "echo", "printf", "export",
+        "readonly", "set", "shift", "exit", "source", "command", "test",
+        "true", "false", "docker", "sudo",
+    }
+    for script in scripts:
+        text = script["content"]
+        commands.update(
+            match.group(2)
+            for match in re.finditer(
+                r'(?m)^\s*([A-Z0-9_]+)_BIN="([^"\s]+)"', text
+            )
+        )
+        commands.update(
+            re.findall(r"command\s+-v\s+[\"']?([A-Za-z0-9._-]+)", text)
+        )
+        commands.update(
+            match.group(1)
+            for match in re.finditer(
+                r"(?m)^\s*([a-zA-Z][a-zA-Z0-9._-]+)(?=\s)", text
+            )
+            if not match.group(1).endswith("_BIN")
+            and match.group(1) not in noise
+            and match.group(1) != "main"
+        )
+    return sorted(commands)
+
+
+def _image_info_findings(context: dict) -> list[dict]:
+    findings: list[dict] = []
+    text = context["image_info"]
+    if not text.strip():
+        return findings
+
+    try:
+        parsed = yaml.safe_load(text)
+    except yaml.YAMLError as error:
+        findings.append(
+            {
+                "code": "image_info.invalid_yaml",
+                "severity": "major",
+                "component": "image-info",
+                "message": f"doc/image-info.yml 不是合法 YAML：{error}",
+            }
+        )
+        parsed = None
+    if parsed is not None and not isinstance(parsed, dict):
+        findings.append(
+            {
+                "code": "image_info.invalid_root",
+                "severity": "major",
+                "component": "image-info",
+                "message": "doc/image-info.yml 根节点不是对象",
+            }
+        )
+
+    if str(context["version"]) not in text:
+        findings.append(
+            {
+                "code": "image_info.version_missing",
+                "severity": "major",
+                "component": "image-info",
+                "message": (
+                    f"doc/image-info.yml 没有出现目标版本 {context['version']}"
+                ),
+            }
+        )
+
+    commands = _test_commands(context["test_scripts"])
+    if commands and not any(command in text for command in commands):
+        findings.append(
+            {
+                "code": "image_info.test_commands_missing",
+                "severity": "major",
+                "component": "image-info",
+                "message": (
+                    "doc/image-info.yml 的 usage 与测试脚本命令不一致；"
+                    f"测试脚本使用 {commands}，但 image-info 中都没有出现"
+                ),
+            }
+        )
+    return findings
 
 
 def deterministic_findings(context: dict) -> list[dict]:
@@ -171,13 +277,7 @@ def deterministic_findings(context: dict) -> list[dict]:
         )
 
     if expected_tag:
-        tags = [value for value in args["TAG"] if not value.startswith("$")]
-        clone_refs = [
-            value
-            for value in _CLONE_BRANCH_RE.findall(dockerfile)
-            if not value.startswith("$")
-        ]
-        observed = tags or clone_refs
+        observed = _observed_tags(dockerfile)
         if observed and all(_norm(value) != _norm(expected_tag) for value in observed):
             findings.append(
                 {
@@ -237,6 +337,7 @@ def deterministic_findings(context: dict) -> list[dict]:
                 "message": "看板未返回 L1 证据包，镜像构建只能以 tag/commit 与上游源码为准",
             }
         )
+    findings.extend(_image_info_findings(context))
     return findings
 
 
@@ -275,6 +376,12 @@ def deterministic_summary(context: dict, findings: list[dict]) -> dict:
             "expected": context["version"],
             "tag": evidence.get("tag"),
             "ok": not any(f["code"] in version_codes for f in findings),
+        },
+        "image_info": {
+            "present": bool(context["image_info"]),
+            "issue_count": len(
+                [f for f in findings if f["component"] == "image-info"]
+            ),
         },
         "test_script": {
             "present": bool(tests),
@@ -338,13 +445,36 @@ def build_prompt(context: dict, findings: list[dict]) -> str:
     return "".join(parts)
 
 
-def _git(repo_dir: Path, *args: str) -> None:
-    subprocess.run(
+def _observed_tags(dockerfile: str) -> list[str]:
+    arg_tags = [
+        match.group(2)
+        for match in _ARG_RE.finditer(dockerfile)
+        if match.group(1).upper() == "TAG" and not match.group(2).startswith("$")
+    ]
+    clone_refs = [
+        value
+        for value in _CLONE_BRANCH_RE.findall(dockerfile)
+        if not value.startswith("$")
+    ]
+    return arg_tags or clone_refs
+
+
+def _git(repo_dir: Path, *args: str, check: bool = False) -> subprocess.CompletedProcess:
+    completed = subprocess.run(
         ["git", "-C", str(repo_dir), *args],
         capture_output=True,
         text=True,
         check=False,
     )
+    if check and completed.returncode != 0:
+        detail = re.sub(
+            r"oauth2:[^@]+@", "oauth2:***@",
+            (completed.stderr or completed.stdout or "").strip(),
+        )
+        raise RuntimeError(
+            f"git {' '.join(args)} failed ({completed.returncode}): {detail[:2000]}"
+        )
+    return completed
 
 
 def _reset_workspace(repo_dir: Path) -> None:
@@ -388,8 +518,300 @@ def run_agent_audit(context: dict, findings: list[dict], repo_dir: Path) -> dict
     return payload
 
 
+def build_fix_prompt(
+    context: dict, findings: list[dict], audit_payload: dict
+) -> str:
+    """组装修复提示：审计结论 + 现有文件 + 测试脚本 + 证据。"""
+    prompt = Path(agent_prompt_file("upgrade-fixer")).read_text(encoding="utf-8")
+    contract = {
+        "app": context["app"],
+        "domain": context["domain"],
+        "expected_version": context["version"],
+        "os_version": context["os_version"],
+        "dockerfile_path": context["dockerfile_path"],
+        "image_info_path": (
+            f"{context['domain']}/{context['app']}/doc/image-info.yml"
+        ),
+        "source_url": context["source_url"],
+        "tag": (context["evidence"] or {}).get("tag"),
+        "tag_url": (context["evidence"] or {}).get("tag_url"),
+        "commit_sha": (context["evidence"] or {}).get("commit_sha"),
+        "test_script_paths": [s["path"] for s in context["test_scripts"]],
+    }
+    parts = [
+        prompt,
+        "\n\n## Immutable fix contract\n\n"
+        + json.dumps(contract, indent=2, ensure_ascii=False),
+        "\n\n## Deterministic findings\n\n"
+        + json.dumps(findings, indent=2, ensure_ascii=False),
+        "\n\n## AI audit conclusion\n\n"
+        + json.dumps(audit_payload, indent=2, ensure_ascii=False),
+        "\n\n## Current Dockerfile\n\n```dockerfile\n"
+        + context["dockerfile"].rstrip()
+        + "\n```\n",
+        "\n\n## Current meta.yml\n\n```yaml\n"
+        + context["meta_yml"].rstrip()
+        + "\n```\n",
+    ]
+    if context["image_info"]:
+        parts.append(
+            "\n\n## Current doc/image-info.yml\n\n```yaml\n"
+            + _truncate(context["image_info"]).rstrip()
+            + "\n```\n"
+        )
+    else:
+        parts.append("\n\n## Current doc/image-info.yml\n\n不存在。\n")
+    for script in context["test_scripts"]:
+        parts.append(
+            f"\n\n## Test script: {script['path']}\n\n```bash\n"
+            + script["content"].rstrip()
+            + "\n```\n"
+        )
+    parts.append("\n\n" + upstream_evidence.render_prompt(context["evidence"]))
+    parts.append(
+        "\n\n## Final response contract\n\n"
+        "最终响应必须恰好是一个 JSON 对象，包含以下键："
+        "success(bool)、dockerfile(str，完整 Dockerfile)、"
+        "image_info(str，完整 doc/image-info.yml；不需要修改时原样返回)、"
+        "changes(list[str])、summary(str)、error(null 或 str)。"
+        "不得修改工作区文件；只返回 JSON。\n"
+    )
+    return "".join(parts)
+
+
+def validate_fix(context: dict, payload: dict) -> list[str]:
+    """修复结果的确定性校验；不通过就不允许推送。"""
+    problems: list[str] = []
+    dockerfile = str(payload.get("dockerfile") or "")
+    problems.extend(
+        version_upgrade.check_dockerfile(dockerfile, str(context["version"]))
+    )
+
+    expected_tag = str((context["evidence"] or {}).get("tag") or "").strip()
+    if expected_tag:
+        observed = _observed_tags(dockerfile)
+        if observed and all(_norm(value) != _norm(expected_tag) for value in observed):
+            problems.append(
+                f"Dockerfile 使用的 tag {observed} 与看板 tag {expected_tag} 不一致"
+            )
+
+    image_info = payload.get("image_info")
+    if image_info is not None:
+        text = str(image_info)
+        if context["image_info"] and not text.strip():
+            problems.append("doc/image-info.yml 被清空")
+        else:
+            try:
+                parsed = yaml.safe_load(text)
+            except yaml.YAMLError as error:
+                problems.append(f"doc/image-info.yml 不是合法 YAML：{error}")
+                parsed = None
+            if parsed is not None and not isinstance(parsed, dict):
+                problems.append("doc/image-info.yml 根节点不是对象")
+            if str(context["version"]) not in text:
+                problems.append(
+                    f"doc/image-info.yml 没有出现目标版本 {context['version']}"
+                )
+            commands = _test_commands(context["test_scripts"])
+            if commands and not any(command in text for command in commands):
+                problems.append(
+                    f"doc/image-info.yml 仍未包含测试脚本命令 {commands}"
+                )
+    return problems
+
+
+def apply_fix(repo_dir: Path, context: dict, payload: dict) -> list[Path]:
+    """把修复结果写入工作树，返回实际改动的文件。"""
+    changed: list[Path] = []
+
+    dockerfile_path = repo_dir / context["dockerfile_path"]
+    original = _read(dockerfile_path)
+    updated = str(payload["dockerfile"]).rstrip() + "\n"
+    if updated != original:
+        dockerfile_path.write_text(updated, encoding="utf-8")
+        changed.append(dockerfile_path)
+
+    image_info = payload.get("image_info")
+    if isinstance(image_info, str) and image_info.strip():
+        image_info_path = (
+            repo_dir / context["domain"] / context["app"] / "doc" / "image-info.yml"
+        )
+        updated_info = image_info.rstrip() + "\n"
+        if not image_info_path.is_file() or _read(image_info_path) != updated_info:
+            image_info_path.parent.mkdir(parents=True, exist_ok=True)
+            image_info_path.write_text(updated_info, encoding="utf-8")
+            changed.append(image_info_path)
+    return changed
+
+
+def _branch_name(app: str, version: str) -> str:
+    return f"auto/image-audit/{app}/{version}"
+
+
+def build_fix_pr_body(
+    context: dict,
+    findings: list[dict],
+    audit_payload: dict,
+    fix_payload: dict,
+) -> str:
+    lines = [
+        f"本 PR 修复 **{context['app']} {context['version']}** 的审计问题，"
+        f"并同步 `doc/image-info.yml`（openEuler `{context['os_version']}`）。",
+        "",
+        "## 审计结论",
+        "",
+        f"- AI verdict：`{audit_payload.get('verdict')}`",
+        f"- 摘要：{audit_payload.get('summary')}",
+        "",
+    ]
+    for issue in audit_payload.get("dockerfile_issues") or []:
+        lines.append(
+            f"- **{issue.get('severity', 'unknown')}** {issue.get('message', '')}"
+        )
+    for finding in findings:
+        lines.append(
+            f"- **{finding['severity']}** `{finding['code']}`：{finding['message']}"
+        )
+    lines += ["", "## 变更", ""]
+    for change in fix_payload.get("changes") or []:
+        lines.append(f"- {change}")
+    if context["test_scripts"]:
+        lines += ["", "## 测试脚本依据", ""]
+        for script in context["test_scripts"]:
+            lines.append(f"- `{script['path']}`")
+        commands = _test_commands(context["test_scripts"])
+        if commands:
+            lines.append(f"- 测试实际使用命令：`{commands}`")
+    lines += ["", upstream_evidence.render_markdown(context["evidence"]), ""]
+    lines.append(
+        "> 本 PR 由场景二审计链路生成；`doc/image-info.yml` 的 usage "
+        "与功能测试脚本保持一致，Dockerfile 依据看板 tag/commit 与上游源码修复。"
+    )
+    return "\n".join(lines)
+
+
+def deliver_fix(
+    repo_dir: Path,
+    context: dict,
+    findings: list[dict],
+    audit_payload: dict,
+    fix_payload: dict,
+) -> str:
+    """提交修复、推送分支并创建 PR；没有实际改动时返回空串。"""
+    token = (os.environ.get("GITCODE_TOKEN") or "").strip()
+    if not token:
+        raise SystemExit("GITCODE_TOKEN is required to deliver the audit fix")
+
+    branch = _branch_name(str(context["app"]), str(context["version"]))
+    base = (os.environ.get("TARGET_BRANCH") or DEFAULT_TARGET_BRANCH).strip()
+    checkout = _git(repo_dir, "checkout", "-B", branch, f"origin/{base}")
+    if checkout.returncode != 0:
+        _git(repo_dir, "checkout", "-B", branch, base, check=True)
+
+    changed = apply_fix(repo_dir, context, fix_payload)
+    if not changed:
+        log_stage(
+            "upgrade-audit",
+            f"{context['app']}: no change after fix, skip PR",
+        )
+        return ""
+
+    relative = [path.relative_to(repo_dir).as_posix() for path in changed]
+    _git(repo_dir, "add", *relative, check=True)
+    commit_name = (os.environ.get("GIT_COMMIT_NAME") or "github-actions[bot]").strip()
+    commit_email = (
+        os.environ.get("GIT_COMMIT_EMAIL")
+        or "github-actions[bot]@users.noreply.github.com"
+    ).strip()
+    _git(
+        repo_dir,
+        "-c", f"user.name={commit_name}",
+        "-c", f"user.email={commit_email}",
+        "commit", "-m",
+        f"fix: audit {context['app']} {context['version']}",
+        check=True,
+    )
+
+    target_repo = (
+        os.environ.get("TARGET_REPO") or DEFAULT_TARGET_REPO
+    ).strip()
+    push_repo = normalize_repo(os.environ.get("GITCODE_FORK_REPO") or "") or target_repo
+    push_url = f"https://oauth2:{token}@gitcode.com/{push_repo}.git"
+    _git(
+        repo_dir,
+        "push", push_url,
+        f"+refs/heads/{branch}:refs/heads/{branch}",
+        check=True,
+    )
+
+    head = f"{push_repo.split('/')[0]}:{branch}" if push_repo != target_repo else branch
+    existing = find_any_pr_by_head_branch(target_repo, branch, token, open_only=True)
+    if existing:
+        url = str(existing.get("web_url") or existing.get("html_url") or "")
+        log_stage("upgrade-audit", f"{context['app']}: PR already exists {url}")
+        return url
+
+    pr = create_pull_request(
+        target_repo,
+        head,
+        base,
+        f"fix: audit {context['app']} {context['version']}",
+        build_fix_pr_body(context, findings, audit_payload, fix_payload),
+        token,
+    )
+    url = str(pr.get("web_url") or pr.get("html_url") or "")
+    log_stage("upgrade-audit", f"{context['app']}: PR created {url}")
+    return url
+
+
+def run_agent_fix(
+    context: dict,
+    findings: list[dict],
+    audit_payload: dict,
+    repo_dir: Path,
+) -> dict:
+    api_key = ai_provider.api_key()
+    executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
+    if not api_key or not executable:
+        raise SystemExit(
+            "AI_API_KEY (or DEEPSEEK_API_KEY) and opencode are required for fix"
+        )
+
+    prompt = build_fix_prompt(context, findings, audit_payload)
+    log_stage("upgrade-audit", f"{context['app']}: agent fix start")
+    try:
+        result = run_agent(
+            executable=Path(executable),
+            role=FIX_AGENT_ROLE,
+            prompt=prompt,
+            workspace=repo_dir,
+            api_key=api_key,
+            required_keys=FIX_REQUIRED_KEYS,
+            timeout=AUDIT_AGENT_TIMEOUT_SECONDS,
+        )
+    finally:
+        _reset_workspace(repo_dir)
+
+    payload = result.payload
+    if not bool(payload.get("success")):
+        raise SystemExit(
+            f"{context['app']}: fix agent failed: {payload.get('error')}"
+        )
+    problems = validate_fix(context, payload)
+    if problems:
+        raise SystemExit(
+            f"{context['app']}: AI fix failed validation: {'；'.join(problems)}"
+        )
+    return payload
+
+
 def render_markdown(
-    context: dict, findings: list[dict], summary: dict, payload: dict | None
+    context: dict,
+    findings: list[dict],
+    summary: dict,
+    payload: dict | None,
+    fix_payload: dict | None = None,
+    pr_url: str = "",
 ) -> str:
     lines = [f"## AI audit: {context['app']}", ""]
     lines.append(f"- 目标版本：`{context['version']}`（openEuler `{context['os_version']}`）")
@@ -414,6 +836,11 @@ def render_markdown(
         f"- 测试脚本：present=`{tests['present']}`，"
         f"expects_version=`{tests['expects_version']}`，"
         f"paths=`{tests['paths']}`"
+    )
+    image_info = summary["image_info"]
+    lines.append(
+        f"- doc/image-info.yml：present=`{image_info['present']}`，"
+        f"确定性问题=`{image_info['issue_count']}`"
     )
     if payload:
         lines.append(f"- AI 结论：`{payload.get('verdict')}`")
@@ -458,6 +885,16 @@ def render_markdown(
     else:
         lines += ["", "> dry-run：未调用 AI，以上为 Harness 确定性结论。"]
 
+    if fix_payload:
+        lines += ["", "### 修复（AI）", ""]
+        if pr_url:
+            lines.append(f"- PR：{pr_url}")
+        else:
+            lines.append("- 修复结果与现状一致，未产生 PR")
+        lines.append(f"- 摘要：{fix_payload.get('summary')}")
+        for change in fix_payload.get("changes") or []:
+            lines.append(f"- {change}")
+
     lines += ["", "### Harness 确定性发现", ""]
     if findings:
         for finding in findings:
@@ -469,19 +906,34 @@ def render_markdown(
 
     lines += [
         "",
-        "> 审计只读，不修改目标仓；AI 结论用于人工判断，不自动开 PR。",
+        "> 审计报告只读；修复通过独立分支与 PR 交付，不直接改主分支。",
         "",
     ]
     return "\n".join(lines)
 
 
-def run(item: dict, *, repo_dir: Path, out_dir: Path, dry_run: bool) -> int:
+def run(
+    item: dict,
+    *,
+    repo_dir: Path,
+    out_dir: Path,
+    dry_run: bool,
+    deliver: bool = False,
+) -> int:
     context = collect_context(repo_dir, item)
     findings = deterministic_findings(context)
     summary = deterministic_summary(context, findings)
     payload = None if dry_run else run_agent_audit(context, findings, repo_dir)
 
-    report = render_markdown(context, findings, summary, payload)
+    fix_payload: dict | None = None
+    pr_url = ""
+    if payload is not None and deliver:
+        fix_payload = run_agent_fix(context, findings, payload, repo_dir)
+        pr_url = deliver_fix(repo_dir, context, findings, payload, fix_payload)
+
+    report = render_markdown(
+        context, findings, summary, payload, fix_payload, pr_url
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     document = {
         "item": item,
@@ -490,6 +942,8 @@ def run(item: dict, *, repo_dir: Path, out_dir: Path, dry_run: bool) -> int:
         "deterministic_findings": findings,
         "deterministic_summary": summary,
         "ai": payload,
+        "fix": fix_payload,
+        "pr_url": pr_url,
         "markdown": report,
     }
     (out_dir / "audit.json").write_text(
@@ -498,14 +952,15 @@ def run(item: dict, *, repo_dir: Path, out_dir: Path, dry_run: bool) -> int:
     (out_dir / "audit.md").write_text(report, encoding="utf-8")
     print(report)
 
-    summary = os.environ.get("GITHUB_STEP_SUMMARY", "")
-    if summary:
-        with open(summary, "a", encoding="utf-8") as handle:
+    step_summary = os.environ.get("GITHUB_STEP_SUMMARY", "")
+    if step_summary:
+        with open(step_summary, "a", encoding="utf-8") as handle:
             handle.write(report + "\n")
     log_stage(
         "upgrade-audit",
-        f"{context['app']}: done dry_run={dry_run} "
-        f"findings={len(findings)} verdict={(payload or {}).get('verdict')}",
+        f"{context['app']}: done dry_run={dry_run} deliver={deliver} "
+        f"findings={len(findings)} verdict={(payload or {}).get('verdict')} "
+        f"pr={pr_url or 'none'}",
     )
     return 0
 
@@ -525,6 +980,11 @@ def main() -> int:
         action="store_true",
         help="只输出确定性检查与提示上下文，不调用 AI",
     )
+    parser.add_argument(
+        "--deliver",
+        action="store_true",
+        help="审计后调用修复 Agent，推送分支并创建 PR",
+    )
     args = parser.parse_args()
 
     repo_dir = Path(args.repo)
@@ -535,6 +995,7 @@ def main() -> int:
         repo_dir=repo_dir,
         out_dir=Path(args.out),
         dry_run=args.dry_run,
+        deliver=args.deliver,
     )
 
 

@@ -1,10 +1,9 @@
-name: Audit one app
+name: Audit and fix one app
 
-# 场景二的「已是最新版本」审计（由 upgrade_upstream_versions.yml 按审计矩阵调用）：
+# 场景二的「已是最新版本」审计与修复（由 upgrade_upstream_versions.yml 调用）：
 #   目标仓已有看板最新版本 → 不跳过 → AI 审计 Dockerfile / 证据对齐 / 版本正确性 /
-#   测试脚本 → 报告写入 job summary 与 artifact。
-#
-# 只读：不修改目标仓，不开 PR，不推送分支。
+#   测试脚本 → 发现问题时调用修复 Agent，更新 Dockerfile 与 doc/image-info.yml，
+#   推分支并开 PR；没有问题则只出报告。
 
 on:
   workflow_call:
@@ -54,13 +53,16 @@ env:
   OPENAI_BASE_URL: >-
     ${{ vars.OPENAI_BASE_URL || 'https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1' }}
   UPSTREAM_DASHBOARD_BASE: ${{ vars.UPSTREAM_DASHBOARD_BASE || 'https://upstream-dashboard.test.osinfra.cn' }}
+  GITCODE_FORK_REPO: ${{ vars.GITCODE_FORK_REPO }}
+  GIT_COMMIT_NAME: ${{ vars.GIT_COMMIT_NAME }}
+  GIT_COMMIT_EMAIL: ${{ vars.GIT_COMMIT_EMAIL }}
 
 jobs:
 
   audit:
-    name: "Audit ${{ inputs.app }}"
+    name: "Audit and fix ${{ inputs.app }}"
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - name: Check out workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,20 +83,22 @@ jobs:
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
-          # 审计只读，浅克隆即可；不需要 push。
-          git clone --depth 1 \
+          # 修复会推分支，必须完整克隆；GitCode 拒收浅克隆推上来的分支。
+          git clone \
             "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
             source-repo
 
-      - name: Audit existing image
+      - name: Audit, fix and open PR
         env:
           ITEM: ${{ inputs.item }}
           OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_audit.py \
             --item "$ITEM" \
             --repo source-repo \
-            --out "${RUNNER_TEMP}/audit"
+            --out "${RUNNER_TEMP}/audit" \
+            --deliver
 
       - name: Upload audit report
         if: ${{ always() }}

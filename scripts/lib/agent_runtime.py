@@ -100,6 +100,7 @@ _WRITE_ROLES = {
     "testgen_creator",
     "upgrade_creator",
     "upgrade_auditor",
+    "upgrade_fixer",
     "fixer",
 }
 _READ_ONLY_ROLES = {"testcase_qa"}

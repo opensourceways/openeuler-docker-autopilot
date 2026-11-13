@@ -99,14 +99,13 @@ def test_no_legacy_runner_or_legacy_scripts_are_referenced():
         assert 'runs-on: ubuntu-latest' not in text
 
 
-def test_audit_app_is_read_only_and_reports_findings():
+def test_audit_app_runs_audit_then_delivers_a_fix_pr():
     jobs = _workflow(AUDIT)['jobs']
     assert list(jobs) == ['audit']
     text = _squash(jobs['audit']['steps'])
     assert 'upgrade_audit.py' in text
     assert '--repo source-repo' in text
-    # 审计只读：浅克隆、没有 push / PR 步骤
-    assert '--depth 1' in text
-    assert 'git push' not in text
-    assert 'create_pull_request' not in text
+    assert '--deliver' in text
+    # 修复要推分支，必须完整克隆
+    assert '--depth' not in text
     assert 'upload-artifact' in text
