@@ -2,8 +2,10 @@ name: Audit and fix one app
 
 # 场景二的「已是最新版本」审计与修复（由 upgrade_upstream_versions.yml 调用）：
 #   目标仓已有看板最新版本 → 不跳过 → AI 审计 Dockerfile / 证据对齐 / 版本正确性 /
-#   测试脚本 → 发现问题时调用修复 Agent，更新 Dockerfile 与 doc/image-info.yml，
-#   推分支并开 PR；没有问题则只出报告。
+#   测试脚本 → 发现问题时调用修复 Agent，更新 Dockerfile 与 doc/image-info.yml。
+#
+# 交付顺序与升级链路一致：先推修复分支，再跑双架构原生构建 + 功能测试，
+# 两个架构都通过才开 PR，避免把编译错误直接丢给目标仓 CI。
 
 on:
   workflow_call:
@@ -25,8 +27,19 @@ on:
         required: true
         type: string
       runner_labels:
+        description: '审计/修复/开 PR job 的 runner 标签（JSON 数组）'
         required: false
         default: '["self-hosted","Linux","X64","oe-image-x86"]'
+        type: string
+      x64_runner_labels:
+        description: 'x86_64 原生校验 job 的 runner 标签（JSON 数组）'
+        required: false
+        default: '["self-hosted","Linux","X64","oe-image-x86"]'
+        type: string
+      arm64_runner_labels:
+        description: 'aarch64 原生校验 job 的 runner 标签（必须 arm64）'
+        required: false
+        default: '["self-hosted","Linux","ARM64","oe-image-arm64"]'
         type: string
     secrets:
       GITCODE_TOKEN:
@@ -59,10 +72,15 @@ env:
 
 jobs:
 
-  audit:
+  # ── 审计 + 修复：只推分支，不开 PR ──────────────────────────────
+  fix:
     name: "Audit and fix ${{ inputs.app }}"
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 150
+    outputs:
+      has_changes: ${{ steps.fix.outputs.has_changes }}
+      branch: ${{ steps.fix.outputs.branch }}
+      push_repo: ${{ steps.fix.outputs.push_repo }}
     steps:
       - name: Check out workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -88,7 +106,8 @@ jobs:
             "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
             source-repo
 
-      - name: Audit, fix and open PR
+      - name: Audit, fix and push branch
+        id: fix
         env:
           ITEM: ${{ inputs.item }}
           OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
@@ -98,11 +117,159 @@ jobs:
             --item "$ITEM" \
             --repo source-repo \
             --out "${RUNNER_TEMP}/audit" \
-            --deliver
+            --prepare
 
-      - name: Upload audit report
+      - name: Upload audit report and task spec
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: upgrade-audit-${{ inputs.app }}-${{ github.run_id }}
           path: ${{ runner.temp }}/audit/
+
+  # ── 双架构原生校验：编译 + 功能测试，任一失败都不开 PR ──────────
+  validate-x86_64:
+    name: "Validate x86_64"
+    needs: fix
+    if: needs.fix.outputs.has_changes == 'true'
+    runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
+    timeout-minutes: 180
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up tooling
+        uses: ./.github/actions/phase1-setup
+        with:
+          arch: x86_64
+          preflight: "true"
+
+      - name: Download task spec
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: upgrade-audit-${{ inputs.app }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/audit
+
+      - name: Clone repair branch
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          git clone --depth 1 --branch "${{ needs.fix.outputs.branch }}" \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${{ needs.fix.outputs.push_repo }}.git" \
+            source-repo
+
+      - name: Validate natively (x86_64)
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/audit-evidence"
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/flow.py \
+            phase1-native-validate \
+            --workspace source-repo \
+            --task-spec "${RUNNER_TEMP}/audit/task-spec.json" \
+            --architecture x86_64 \
+            --run-id "${{ github.run_id }}" \
+            --report "${RUNNER_TEMP}/audit-evidence/x86_64.json" \
+            --junit "${RUNNER_TEMP}/audit-evidence/x86_64.junit.xml"
+
+      - name: Upload evidence (x86_64)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: audit-evidence-${{ inputs.app }}-x86_64
+          path: ${{ runner.temp }}/audit-evidence/
+
+      - name: Assert native validation passed (x86_64)
+        env:
+          REPORT: ${{ runner.temp }}/audit-evidence/x86_64.json
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -c \
+            "import json,os,sys; r=json.load(open(os.environ['REPORT'])); print(r.get('status')); sys.exit(0 if r.get('status')=='passed' else 1)"
+
+  validate-aarch64:
+    name: "Validate aarch64"
+    needs: fix
+    if: needs.fix.outputs.has_changes == 'true'
+    runs-on: ${{ fromJSON(inputs.arm64_runner_labels) }}
+    timeout-minutes: 180
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up tooling
+        uses: ./.github/actions/phase1-setup
+        with:
+          arch: aarch64
+          preflight: "true"
+
+      - name: Download task spec
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: upgrade-audit-${{ inputs.app }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/audit
+
+      - name: Clone repair branch
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          git clone --depth 1 --branch "${{ needs.fix.outputs.branch }}" \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${{ needs.fix.outputs.push_repo }}.git" \
+            source-repo
+
+      - name: Validate natively (aarch64)
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/audit-evidence"
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/flow.py \
+            phase1-native-validate \
+            --workspace source-repo \
+            --task-spec "${RUNNER_TEMP}/audit/task-spec.json" \
+            --architecture aarch64 \
+            --run-id "${{ github.run_id }}" \
+            --report "${RUNNER_TEMP}/audit-evidence/aarch64.json" \
+            --junit "${RUNNER_TEMP}/audit-evidence/aarch64.junit.xml"
+
+      - name: Upload evidence (aarch64)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: audit-evidence-${{ inputs.app }}-aarch64
+          path: ${{ runner.temp }}/audit-evidence/
+
+      - name: Assert native validation passed (aarch64)
+        env:
+          REPORT: ${{ runner.temp }}/audit-evidence/aarch64.json
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -c \
+            "import json,os,sys; r=json.load(open(os.environ['REPORT'])); print(r.get('status')); sys.exit(0 if r.get('status')=='passed' else 1)"
+
+  # ── 交付：两个架构都通过才开 PR ─────────────────────────────────
+  deliver:
+    name: "Open PR for ${{ inputs.app }}"
+    needs: [fix, validate-x86_64, validate-aarch64]
+    if: ${{ success() && needs.fix.outputs.has_changes == 'true' }}
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    timeout-minutes: 20
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up runner environment
+        uses: ./.github/actions/phase1-setup
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
+      - name: Download audit report and delivery context
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: upgrade-audit-${{ inputs.app }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/audit
+
+      - name: Create fix PR
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_audit.py \
+            --open-pr \
+            --delivery "${RUNNER_TEMP}/audit/delivery.json"

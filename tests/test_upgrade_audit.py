@@ -290,6 +290,124 @@ class DryRunTest(unittest.TestCase):
             self.assertIn("修复（AI）", report)
             self.assertIn("https://gitcode.com/pr/1", report)
 
+    def test_prepare_pushes_branch_and_writes_handoff_artifacts(self) -> None:
+        audit_payload = {
+            "success": True,
+            "verdict": "critical",
+            "dockerfile_issues": [],
+            "evidence_alignment": {},
+            "version_check": {},
+            "test_script": {},
+            "summary": "bad tag",
+        }
+        fix_payload = {
+            "success": True,
+            "dockerfile": "FROM x\nARG VERSION=26.05.6.1\nARG TAG=slurm-26-05-6-1\n",
+            "image_info": "name: slurm\n",
+            "changes": ["fix tag"],
+            "summary": "fixed",
+        }
+        branch = "auto/image-audit/slurm/26.05.6.1"
+        changed = ["Others/slurm/26.05.6.1/24.03-lts-sp4/Dockerfile"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _make_repo(root)
+            out = root / "audit-out"
+            output_file = root / "github-output"
+            output_file.touch()
+            with (
+                mock.patch.object(
+                    upgrade_audit, "run_agent_audit", return_value=audit_payload
+                ),
+                mock.patch.object(
+                    upgrade_audit, "run_agent_fix", return_value=fix_payload
+                ),
+                mock.patch.object(
+                    upgrade_audit,
+                    "push_fix",
+                    return_value=(branch, "fork/openeuler-docker-images", changed),
+                ) as push,
+                mock.patch.dict(
+                    "os.environ", {"GITHUB_OUTPUT": str(output_file)}
+                ),
+            ):
+                code = upgrade_audit.run(
+                    _ITEM,
+                    repo_dir=repo,
+                    out_dir=out,
+                    dry_run=False,
+                    prepare=True,
+                )
+
+            self.assertEqual(code, 0)
+            push.assert_called_once()
+            delivery = json.loads(
+                (out / "delivery.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(delivery["branch"], branch)
+            self.assertEqual(delivery["push_repo"], "fork/openeuler-docker-images")
+            self.assertEqual(delivery["changed"], changed)
+            task = json.loads((out / "task-spec.json").read_text(encoding="utf-8"))
+            self.assertEqual(task["version"], "26.05.6.1")
+            self.assertEqual(task["domain"], "Others")
+            self.assertEqual(task["scenario"], "version-update")
+            emitted = output_file.read_text(encoding="utf-8")
+            self.assertIn("has_changes=true", emitted)
+            self.assertIn(f"branch={branch}", emitted)
+            report = (out / "audit.md").read_text(encoding="utf-8")
+            self.assertIn("通过双架构原生校验后开 PR", report)
+
+    def test_open_pr_from_delivery_creates_pr_for_pushed_branch(self) -> None:
+        context = {
+            "app": "slurm",
+            "domain": "Others",
+            "version": "26.05.6.1",
+            "os_version": "24.03-lts-sp4",
+            "dockerfile_path": "Others/slurm/26.05.6.1/24.03-lts-sp4/Dockerfile",
+            "test_scripts": [{"path": "Others/slurm/tests/test.sh", "content": "srun --version\n"}],
+            "evidence": {"tag": "slurm-26-05-6-1"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            delivery = Path(tmp) / "delivery.json"
+            delivery.write_text(
+                json.dumps(
+                    {
+                        "context": context,
+                        "findings": [],
+                        "audit": {"verdict": "critical", "summary": "bad tag"},
+                        "fix": {"changes": ["fix tag"], "summary": "fixed"},
+                        "branch": "auto/image-audit/slurm/26.05.6.1",
+                        "push_repo": "fork/openeuler-docker-images",
+                        "changed": ["Others/slurm/26.05.6.1/24.03-lts-sp4/Dockerfile"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(
+                    upgrade_audit, "find_any_pr_by_head_branch", return_value=None
+                ),
+                mock.patch.object(
+                    upgrade_audit,
+                    "create_pull_request",
+                    return_value={"web_url": "https://gitcode.com/pr/9"},
+                ) as create,
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "GITCODE_TOKEN": "t",
+                        "TARGET_REPO": "openeuler/openeuler-docker-images",
+                        "TARGET_BRANCH": "master",
+                    },
+                ),
+            ):
+                url = upgrade_audit.open_pr_from_delivery(delivery)
+
+            self.assertEqual(url, "https://gitcode.com/pr/9")
+            self.assertEqual(
+                create.call_args.args[1], "fork:auto/image-audit/slurm/26.05.6.1"
+            )
+
     def test_ai_payload_is_rendered_into_the_report(self) -> None:
         payload = {
             "success": True,

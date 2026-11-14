@@ -76,6 +76,8 @@ def test_each_app_runs_prepare_dual_arch_validation_then_pr():
         assert 'task-spec' in text
         # 验证失败不开 PR，但证据要保留
         assert 'always()' in _squash(jobs[name])
+        # continue-on-error 之后必须有显式断言，否则 open-pr 仍会执行
+        assert 'Assert native validation passed' in text
     assert 'success()' in _squash(jobs['open-pr']['if'])
     assert 'upgrade_open_pr.py' in _squash(jobs['open-pr']['steps'])
 
@@ -99,13 +101,34 @@ def test_no_legacy_runner_or_legacy_scripts_are_referenced():
         assert 'runs-on: ubuntu-latest' not in text
 
 
-def test_audit_app_runs_audit_then_delivers_a_fix_pr():
-    jobs = _workflow(AUDIT)['jobs']
-    assert list(jobs) == ['audit']
-    text = _squash(jobs['audit']['steps'])
-    assert 'upgrade_audit.py' in text
-    assert '--repo source-repo' in text
-    assert '--deliver' in text
+def test_audit_app_validates_both_arches_before_the_fix_pr():
+    data = _workflow(AUDIT)
+    jobs = data['jobs']
+    assert list(jobs) == ['fix', 'validate-x86_64', 'validate-aarch64', 'deliver']
+
+    fix_text = _squash(jobs['fix']['steps'])
+    assert 'upgrade_audit.py' in fix_text
+    assert '--prepare' in fix_text
+    # PR 走 deliver，fix 阶段只推分支
+    assert '--deliver' not in fix_text
     # 修复要推分支，必须完整克隆
-    assert '--depth' not in text
-    assert 'upload-artifact' in text
+    assert '--depth' not in fix_text
+    assert 'upload-artifact' in fix_text
+    assert set(jobs['fix']['outputs']) >= {'has_changes', 'branch', 'push_repo'}
+
+    for name in ('validate-x86_64', 'validate-aarch64'):
+        assert jobs[name]['needs'] == 'fix'
+        text = _squash(jobs[name]['steps'])
+        assert 'phase1-native-validate' in text
+        assert 'task-spec' in text
+        # 校验步骤是 continue-on-error，必须有显式断言让 job 失败
+        assert 'Assert native validation passed' in text
+        assert 'always()' in _squash(jobs[name])
+    arm64_labels = _trigger(data)['workflow_call']['inputs']['arm64_runner_labels']['default']
+    assert 'ARM64' in arm64_labels
+
+    deliver = jobs['deliver']
+    assert deliver['needs'] == ['fix', 'validate-x86_64', 'validate-aarch64']
+    assert 'success()' in _squash(deliver['if'])
+    assert '--open-pr' in _squash(deliver['steps'])
+    assert '--delivery' in _squash(deliver['steps'])

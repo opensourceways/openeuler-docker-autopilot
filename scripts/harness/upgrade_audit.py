@@ -10,14 +10,18 @@ Stage: 场景二「已是最新版本」的 AI 审计（upgrade_audit）
 4. 是否有功能测试脚本，脚本质量是否足够。
 
 先跑确定性检查（版本、tag、meta、测试脚本、image-info），再把 Dockerfile、meta.yml、
-测试脚本和上游证据一起交给 ``upgrade_auditor`` Agent 做语义审计。``--deliver`` 时
-继续调用 ``upgrade_fixer`` Agent，修正 Dockerfile 并按测试脚本更新
-``doc/image-info.yml``，过确定性校验后推分支并开 PR。
+测试脚本和上游证据一起交给 ``upgrade_auditor`` Agent 做语义审计。修复有两种交付方式：
+
+- ``--prepare``：调用 ``upgrade_fixer`` 修正 Dockerfile 与 ``doc/image-info.yml``，
+  过确定性校验后只推送修复分支，并写出 ``task-spec.json`` / ``delivery.json``，
+  供双架构原生校验与后续开 PR 使用；
+- ``--open-pr --delivery <delivery.json>``：校验通过后从交接文件创建 PR；
+- ``--deliver``：本地一键跑完（审计 + 修复 + 推分支 + 开 PR）。
 
 输入: --item '<json>'（upgrade_scan 的 audits 条目）
 环境: SOURCE_REPO_DIR（默认 PROJECT_ROOT/source-repo）、AI_API_KEY、OPENCODE_BIN；
-      --deliver 还需要 GITCODE_TOKEN / GITCODE_FORK_REPO（可选）/ TARGET_*
-输出: --out <dir> 下的 audit.json / audit.md；同时写入 GITHUB_STEP_SUMMARY
+      --prepare/--deliver/--open-pr 还需要 GITCODE_TOKEN / GITCODE_FORK_REPO（可选）/ TARGET_*
+输出: --out <dir> 下的 audit.json / audit.md（--prepare 另有 task-spec.json、delivery.json）
 退出码: 0 审计/修复完成；AI 调用/契约/修复校验失败 → 1
 """
 
@@ -46,7 +50,7 @@ from scripts.lib.stage_common import (  # noqa: E402
     log_stage,
     normalize_repo,
 )
-from scripts.lib.task_spec import _os_tag  # noqa: E402
+from scripts.lib.task_spec import TaskSpec, _os_tag  # noqa: E402
 
 DEFAULT_SOURCE_REPO_DIR = os.path.join(PROJECT_ROOT, "source-repo")
 DEFAULT_TARGET_REPO = "openeuler/openeuler-docker-images"
@@ -690,20 +694,21 @@ def build_fix_pr_body(
     return "\n".join(lines)
 
 
-def deliver_fix(
+def push_fix(
     repo_dir: Path,
     context: dict,
-    findings: list[dict],
-    audit_payload: dict,
     fix_payload: dict,
-) -> str:
-    """提交修复、推送分支并创建 PR；没有实际改动时返回空串。"""
+) -> tuple[str, str, list[str]]:
+    """把修复写入工作树、提交并推送分支；返回 (branch, push_repo, changed)。"""
     token = (os.environ.get("GITCODE_TOKEN") or "").strip()
     if not token:
         raise SystemExit("GITCODE_TOKEN is required to deliver the audit fix")
 
     branch = _branch_name(str(context["app"]), str(context["version"]))
     base = (os.environ.get("TARGET_BRANCH") or DEFAULT_TARGET_BRANCH).strip()
+    target_repo = (os.environ.get("TARGET_REPO") or DEFAULT_TARGET_REPO).strip()
+    push_repo = normalize_repo(os.environ.get("GITCODE_FORK_REPO") or "") or target_repo
+
     checkout = _git(repo_dir, "checkout", "-B", branch, f"origin/{base}")
     if checkout.returncode != 0:
         _git(repo_dir, "checkout", "-B", branch, base, check=True)
@@ -714,7 +719,7 @@ def deliver_fix(
             "upgrade-audit",
             f"{context['app']}: no change after fix, skip PR",
         )
-        return ""
+        return branch, push_repo, []
 
     relative = [path.relative_to(repo_dir).as_posix() for path in changed]
     _git(repo_dir, "add", *relative, check=True)
@@ -732,10 +737,6 @@ def deliver_fix(
         check=True,
     )
 
-    target_repo = (
-        os.environ.get("TARGET_REPO") or DEFAULT_TARGET_REPO
-    ).strip()
-    push_repo = normalize_repo(os.environ.get("GITCODE_FORK_REPO") or "") or target_repo
     push_url = f"https://oauth2:{token}@gitcode.com/{push_repo}.git"
     _git(
         repo_dir,
@@ -743,6 +744,26 @@ def deliver_fix(
         f"+refs/heads/{branch}:refs/heads/{branch}",
         check=True,
     )
+    return branch, push_repo, relative
+
+
+def open_fix_pr(
+    context: dict,
+    findings: list[dict],
+    audit_payload: dict,
+    fix_payload: dict,
+    branch: str,
+    push_repo: str,
+) -> str:
+    """在修复分支已推送的前提下创建 PR（已存在则复用）。"""
+    token = (os.environ.get("GITCODE_TOKEN") or "").strip()
+    if not token:
+        raise SystemExit("GITCODE_TOKEN is required to deliver the audit fix")
+
+    target_repo = (
+        os.environ.get("TARGET_REPO") or DEFAULT_TARGET_REPO
+    ).strip()
+    base = (os.environ.get("TARGET_BRANCH") or DEFAULT_TARGET_BRANCH).strip()
 
     head = f"{push_repo.split('/')[0]}:{branch}" if push_repo != target_repo else branch
     existing = find_any_pr_by_head_branch(target_repo, branch, token, open_only=True)
@@ -762,6 +783,92 @@ def deliver_fix(
     url = str(pr.get("web_url") or pr.get("html_url") or "")
     log_stage("upgrade-audit", f"{context['app']}: PR created {url}")
     return url
+
+
+def deliver_fix(
+    repo_dir: Path,
+    context: dict,
+    findings: list[dict],
+    audit_payload: dict,
+    fix_payload: dict,
+) -> str:
+    """提交修复、推送分支并创建 PR；没有实际改动时返回空串。"""
+    branch, push_repo, changed = push_fix(repo_dir, context, fix_payload)
+    if not changed:
+        return ""
+    return open_fix_pr(
+        context, findings, audit_payload, fix_payload, branch, push_repo
+    )
+
+
+def _emit_output(**values: str) -> None:
+    output = os.environ.get("GITHUB_OUTPUT", "")
+    if not output:
+        return
+    with open(output, "a", encoding="utf-8") as handle:
+        for key, value in values.items():
+            handle.write(f"{key}={value}\n")
+
+
+def write_task_spec(out_dir: Path, context: dict, item: dict) -> Path:
+    """给双架构原生校验用的 TaskSpec（复用 version-update 场景）。"""
+    source_url = str(item.get("source_url") or "").strip()
+    if not source_url.startswith("https://"):
+        source_url = "https://gitcode.com/openeuler/openeuler-docker-images"
+    task = TaskSpec(
+        app=str(context["app"]),
+        version=str(context["version"]),
+        os_version=str(context["os_version"]),
+        domain=str(context["domain"]),
+        source_url=source_url,
+        scenario="version-update",
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "task-spec.json"
+    path.write_text(task.to_json(), encoding="utf-8")
+    return path
+
+
+def write_delivery(
+    out_dir: Path,
+    item: dict,
+    context: dict,
+    findings: list[dict],
+    audit_payload: dict,
+    fix_payload: dict,
+    branch: str,
+    push_repo: str,
+    changed: list[str],
+) -> Path:
+    """校验通过后开 PR 需要的全部上下文（跨 job 交接）。"""
+    document = {
+        "item": item,
+        "context": context,
+        "findings": findings,
+        "audit": audit_payload,
+        "fix": fix_payload,
+        "branch": branch,
+        "push_repo": push_repo,
+        "changed": changed,
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "delivery.json"
+    path.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return path
+
+
+def open_pr_from_delivery(path: Path) -> str:
+    document = json.loads(Path(path).read_text(encoding="utf-8"))
+    return open_fix_pr(
+        document["context"],
+        document.get("findings") or [],
+        document.get("audit") or {},
+        document.get("fix") or {},
+        str(document["branch"]),
+        str(document["push_repo"]),
+    )
 
 
 def run_agent_fix(
@@ -812,6 +919,7 @@ def render_markdown(
     payload: dict | None,
     fix_payload: dict | None = None,
     pr_url: str = "",
+    branch: str = "",
 ) -> str:
     lines = [f"## AI audit: {context['app']}", ""]
     lines.append(f"- 目标版本：`{context['version']}`（openEuler `{context['os_version']}`）")
@@ -889,6 +997,10 @@ def render_markdown(
         lines += ["", "### 修复（AI）", ""]
         if pr_url:
             lines.append(f"- PR：{pr_url}")
+        elif branch:
+            lines.append(
+                f"- 分支：`{branch}`（已推送，通过双架构原生校验后开 PR）"
+            )
         else:
             lines.append("- 修复结果与现状一致，未产生 PR")
         lines.append(f"- 摘要：{fix_payload.get('summary')}")
@@ -919,6 +1031,7 @@ def run(
     out_dir: Path,
     dry_run: bool,
     deliver: bool = False,
+    prepare: bool = False,
 ) -> int:
     context = collect_context(repo_dir, item)
     findings = deterministic_findings(context)
@@ -927,12 +1040,39 @@ def run(
 
     fix_payload: dict | None = None
     pr_url = ""
+    branch = ""
     if payload is not None and deliver:
         fix_payload = run_agent_fix(context, findings, payload, repo_dir)
         pr_url = deliver_fix(repo_dir, context, findings, payload, fix_payload)
+    elif payload is not None and prepare:
+        # 只推到修复分支，PR 留给双架构原生校验通过后的 deliver job
+        fix_payload = run_agent_fix(context, findings, payload, repo_dir)
+        branch, push_repo, changed = push_fix(repo_dir, context, fix_payload)
+        write_task_spec(out_dir, context, item)
+        if changed:
+            write_delivery(
+                out_dir,
+                item,
+                context,
+                findings,
+                payload,
+                fix_payload,
+                branch,
+                push_repo,
+                changed,
+            )
+        _emit_output(
+            has_changes="true" if changed else "false",
+            branch=branch,
+            push_repo=push_repo,
+        )
+        log_stage(
+            "upgrade-audit",
+            f"{context['app']}: pushed={branch} changed={changed}",
+        )
 
     report = render_markdown(
-        context, findings, summary, payload, fix_payload, pr_url
+        context, findings, summary, payload, fix_payload, pr_url, branch
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     document = {
@@ -967,7 +1107,7 @@ def run(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--item", required=True, help="upgrade_scan audits 条目 JSON")
+    parser.add_argument("--item", default="", help="upgrade_scan audits 条目 JSON")
     parser.add_argument(
         "--repo", default=os.environ.get("SOURCE_REPO_DIR", DEFAULT_SOURCE_REPO_DIR)
     )
@@ -981,12 +1121,36 @@ def main() -> int:
         help="只输出确定性检查与提示上下文，不调用 AI",
     )
     parser.add_argument(
+        "--prepare",
+        action="store_true",
+        help="审计+修复并推送分支，但不创建 PR（等双架构原生校验）",
+    )
+    parser.add_argument(
         "--deliver",
         action="store_true",
         help="审计后调用修复 Agent，推送分支并创建 PR",
     )
+    parser.add_argument(
+        "--open-pr",
+        action="store_true",
+        help="从 delivery.json 创建修复 PR（分支已由 --prepare 推送）",
+    )
+    parser.add_argument(
+        "--delivery",
+        default="",
+        help="delivery.json 路径（默认 <out>/delivery.json）",
+    )
     args = parser.parse_args()
 
+    if args.open_pr:
+        delivery = Path(args.delivery or (Path(args.out) / "delivery.json"))
+        if not delivery.is_file():
+            raise SystemExit(f"delivery.json not found: {delivery}")
+        print(open_pr_from_delivery(delivery))
+        return 0
+
+    if not args.item:
+        raise SystemExit("--item is required unless --open-pr is used")
     repo_dir = Path(args.repo)
     if not repo_dir.is_dir():
         raise SystemExit(f"target repo clone not found: {repo_dir}")
@@ -996,6 +1160,7 @@ def main() -> int:
         out_dir=Path(args.out),
         dry_run=args.dry_run,
         deliver=args.deliver,
+        prepare=args.prepare,
     )
 
 

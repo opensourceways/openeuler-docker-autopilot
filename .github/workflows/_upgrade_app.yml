@@ -167,6 +167,15 @@ jobs:
           name: upgrade-evidence-${{ inputs.app }}-x86_64
           path: ${{ runner.temp }}/upgrade-evidence/
 
+      # 校验步骤是 continue-on-error（为了保留证据），这里显式失败，
+      # 否则 open-pr 仍会执行，编译错误会被直接丢给目标仓 CI。
+      - name: Assert native validation passed (x86_64)
+        env:
+          REPORT: ${{ runner.temp }}/upgrade-evidence/x86_64.json
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -c \
+            "import json,os,sys; r=json.load(open(os.environ['REPORT'])); print(r.get('status')); sys.exit(0 if r.get('status')=='passed' else 1)"
+
   validate-aarch64:
     name: "Validate aarch64"
     needs: prepare
@@ -215,6 +224,13 @@ jobs:
         with:
           name: upgrade-evidence-${{ inputs.app }}-aarch64
           path: ${{ runner.temp }}/upgrade-evidence/
+
+      - name: Assert native validation passed (aarch64)
+        env:
+          REPORT: ${{ runner.temp }}/upgrade-evidence/aarch64.json
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -c \
+            "import json,os,sys; r=json.load(open(os.environ['REPORT'])); print(r.get('status')); sys.exit(0 if r.get('status')=='passed' else 1)"
 
   open-pr:
     name: "Open PR for ${{ inputs.app }}"
