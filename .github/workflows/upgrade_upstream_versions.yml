@@ -31,6 +31,10 @@ on:
         description: '手动指定版本对应的上游 tag（如 slurm-26-05-6-1；留空则不校验 tag）'
         required: false
         type: string
+      source_url:
+        description: '手动指定版本的上游仓库 HTTPS 地址（配合 version；用于 task spec）'
+        required: false
+        type: string
       limit:
         description: '本轮最多升级几个应用（0 = 不限）'
         required: false
@@ -101,6 +105,7 @@ jobs:
           APP: ${{ inputs.app }}
           VERSION: ${{ inputs.version }}
           TAG: ${{ inputs.tag }}
+          SOURCE_URL: ${{ inputs.source_url }}
           LIMIT: ${{ inputs.limit || '0' }}
           AUDIT_LIMIT: ${{ inputs.audit_limit || '0' }}
         run: |
@@ -113,6 +118,9 @@ jobs:
           fi
           if [ -n "$TAG" ]; then
             ARGS+=(--tag "$TAG")
+          fi
+          if [ -n "$SOURCE_URL" ]; then
+            ARGS+=(--source-url "$SOURCE_URL")
           fi
           "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_scan.py \
             "${ARGS[@]}"

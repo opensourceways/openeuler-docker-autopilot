@@ -182,12 +182,16 @@ class FindUpdatesTest(unittest.TestCase):
             repo_dir=self.repo,
             app_filter="kvrocks",
             forced_version="2.18.0",
+            source_url="https://github.com/apache/kvrocks",
             apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
             resolve=fail,
             probe=lambda p: {},
             fetch_evidence=lambda name, version: [],
         )
         self.assertEqual(result["updates"][0]["version"], "2.18.0")
+        self.assertEqual(
+            result["updates"][0]["source_url"], "https://github.com/apache/kvrocks"
+        )
         # 版本号不能冒充上游 tag，否则审计/修复会误判 tag.mismatch
         self.assertEqual(result["updates"][0]["evidence"]["tag"], "")
 
@@ -197,6 +201,7 @@ class FindUpdatesTest(unittest.TestCase):
             app_filter="kvrocks",
             forced_version="2.18.0",
             forced_tag="v2.18.0",
+            source_url="https://github.com/apache/kvrocks",
             apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
             resolve=lambda name: (_ for _ in ()).throw(
                 AssertionError("dashboard must not be called")
@@ -205,6 +210,18 @@ class FindUpdatesTest(unittest.TestCase):
             fetch_evidence=lambda name, version: [],
         )
         self.assertEqual(result["updates"][0]["evidence"]["tag"], "v2.18.0")
+
+    def test_forced_version_requires_source_url(self) -> None:
+        with self.assertRaises(SystemExit):
+            upgrade_scan.find_updates(
+                repo_dir=self.repo,
+                app_filter="kvrocks",
+                forced_version="2.18.0",
+                apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
+                resolve=lambda name: {},
+                probe=lambda payload: {},
+                fetch_evidence=lambda name, version: [],
+            )
 
     def test_unlisted_app_in_repo_can_be_upgraded_with_forced_version(self) -> None:
         _make_app(self.repo, "AI", "open-webui", versions=("0.1.108",))
@@ -216,6 +233,7 @@ class FindUpdatesTest(unittest.TestCase):
             repo_dir=self.repo,
             app_filter="open-webui",
             forced_version="0.13.3",
+            source_url="https://github.com/open-webui/open-webui",
             apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
             resolve=boom,
             probe=boom,
@@ -226,6 +244,9 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertEqual(item["app"], "open-webui")
         self.assertEqual(item["domain"], "AI")
         self.assertEqual(item["version"], "0.13.3")
+        self.assertEqual(
+            item["source_url"], "https://github.com/open-webui/open-webui"
+        )
 
     def test_unlisted_app_requires_forced_version(self) -> None:
         _make_app(self.repo, "AI", "open-webui", versions=("0.1.108",))

@@ -172,9 +172,10 @@ jobs:
       - name: Assert native validation passed (x86_64)
         env:
           REPORT: ${{ runner.temp }}/upgrade-evidence/x86_64.json
+          APP: ${{ inputs.app }}
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" -c \
-            "import json,os,sys; r=json.load(open(os.environ['REPORT'])); print(r.get('status')); sys.exit(0 if r.get('status')=='passed' else 1)"
+            "import json,os,sys; p=os.environ['REPORT']; r=json.load(open(p)) if os.path.isfile(p) else {'status':'missing'}; s=r.get('status'); print(s); fl=[str(x.get('failure') or '') for x in (r.get('failures') or [])]; print('::error::'+(os.environ.get('APP','')+' x86_64 validation '+str(s)+': '+'; '.join(fl[:3]))) if s!='passed' else None; sys.exit(0 if s=='passed' else 1)"
 
   validate-aarch64:
     name: "Validate aarch64"
@@ -228,9 +229,10 @@ jobs:
       - name: Assert native validation passed (aarch64)
         env:
           REPORT: ${{ runner.temp }}/upgrade-evidence/aarch64.json
+          APP: ${{ inputs.app }}
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" -c \
-            "import json,os,sys; r=json.load(open(os.environ['REPORT'])); print(r.get('status')); sys.exit(0 if r.get('status')=='passed' else 1)"
+            "import json,os,sys; p=os.environ['REPORT']; r=json.load(open(p)) if os.path.isfile(p) else {'status':'missing'}; s=r.get('status'); print(s); fl=[str(x.get('failure') or '') for x in (r.get('failures') or [])]; print('::error::'+(os.environ.get('APP','')+' aarch64 validation '+str(s)+': '+'; '.join(fl[:3]))) if s!='passed' else None; sys.exit(0 if s=='passed' else 1)"
 
   open-pr:
     name: "Open PR for ${{ inputs.app }}"

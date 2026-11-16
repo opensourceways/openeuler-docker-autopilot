@@ -27,7 +27,8 @@ Stage: 场景二 —— 应用升级候选发现（upgrade_scan）
   （看板 ``/api/v1/software`` 采集证据，固定 L1 的 3 条）+ ``probe``（自探兜底），
   只作参考，抓取失败不阻断升级。
 
-输入: --repo <目标仓克隆>，可选 --app / --version / --apps-file / --limit / --audit-limit
+输入: --repo <目标仓克隆>，可选 --app / --version / --tag / --source-url /
+      --apps-file / --limit / --audit-limit
 输出: --format github-output → GITHUB_OUTPUT 写 updates/audits/skipped；--format json → stdout
 """
 
@@ -193,6 +194,7 @@ def find_updates(
     app_filter: str = "",
     forced_version: str = "",
     forced_tag: str = "",
+    source_url: str = "",
     limit: int = 0,
     audit_limit: int = 0,
     apps: list[dict] | None = None,
@@ -221,6 +223,14 @@ def find_updates(
         evidence_fetch = None
     else:
         evidence_fetch = fetch_evidence
+
+    # task-spec 的 source_url 是必填项：手动升级跳过了看板，必须由调用方给出。
+    source_url = source_url.strip()
+    if forced_version and not source_url:
+        raise SystemExit(
+            "手动指定 --version 时必须同时提供 --source-url"
+            "（上游仓库 HTTPS 地址，用于 task spec）"
+        )
 
     skipped: list[dict] = []
     pairs: list[tuple[dict, Path]] = []
@@ -256,6 +266,7 @@ def find_updates(
                     "name": entry["name"],
                     "version": forced_version,
                     "tag": forced_tag,
+                    "repo_url": source_url,
                     "source": "manual",
                 },
                 {
@@ -381,6 +392,11 @@ def main() -> int:
         help="手动指定版本对应的上游 tag（如 slurm-26-05-6-1；留空则跳过 tag 校验）",
     )
     parser.add_argument(
+        "--source-url",
+        default="",
+        help="手动升级时的上游仓库 HTTPS 地址（配合 --version，写入 task spec）",
+    )
+    parser.add_argument(
         "--apps-file",
         default=os.environ.get("UPGRADE_APPS_FILE", ""),
         help=f"软件清单（默认 {DEFAULT_APPS_FILE}）",
@@ -406,6 +422,7 @@ def main() -> int:
         app_filter=args.app,
         forced_version=args.version,
         forced_tag=args.tag,
+        source_url=args.source_url,
         limit=args.limit,
         audit_limit=args.audit_limit,
         apps_file=args.apps_file or None,
