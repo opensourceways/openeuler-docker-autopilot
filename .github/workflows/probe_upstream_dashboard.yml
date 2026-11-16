@@ -1,0 +1,86 @@
+name: Probe upstream dashboard
+
+# 一次性诊断：从 runner 侧确认 upstream-dashboard 是否被 WAF 拦截。
+# 只做只读探测，不触发任何升级/修复；手动触发，跑完看 job 日志即可。
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_labels:
+        description: 'runner 标签（JSON 数组），留空用 Variable / 默认值'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe dashboard from runner
+    runs-on: >-
+      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-image-x86"]') }}
+    timeout-minutes: 10
+    env:
+      BASE: ${{ vars.UPSTREAM_DASHBOARD_BASE || 'https://upstream-dashboard.test.osinfra.cn' }}
+      UA: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    steps:
+      - name: Runner egress IP
+        if: ${{ always() }}
+        run: |
+          set +e
+          for url in https://api.ipify.org https://ifconfig.me/ip https://ipinfo.io/ip; do
+            echo "== $url"
+            curl -sS --max-time 10 "$url"
+            echo
+          done
+
+      - name: DNS lookup
+        if: ${{ always() }}
+        run: |
+          set +e
+          getent hosts upstream-dashboard.test.osinfra.cn
+          echo "exit=$?"
+
+      - name: Homepage and API status
+        if: ${{ always() }}
+        run: |
+          set +e
+          echo "base=$BASE"
+          echo "--- homepage"
+          curl -sS -o /tmp/home.html -w 'status=%{http_code} time=%{time_total}s size=%{size_download}\n' \
+            -A "$UA" "$BASE/"
+          head -c 200 /tmp/home.html; echo
+          echo "--- api (no cookie)"
+          curl -sS -o /tmp/api.json -w 'status=%{http_code} time=%{time_total}s size=%{size_download}\n' \
+            -A "$UA" "$BASE/api/v1/software?name=slurm"
+          head -c 200 /tmp/api.json; echo
+          echo "--- cookies from homepage"
+          curl -sS -c /tmp/cookies.txt -o /dev/null -A "$UA" "$BASE/"
+          cat /tmp/cookies.txt
+          echo "--- api (with cookie jar)"
+          curl -sS -b /tmp/cookies.txt -o /tmp/api2.json -w 'status=%{http_code}\n' \
+            -A "$UA" -H "Referer: $BASE/" "$BASE/api/v1/software?name=slurm"
+          head -c 200 /tmp/api2.json; echo
+
+      - name: Resolve version status
+        if: ${{ always() }}
+        run: |
+          set +e
+          curl -sS -o /tmp/resolve.json -w 'status=%{http_code}\n' \
+            -A "$UA" "$BASE/api/v1/version/resolve?name=slurm"
+          head -c 300 /tmp/resolve.json; echo
+
+      - name: Summary
+        if: ${{ always() }}
+        run: |
+          set +e
+          {
+            echo "## 看板探测"
+            echo ""
+            echo "- base: \`$BASE\`"
+            echo "- runner egress IP: $(curl -sS --max-time 10 https://api.ipify.org)"
+            echo "- homepage: $(curl -sS -o /dev/null -w '%{http_code}' -A "$UA" --max-time 20 "$BASE/")"
+            echo "- software API: $(curl -sS -o /dev/null -w '%{http_code}' -A "$UA" --max-time 20 "$BASE/api/v1/software?name=slurm")"
+            echo "- resolve API: $(curl -sS -o /dev/null -w '%{http_code}' -A "$UA" --max-time 20 "$BASE/api/v1/version/resolve?name=slurm")"
+          } >> "$GITHUB_STEP_SUMMARY"
