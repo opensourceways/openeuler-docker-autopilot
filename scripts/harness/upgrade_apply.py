@@ -225,6 +225,29 @@ def ensure_cpu_torch(dockerfile: str, requirements: str) -> str:
     return dockerfile
 
 
+MODEL_PREFETCH_RUN = (
+    "RUN python -c \"from sentence_transformers import SentenceTransformer; "
+    "SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')\""
+)
+
+
+def ensure_model_prefetch(dockerfile: str, requirements: str) -> str:
+    """open-webui 启动时会下载 RAG 模型；构建期预热，避免首次启动超时。"""
+    if "open-webui" not in dockerfile:
+        return dockerfile
+    if "SentenceTransformer(" in dockerfile:
+        return dockerfile
+    if "sentence-transformers" not in requirements.lower():
+        return dockerfile
+    lines = dockerfile.splitlines()
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith(("CMD", "ENTRYPOINT")):
+            lines[index:index] = [MODEL_PREFETCH_RUN, ""]
+            suffix = "\n" if dockerfile.endswith("\n") else ""
+            return "\n".join(lines) + suffix
+    return dockerfile
+
+
 def fetch_upstream_requirements(item: dict) -> str:
     """读取上游 tag 的 backend/requirements.txt；失败只返回空串（不阻断）。"""
     source_url = str(item.get("source_url") or "")
@@ -315,13 +338,13 @@ def _generate_dockerfile(
                 if not findings:
                     guarded = candidate
                     if "requirements" in candidate and "pip install" in candidate:
-                        guarded = ensure_cpu_torch(
-                            candidate, fetch_upstream_requirements(item)
-                        )
+                        requirements = fetch_upstream_requirements(item)
+                        guarded = ensure_cpu_torch(candidate, requirements)
+                        guarded = ensure_model_prefetch(guarded, requirements)
                     if guarded != candidate:
                         log_stage(
                             "upgrade-apply",
-                            f"{app}: 已补充 CPU 版 torch 安装（避免 CUDA 依赖）",
+                            f"{app}: 已补充构建期兜底（CPU torch / 模型预热）",
                         )
                     return guarded
         log_stage("upgrade-apply", f"{app}: dockerfile findings={findings}")

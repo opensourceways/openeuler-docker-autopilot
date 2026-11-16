@@ -26,6 +26,9 @@
    先装 CPU 版 torch，禁止让 pip 从 PyPI 拉取数 GB 的 `nvidia-*` / `cuda-*` 依赖：
    `RUN pip install --retries 10 --timeout 120 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu`
    安装 requirements 时同样加上 `--timeout 120`，避免大包下载超时。
+9. **模型预热**：应用首次启动会从 HuggingFace 下载模型时（例如 open-webui 的
+   `sentence-transformers/all-MiniLM-L6-v2`），在镜像构建阶段预下载默认模型，
+   避免运行时首次启动超过测试等待时间。
 
 ## 输入上下文
 

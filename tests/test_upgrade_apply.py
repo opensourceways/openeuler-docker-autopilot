@@ -190,5 +190,41 @@ class CpuTorchGuardTest(unittest.TestCase):
         )
 
 
+class ModelPrefetchGuardTest(unittest.TestCase):
+    def test_prefetches_model_before_cmd_for_open_webui(self) -> None:
+        dockerfile = (
+            "ENV HF_ENDPOINT=https://hf-mirror.com\n"
+            'CMD ["/bin/bash", "-c", "/root/open-webui/backend/start.sh"]\n'
+        )
+        guarded = upgrade_apply.ensure_model_prefetch(
+            dockerfile, "sentence-transformers==5.5.1\n"
+        )
+        self.assertIn(upgrade_apply.MODEL_PREFETCH_RUN, guarded)
+        self.assertLess(
+            guarded.index(upgrade_apply.MODEL_PREFETCH_RUN),
+            guarded.index("CMD"),
+        )
+
+    def test_skips_apps_that_do_not_need_the_model(self) -> None:
+        dockerfile = 'FROM x\nCMD ["true"]\n'
+        self.assertEqual(
+            upgrade_apply.ensure_model_prefetch(
+                dockerfile, "sentence-transformers==5.5.1\n"
+            ),
+            dockerfile,
+        )
+
+    def test_skips_when_model_is_already_prefetched(self) -> None:
+        dockerfile = (
+            'RUN python -c "from sentence_transformers import SentenceTransformer; '
+            "SentenceTransformer('m')\"\n"
+            'CMD ["true"]\n'
+        )
+        self.assertEqual(
+            upgrade_apply.ensure_model_prefetch(dockerfile, "sentence-transformers\n"),
+            dockerfile,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
