@@ -397,6 +397,16 @@ open-pr            跨仓 PR：变更说明 + 功能测试状态 + 上游证据
 - **双架构原生验证**：x86_64 / aarch64 各自真实构建并跑功能测试，不使用 QEMU；任一架构失败则不开 PR，证据留在 artifact，分支保留供人工或修复组件继续处理。
 - **分支**：`auto/version-update/<app>/<version>-<oe_tag>`，推送到 `GITCODE_FORK_REPO`（留空则直推目标仓），再从 fork 向目标仓提跨仓 PR。
 
+验证失败后不会自动重跑，也不会重新生成分支。修复入口是 [`repair_upgrade.yml`](.github/workflows/repair_upgrade.yml)（手动触发）：
+
+| 输入 | 含义 |
+|------|------|
+| `source_run_id` | 失败的升级运行 ID（artifact 名称里的 run id） |
+| `app` | 要修复的应用名 |
+| `instructions` | 给 AI 的修复说明（失败原因判断、希望保留/调整的构建步骤），可留空 |
+
+它复用 `_upgrade_app.yml` 的 repair 模式：下载失败运行的 `task-spec` 与双架构 evidence（含诊断日志尾部），由 [`upgrade_repair.py`](scripts/harness/upgrade_repair.py) 在**已有的升级分支**上修复 `Dockerfile` / `tests/test.sh` 并推回同一分支，然后走同一套双架构验证与开 PR。分支不存在时直接报错——repair 只修复已有分支。
+
 ### 4.3 已是最新版本的审计与修复
 
 看板版本与目标仓最新目录一致时不跳过，由 [`_audit_app.yml`](.github/workflows/_audit_app.yml) 审计并修复（独立分支 + PR，不直接改主分支）：

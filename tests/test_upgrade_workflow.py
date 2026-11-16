@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 UPGRADE = ROOT / '.github' / 'workflows' / 'upgrade_upstream_versions.yml'
 APP = ROOT / '.github' / 'workflows' / '_upgrade_app.yml'
 AUDIT = ROOT / '.github' / 'workflows' / '_audit_app.yml'
+REPAIR = ROOT / '.github' / 'workflows' / 'repair_upgrade.yml'
 
 
 def _workflow(path: Path):
@@ -99,6 +100,31 @@ def test_no_legacy_runner_or_legacy_scripts_are_referenced():
         assert 'anitya' not in text
         # 字面 runs-on: ubuntu-latest 会被新镜像结构测试拒绝
         assert 'runs-on: ubuntu-latest' not in text
+
+
+def test_repair_reuses_the_pipeline_without_regenerating_the_branch():
+    data = _workflow(REPAIR)
+    inputs = _trigger(data)['workflow_dispatch']['inputs']
+    assert set(inputs) >= {'source_run_id', 'app', 'instructions'}
+
+    jobs = data['jobs']
+    assert list(jobs) == ['repair']
+    repair = jobs['repair']
+    assert repair['uses'] == './.github/workflows/_upgrade_app.yml'
+    assert repair['with']['repair_run_id'] == '${{ inputs.source_run_id }}'
+    assert repair['with']['repair_instructions'] == '${{ inputs.instructions }}'
+
+    prepare = _workflow(APP)['jobs']['prepare']
+    text = _squash(prepare['steps'])
+    # repair 走已有分支上的修复脚本；首次生成只在非 repair 模式运行
+    assert 'upgrade_repair.py' in text
+    assert 'upgrade_apply.py' in text
+    assert "inputs.repair_run_id == ''" in text
+    # 失败运行的 task spec 与双架构 evidence 是 repair 的输入
+    assert 'upgrade-task-${{ inputs.app }}-${{ inputs.repair_run_id }}' in text
+    assert 'upgrade-evidence-${{ inputs.app }}-x86_64' in text
+    assert 'upgrade-evidence-${{ inputs.app }}-aarch64' in text
+    assert "'run-id': '${{ inputs.repair_run_id }}'" in text
 
 
 def test_audit_app_validates_both_arches_before_the_fix_pr():
