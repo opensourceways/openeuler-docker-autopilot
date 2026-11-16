@@ -14,7 +14,9 @@ Stage: 场景二 —— 应用升级候选发现（upgrade_scan）
 
 规则：
 - 软件清单来自 ``config/upgrade-apps.yml``（人工维护，初始由
-  ``scripts/utils/scrape_upgrade_apps.py`` 从看板生成），**不遍历目标仓**；
+  ``scripts/utils/scrape_upgrade_apps.py`` 从看板生成），批量扫描**不遍历目标仓**；
+  手动 ``--app`` 指定的应用可以不在清单里：按目标仓目录反查 domain，不看看板，
+  必须同时用 ``--version`` 指定目标版本；
 - 每个软件按 ``{domain}/{app}/{version}/{os}/Dockerfile`` 定位（复用
   testgen_scan 的排序）；
 - ``blocked_reason`` 非 null → 跳过（记录原因；看板未解析出可用版本）；
@@ -120,7 +122,7 @@ def _select_apps(apps: list[dict], app_filter: str) -> list[dict]:
     if not app_filter:
         return apps
     key = testgen_scan.normalize_name(app_filter)
-    matches = [
+    return [
         entry
         for entry in apps
         if key
@@ -129,16 +131,28 @@ def _select_apps(apps: list[dict], app_filter: str) -> list[dict]:
             testgen_scan.normalize_name(entry["name"]),
         }
     ]
+
+
+def _find_repo_app(repo_dir: Path, app_filter: str) -> dict:
+    """清单外的应用：只在目标仓里反查 domain，不看看板。"""
+    key = testgen_scan.normalize_name(app_filter)
+    matches = [
+        {"name": app_filter, "app": child.name, "domain": parent.name}
+        for parent in sorted(repo_dir.iterdir())
+        if parent.is_dir()
+        for child in sorted(parent.iterdir())
+        if child.is_dir() and testgen_scan.normalize_name(child.name) == key
+    ]
     if not matches:
         raise SystemExit(
-            f"{app_filter}: 不在软件清单里（app=config/upgrade-apps.yml）"
+            f"{app_filter}: 不在软件清单里，目标仓也没有这个应用目录"
         )
     if len(matches) > 1:
         raise SystemExit(
-            f"{app_filter}: 软件清单命中多个条目 "
+            f"{app_filter}: 软件清单里没有，且目标仓命中多个目录 "
             f"{[(m['domain'], m['app']) for m in matches]}"
         )
-    return matches
+    return matches[0]
 
 
 def _resolve_one(
@@ -192,7 +206,21 @@ def find_updates(
     target_repo: str = DEFAULT_TARGET_REPO,
     token: str = "",
 ) -> dict:
-    entries = _select_apps(apps if apps is not None else load_apps(apps_file), app_filter.strip())
+    app_filter = app_filter.strip()
+    entries = _select_apps(apps if apps is not None else load_apps(apps_file), app_filter)
+
+    # 手动指定但不在清单里的应用：只按目标仓定位，不看看板。
+    ad_hoc = bool(app_filter) and not entries
+    if ad_hoc:
+        if not forced_version:
+            raise SystemExit(
+                f"{app_filter}: 不在软件清单里，手动升级必须同时指定 --version"
+                "（清单外应用不查看看板）"
+            )
+        entries = [_find_repo_app(repo_dir, app_filter)]
+        evidence_fetch = None
+    else:
+        evidence_fetch = fetch_evidence
 
     skipped: list[dict] = []
     pairs: list[tuple[dict, Path]] = []
@@ -212,7 +240,6 @@ def find_updates(
         pairs.append((entry, app_dir))
     if not pairs:
         return {"updates": [], "skipped": skipped}
-
     if forced_version:
         # 手动指定版本：不查看板，其余照常对比本地目录。
         # tag 不能拿版本号冒充（slurm 的版本是 26.05.6.1，上游 tag 却是
@@ -302,7 +329,7 @@ def find_updates(
                         new_version,
                         payload,
                         probe_result,
-                        fetch_evidence,
+                        evidence_fetch,
                     ),
                     "has_test_script": testgen_scan.has_any_test_script(app_dir),
                     "reason": f"已有版本目录 {new_version}，无需升级，转入 AI 审计",
@@ -329,7 +356,7 @@ def find_updates(
                     new_version,
                     payload,
                     probe_result,
-                    fetch_evidence,
+                    evidence_fetch,
                 ),
             }
         )
@@ -342,7 +369,11 @@ def find_updates(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=os.environ.get("SOURCE_REPO_DIR", ""))
-    parser.add_argument("--app", default="", help="只处理这一个应用")
+    parser.add_argument(
+        "--app",
+        default="",
+        help="只处理这一个应用（可不在软件清单里，此时需配合 --version）",
+    )
     parser.add_argument("--version", default="", help="手动指定目标版本（跳过看板解析）")
     parser.add_argument(
         "--tag",

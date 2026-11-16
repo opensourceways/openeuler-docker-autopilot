@@ -206,6 +206,39 @@ class FindUpdatesTest(unittest.TestCase):
         )
         self.assertEqual(result["updates"][0]["evidence"]["tag"], "v2.18.0")
 
+    def test_unlisted_app_in_repo_can_be_upgraded_with_forced_version(self) -> None:
+        _make_app(self.repo, "AI", "open-webui", versions=("0.1.108",))
+
+        def boom(*args):
+            raise AssertionError("dashboard must not be called")
+
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            app_filter="open-webui",
+            forced_version="0.13.3",
+            apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
+            resolve=boom,
+            probe=boom,
+            fetch_evidence=boom,
+        )
+        self.assertEqual(len(result["updates"]), 1)
+        item = result["updates"][0]
+        self.assertEqual(item["app"], "open-webui")
+        self.assertEqual(item["domain"], "AI")
+        self.assertEqual(item["version"], "0.13.3")
+
+    def test_unlisted_app_requires_forced_version(self) -> None:
+        _make_app(self.repo, "AI", "open-webui", versions=("0.1.108",))
+        with self.assertRaises(SystemExit):
+            upgrade_scan.find_updates(
+                repo_dir=self.repo,
+                app_filter="open-webui",
+                apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
+                resolve=lambda name: {},
+                probe=lambda payload: {},
+                fetch_evidence=lambda name, version: [],
+            )
+
     def test_unknown_app_raises(self) -> None:
         with self.assertRaises(SystemExit):
             upgrade_scan.find_updates(repo_dir=self.repo, app_filter="nope")
