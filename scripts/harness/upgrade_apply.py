@@ -26,9 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
-import urllib.request
 from pathlib import Path
-from urllib.parse import urlparse
 
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
@@ -184,101 +182,6 @@ def _reset_workspace(repo_dir: Path) -> None:
     _git(repo_dir, "clean", "-fd", check=False)
 
 
-CPU_TORCH_RUN = (
-    "RUN pip install --retries 10 --timeout 120 'torch<=2.9.1' "
-    "torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
-)
-
-
-def _needs_cpu_torch(requirements: str) -> bool:
-    text = requirements.lower()
-    return "sentence-transformers" in text or re.search(
-        r"(?m)^\s*torch\b", text
-    ) is not None
-
-
-def ensure_cpu_torch(dockerfile: str, requirements: str) -> str:
-    """requirements 依赖 torch 时，在安装 requirements 前补一条 CPU 版 torch。
-
-    默认 PyPI 的 torch 会拖入数 GB 的 CUDA/nvidia 依赖，自托管 Runner 常因
-    磁盘或镜像站超时构建失败；上游官方 Dockerfile 也是先装 CPU 版。
-    """
-    if not _needs_cpu_torch(requirements):
-        return dockerfile
-    if "download.pytorch.org/whl/cpu" in dockerfile:
-        return dockerfile
-    lines = dockerfile.splitlines()
-    for index, line in enumerate(lines):
-        if not line.lstrip().startswith("RUN"):
-            continue
-        block_end = index
-        while (
-            block_end < len(lines)
-            and lines[block_end].rstrip().endswith("\\")
-        ):
-            block_end += 1
-        block = "\n".join(lines[index : block_end + 1])
-        if "requirements" in block and "pip install" in block:
-            lines[index:index] = [CPU_TORCH_RUN, ""]
-            suffix = "\n" if dockerfile.endswith("\n") else ""
-            return "\n".join(lines) + suffix
-    return dockerfile
-
-
-MODEL_PREFETCH_RUN = (
-    "RUN python -c \"from sentence_transformers import SentenceTransformer; "
-    "SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')\""
-)
-
-
-def ensure_model_prefetch(dockerfile: str, requirements: str) -> str:
-    """open-webui 启动时会下载 RAG 模型；构建期预热，避免首次启动超时。"""
-    if "open-webui" not in dockerfile:
-        return dockerfile
-    if "SentenceTransformer(" in dockerfile:
-        return dockerfile
-    if "sentence-transformers" not in requirements.lower():
-        return dockerfile
-    lines = dockerfile.splitlines()
-    for index, line in enumerate(lines):
-        if line.lstrip().startswith(("CMD", "ENTRYPOINT")):
-            lines[index:index] = [MODEL_PREFETCH_RUN, ""]
-            suffix = "\n" if dockerfile.endswith("\n") else ""
-            return "\n".join(lines) + suffix
-    return dockerfile
-
-
-def fetch_upstream_requirements(item: dict) -> str:
-    """读取上游 tag 的 backend/requirements.txt；失败只返回空串（不阻断）。"""
-    source_url = str(item.get("source_url") or "")
-    parsed = urlparse(source_url)
-    if parsed.netloc.lower() not in {"github.com", "www.github.com"}:
-        return ""
-    parts = [part for part in parsed.path.split("/") if part]
-    if len(parts) < 2:
-        return ""
-    owner, repo = parts[0], parts[1].removesuffix(".git")
-    evidence = item.get("evidence") or {}
-    refs = [
-        str(evidence.get("tag") or "").strip(),
-        f"v{item.get('version')}",
-        str(item.get("version") or ""),
-    ]
-    for ref in dict.fromkeys(refs):
-        if not ref:
-            continue
-        url = (
-            f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}"
-            "/backend/requirements.txt"
-        )
-        try:
-            with urllib.request.urlopen(url, timeout=20) as response:
-                return response.read().decode("utf-8", errors="replace")
-        except OSError:
-            continue
-    return ""
-
-
 def _generate_dockerfile(
     *,
     repo_dir: Path,
@@ -336,17 +239,7 @@ def _generate_dockerfile(
                     candidate, str(item["version"])
                 )
                 if not findings:
-                    guarded = candidate
-                    if "requirements" in candidate and "pip install" in candidate:
-                        requirements = fetch_upstream_requirements(item)
-                        guarded = ensure_cpu_torch(candidate, requirements)
-                        guarded = ensure_model_prefetch(guarded, requirements)
-                    if guarded != candidate:
-                        log_stage(
-                            "upgrade-apply",
-                            f"{app}: 已补充构建期兜底（CPU torch / 模型预热）",
-                        )
-                    return guarded
+                    return candidate
         log_stage("upgrade-apply", f"{app}: dockerfile findings={findings}")
 
     raise version_upgrade.UpgradeError(
