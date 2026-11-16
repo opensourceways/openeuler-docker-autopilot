@@ -21,6 +21,11 @@
 6. **不要编造**：无法在取证预算内确认的构建参数，按当前最佳判断生成并在
    `assumptions` 中说明，不要假装已验证。
 7. **只输出 JSON**：不得执行 `git` 写操作，不得创建、修改或删除仓库文件，不得读写凭据。
+8. **torch 依赖先装 CPU 版**：若新版本会安装 torch（例如 `backend/requirements.txt`
+   里出现 `sentence-transformers`、`torch` 等），必须在安装 requirements **之前**
+   先装 CPU 版 torch，禁止让 pip 从 PyPI 拉取数 GB 的 `nvidia-*` / `cuda-*` 依赖：
+   `RUN pip install --retries 10 --timeout 120 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu`
+   安装 requirements 时同样加上 `--timeout 120`，避免大包下载超时。
 
 ## 输入上下文
 
