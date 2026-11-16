@@ -1180,7 +1180,8 @@ def validate_native_image(
         )
     if not _RUN_ID_RE.fullmatch(run_id):
         raise NativeValidationError("run_id must be a positive integer")
-    workspace = Path(workspace)
+    # buildx 以 workspace 为 cwd，参数若是相对路径会被拼两次（source-repo/source-repo/...）。
+    workspace = Path(workspace).resolve()
     if not workspace.is_dir():
         raise NativeValidationError("target workspace does not exist")
     report_path = Path(report_path)

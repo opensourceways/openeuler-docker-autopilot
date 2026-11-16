@@ -1054,6 +1054,59 @@ def test_native_validation_reports_only_build_and_runtime_test(tmp_path):
     ) == 1
 
 
+def test_relative_workspace_is_resolved_before_build(tmp_path, monkeypatch):
+    from scripts.lib import native_validation
+
+    workspace = _workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        native_validation,
+        "validate_test_contract",
+        lambda repo, task: {
+            "status": "passed",
+            "test_allowed": True,
+            "runtime_test_allowed": True,
+            "findings": [],
+            "errors": [],
+        },
+    )
+    runner = RuntimeStateRunner(
+        wait_status="RUNNING_NO_PROBE",
+        states=[
+            {
+                "Status": "running",
+                "ExitCode": 0,
+                "OOMKilled": False,
+                "Error": "",
+            },
+            {
+                "Status": "running",
+                "ExitCode": 0,
+                "OOMKilled": False,
+                "Error": "",
+            },
+        ],
+    )
+
+    report = native_validation.validate_native_image(
+        workspace=Path("target"),
+        task=_task(),
+        architecture="x86_64",
+        run_id="123456",
+        report_path=tmp_path / "reports/x86_64.json",
+        junit_path=tmp_path / "reports/x86_64.junit.xml",
+        runner=runner,
+    )
+
+    assert report["status"] == "passed"
+    build = next(
+        call for call in runner.calls if call[:3] == ["docker", "buildx", "build"]
+    )
+    image_root = workspace / "Database/kvrocks/2.16.0/24.03-lts-sp4"
+    assert Path(build[-1]) == image_root
+    assert Path(build[build.index("--file") + 1]) == image_root / "Dockerfile"
+
+
 def test_native_validation_reports_each_runtime_substage_failure(tmp_path):
     from scripts.lib.native_validation import (
         NativeValidationError,
