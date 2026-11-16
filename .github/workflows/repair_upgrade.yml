@@ -1,0 +1,54 @@
+name: Repair upgrade branch
+
+# 场景二失败修复入口（对应 _upgrade_app.yml 的 repair 模式）：
+#
+#   失败的升级运行不会自动重跑；运维看过失败步骤后，用本工作流把
+#   「失败证据 + 人工说明」交给 AI，在**同一个升级分支**上修复
+#   Dockerfile / tests/test.sh，然后复用双架构原生验证与开 PR。
+#
+# 不会重新生成分支，也不会重跑首次生成。source_run_id 填 Upgrade one app
+# 所属的父运行 ID（artifact 名称里的那个 run id）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: '失败的升级运行 ID（Upgrade one app 所属的父运行）'
+        required: true
+        type: string
+      app:
+        description: '要修复的应用名（与失败运行一致）'
+        required: true
+        type: string
+      instructions:
+        description: '给 AI 的修复说明（失败原因判断、希望保留/调整的构建步骤）'
+        required: false
+        default: ''
+        type: string
+      x64_runner_labels:
+        description: 'x86_64 runner 标签（JSON 数组）'
+        required: false
+        default: '["self-hosted","Linux","X64","oe-image-x86"]'
+        type: string
+      arm64_runner_labels:
+        description: 'aarch64 runner 标签（JSON 数组）'
+        required: false
+        default: '["self-hosted","Linux","ARM64","oe-image-arm64"]'
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  repair:
+    name: "Repair ${{ inputs.app }}"
+    uses: ./.github/workflows/_upgrade_app.yml
+    secrets: inherit
+    with:
+      item: ''
+      app: ${{ inputs.app }}
+      repair_run_id: ${{ inputs.source_run_id }}
+      repair_instructions: ${{ inputs.instructions }}
+      x64_runner_labels: ${{ inputs.x64_runner_labels }}
+      arm64_runner_labels: ${{ inputs.arm64_runner_labels }}

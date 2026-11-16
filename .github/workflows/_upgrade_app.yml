@@ -5,27 +5,45 @@ name: Upgrade one app
 #   → 双架构原生验证 → 跨仓 PR
 #
 # 一应用一 PR：任一架构验证失败则不开 PR，分支保留供人工/修复组件继续处理。
+#
+# repair 模式（由 repair_upgrade.yml 调用）：prepare 不重新生成分支，而是下载失败
+# 运行的 task-spec + 双架构 evidence，在已有分支上按失败证据与人工说明修复
+# Dockerfile / tests/test.sh，然后走同一套验证与开 PR。
 
 on:
   workflow_call:
     inputs:
       item:
-        description: 'upgrade_scan 产出的单条 item JSON'
-        required: true
+        description: 'upgrade_scan 产出的单条 item JSON（repair 模式可留空）'
+        required: false
+        default: ''
         type: string
       app:
         required: true
         type: string
       domain:
-        required: true
+        required: false
+        default: ''
         type: string
       version:
-        required: true
+        required: false
+        default: ''
         type: string
       os_version:
-        required: true
+        required: false
+        default: ''
         type: string
       source_url:
+        required: false
+        default: ''
+        type: string
+      repair_run_id:
+        description: '失败运行 ID；非空时只修复已有分支，不重新生成'
+        required: false
+        default: ''
+        type: string
+      repair_instructions:
+        description: 'repair 模式下给 AI 的修复说明'
         required: false
         default: ''
         type: string
@@ -46,6 +64,8 @@ on:
         required: false
 
 permissions:
+  # repair 模式要从失败运行下载 task-spec / evidence artifact。
+  actions: read
   contents: read
 
 env:
@@ -65,13 +85,17 @@ env:
 jobs:
 
   prepare:
-    name: "Prepare ${{ inputs.app }} -> ${{ inputs.version }}"
+    name: >-
+      ${{ inputs.repair_run_id != '' &&
+          format('Repair {0} (from run {1})', inputs.app, inputs.repair_run_id) ||
+          format('Prepare {0} -> {1}', inputs.app, inputs.version) }}
     runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
     timeout-minutes: 120
     outputs:
-      branch: ${{ steps.apply.outputs.branch }}
-      test_status: ${{ steps.apply.outputs.test_status }}
-      push_repo: ${{ steps.apply.outputs.push_repo }}
+      branch: ${{ steps.apply.outputs.branch || steps.repair.outputs.branch }}
+      test_status: ${{ steps.apply.outputs.test_status || steps.repair.outputs.test_status }}
+      push_repo: ${{ steps.apply.outputs.push_repo || steps.repair.outputs.push_repo }}
+      item_json: ${{ steps.repair.outputs.item_json }}
     steps:
       - name: Check out workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -99,6 +123,7 @@ jobs:
 
       - name: Generate Dockerfile and apply upgrade
         id: apply
+        if: ${{ inputs.repair_run_id == '' }}
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
           GITCODE_FORK_REPO: ${{ vars.GITCODE_FORK_REPO }}
@@ -110,6 +135,61 @@ jobs:
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_apply.py \
             --item "$ITEM" \
+            --task-spec-out "${RUNNER_TEMP}/task-spec.json"
+
+      - name: Download failed run task spec
+        if: ${{ inputs.repair_run_id != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: upgrade-task-${{ inputs.app }}-${{ inputs.repair_run_id }}
+          path: ${{ runner.temp }}/repair-source/task
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.repair_run_id }}
+
+      - name: Download failed run evidence (x86_64)
+        if: ${{ inputs.repair_run_id != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: upgrade-evidence-${{ inputs.app }}-x86_64
+          path: ${{ runner.temp }}/repair-source/evidence/x86_64
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.repair_run_id }}
+
+      - name: Download failed run evidence (aarch64)
+        if: ${{ inputs.repair_run_id != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: upgrade-evidence-${{ inputs.app }}-aarch64
+          path: ${{ runner.temp }}/repair-source/evidence/aarch64
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.repair_run_id }}
+
+      # 只修复已有分支：不切新分支、不重跑首次生成；分支不存在时脚本直接失败。
+      - name: Repair existing upgrade branch
+        id: repair
+        if: ${{ inputs.repair_run_id != '' }}
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_FORK_REPO: ${{ vars.GITCODE_FORK_REPO }}
+          GIT_COMMIT_NAME: ${{ vars.GIT_COMMIT_NAME }}
+          GIT_COMMIT_EMAIL: ${{ vars.GIT_COMMIT_EMAIL }}
+          SOURCE_REPO_DIR: ${{ github.workspace }}/source-repo
+          OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
+          TASK_SPEC: ${{ runner.temp }}/repair-source/task/task-spec.json
+          INSTRUCTIONS: ${{ inputs.repair_instructions }}
+          EVIDENCE_X86: ${{ runner.temp }}/repair-source/evidence/x86_64
+          EVIDENCE_ARM: ${{ runner.temp }}/repair-source/evidence/aarch64
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_repair.py \
+            --task-spec "$TASK_SPEC" \
+            --evidence-dir "$EVIDENCE_X86" \
+            --evidence-dir "$EVIDENCE_ARM" \
+            --instructions "$INSTRUCTIONS" \
             --task-spec-out "${RUNNER_TEMP}/task-spec.json"
 
       - name: Upload task spec
@@ -173,9 +253,10 @@ jobs:
         env:
           REPORT: ${{ runner.temp }}/upgrade-evidence/x86_64.json
           APP: ${{ inputs.app }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" -c \
-            "import json,os,sys; p=os.environ['REPORT']; r=json.load(open(p)) if os.path.isfile(p) else {'status':'missing'}; s=r.get('status'); print(s); fl=[str(x.get('failure') or '') for x in (r.get('failures') or [])]; print('::error::'+(os.environ.get('APP','')+' x86_64 validation '+str(s)+': '+'; '.join(fl[:3]))) if s!='passed' else None; sys.exit(0 if s=='passed' else 1)"
+            "import json,os,sys; p=os.environ['REPORT']; r=json.load(open(p)) if os.path.isfile(p) else {'status':'missing'}; s=r.get('status'); print(s); app=os.environ.get('APP',''); fl=[str(x.get('failure') or '') for x in (r.get('failures') or [])]; print('::error::'+(app+' x86_64 validation '+str(s)+': '+'; '.join(fl[:3])+'. 修复：运行 Repair upgrade branch 工作流，source_run_id='+os.environ.get('RUN_ID','')+'，app='+app)) if s!='passed' else None; sys.exit(0 if s=='passed' else 1)"
 
   validate-aarch64:
     name: "Validate aarch64"
@@ -230,9 +311,10 @@ jobs:
         env:
           REPORT: ${{ runner.temp }}/upgrade-evidence/aarch64.json
           APP: ${{ inputs.app }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" -c \
-            "import json,os,sys; p=os.environ['REPORT']; r=json.load(open(p)) if os.path.isfile(p) else {'status':'missing'}; s=r.get('status'); print(s); fl=[str(x.get('failure') or '') for x in (r.get('failures') or [])]; print('::error::'+(os.environ.get('APP','')+' aarch64 validation '+str(s)+': '+'; '.join(fl[:3]))) if s!='passed' else None; sys.exit(0 if s=='passed' else 1)"
+            "import json,os,sys; p=os.environ['REPORT']; r=json.load(open(p)) if os.path.isfile(p) else {'status':'missing'}; s=r.get('status'); print(s); app=os.environ.get('APP',''); fl=[str(x.get('failure') or '') for x in (r.get('failures') or [])]; print('::error::'+(app+' aarch64 validation '+str(s)+': '+'; '.join(fl[:3])+'. 修复：运行 Repair upgrade branch 工作流，source_run_id='+os.environ.get('RUN_ID','')+'，app='+app)) if s!='passed' else None; sys.exit(0 if s=='passed' else 1)"
 
   open-pr:
     name: "Open PR for ${{ inputs.app }}"
@@ -256,7 +338,7 @@ jobs:
         id: pr
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-          ITEM: ${{ inputs.item }}
+          ITEM: ${{ needs.prepare.outputs.item_json || inputs.item }}
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_open_pr.py \
             --item "$ITEM" \
