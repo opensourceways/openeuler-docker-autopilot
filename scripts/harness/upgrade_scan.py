@@ -2,30 +2,30 @@
 """
 Stage: 场景二 —— 应用升级候选发现（upgrade_scan）
 
-每天（或手动）在目标仓克隆里枚举应用，用 upstream-dashboard 的
-``/api/v1/version/resolve`` 解析每个软件的最新上游版本，与本地已有版本目录
-对比，产出：
+**不查询 upstream-dashboard**：目标版本由软件清单（或 ``--version``）手动提供。
+在目标仓克隆里按 ``{domain}/{app}/{version}/{os}/Dockerfile`` 定位，与本地已有
+版本目录对比，产出：
 
 - ``updates``：需要升级的应用矩阵
   ``[{app, domain, version, os_version, source_url, evidence}]``；
-- ``audits``：已是最新版本、不能直接跳过的应用
+- ``audits``：目标版本的目录已存在、不能直接跳过的应用
   ``[{app, domain, version, os_version, dockerfile_path, source_url, evidence,
   has_test_script}]``，交给 ``upgrade_audit.py`` 做 AI 审计。
 
 规则：
-- 软件清单来自 ``config/upgrade-apps.yml``（人工维护，初始由
-  ``scripts/utils/scrape_upgrade_apps.py`` 从看板生成），批量扫描**不遍历目标仓**；
-  手动 ``--app`` 指定的应用可以不在清单里：按目标仓目录反查 domain，不看看板，
-  必须同时用 ``--version`` 指定目标版本；
-- 每个软件按 ``{domain}/{app}/{version}/{os}/Dockerfile`` 定位（复用
-  testgen_scan 的排序）；
-- ``blocked_reason`` 非 null → 跳过（记录原因；看板未解析出可用版本）；
-- 最新版本已存在同名目录（去 ``v`` 前缀、忽略大小写）→ **不跳过**，产出 audit；
+- 软件清单来自 ``config/upgrade-apps.yml``（人工维护，可用 ``--apps-file``
+  指向子集），批量扫描**不遍历目标仓**；
+- 每项必须有 ``app`` / ``domain``；自动升级还要求 ``version``（目标版本）与
+  ``source_url``（上游仓库 HTTPS 地址，写入 task spec），缺失则跳过并记录原因；
+- 清单项可选 ``tag``（上游 tag，如 ``slurm-26-05-6-1``）；不填则跳过 tag 校验；
+- 手动 ``--app`` 可不在清单里：按目标仓目录反查 domain，必须同时给
+  ``--version`` 与 ``--source-url``；
+- 目标版本低于仓库现有版本（仅纯数字版本比较）或为 ``Undefined`` / ``latest``
+  等占位值 → 跳过，避免降级 PR；
+- 最新版本目录已存在 → **不跳过**，产出 audit；
 - 目标分支已有 open PR → 跳过（已有升级在途）；
 - os 目录沿用该应用最新的一个（不补齐所有 os 版本）；
-- 证据：``upstream_evidence.normalize`` + ``upstream_dashboard.fetch_evidence``
-  （看板 ``/api/v1/software`` 采集证据，固定 L1 的 3 条）+ ``probe``（自探兜底），
-  只作参考，抓取失败不阻断升级。
+- 证据只保留手动提供的信息（``source=manual``），不再抓看板采集项。
 
 输入: --repo <目标仓克隆>，可选 --app / --version / --tag / --source-url /
       --apps-file / --limit / --audit-limit
@@ -37,7 +37,6 @@ import json
 import os
 import re
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
@@ -47,16 +46,11 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.harness import testgen_scan  # noqa: E402
-from scripts.lib import upstream_dashboard, upstream_evidence  # noqa: E402
 from scripts.lib.stage_common import log_stage  # noqa: E402
 from scripts.lib.task_spec import _os_tag  # noqa: E402
 
 DEFAULT_TARGET_REPO = "openeuler/openeuler-docker-images"
 DEFAULT_APPS_FILE = os.path.join(PROJECT_ROOT, "config", "upgrade-apps.yml")
-MAX_WORKERS = 8
-# 矩阵 payload 走 workflow output，证据只保留参考价值最高的部分，避免超长。
-_MAX_RAW_CHARS = 400
-_MAX_COLLECTOR_ITEMS = 20
 
 
 def _normalize_version(value: str) -> str:
@@ -64,15 +58,15 @@ def _normalize_version(value: str) -> str:
     return str(value or "").strip().lstrip("vV").lower()
 
 
-# 看板偶尔把 latest/Undefined 这类占位值当版本返回；它们不能当目录名。
+# 手写版本里也可能误填占位值；它们不能当目录名。
 _PLACEHOLDER_VERSIONS = {"undefined", "latest", "null", "none", "unknown"}
 
 
 def _numeric_version_key(value: str) -> tuple[int, ...] | None:
     """纯数字版本转成可比较的 key；含字母或占位值时返回 None。
 
-    只用于拦截「看板版本低于仓库现有版本」的降级：跨项目的 rc/beta/commit
-    等版本号没有统一排序，遇到就交回原有逻辑，不做大小判断。
+    只用于拦截「目标版本低于仓库现有版本」的降级：跨项目的 rc/beta/commit
+    等版本号没有统一排序，遇到就不做大小判断。
     """
     tokens = [
         token
@@ -91,26 +85,6 @@ def existing_versions(app_dir: Path) -> set[str]:
         _normalize_version(entry.name)
         for entry in app_dir.iterdir()
         if entry.is_dir()
-    }
-
-
-def _trim_evidence(evidence: dict) -> dict:
-    trimmed = dict(evidence)
-    collector = trimmed.get("collector") or []
-    trimmed["collector"] = [
-        _trim_mapping(item) for item in collector[:_MAX_COLLECTOR_ITEMS]
-    ]
-    raw = trimmed.get("raw") or {}
-    trimmed["raw"] = _trim_mapping(raw)
-    return trimmed
-
-
-def _trim_mapping(value: dict) -> dict:
-    if not isinstance(value, dict):
-        return value
-    return {
-        key: (item if len(str(item)) <= _MAX_RAW_CHARS else str(item)[:_MAX_RAW_CHARS] + "…")
-        for key, item in value.items()
     }
 
 
@@ -138,7 +112,12 @@ def load_apps(path: str | Path | None = None) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        apps.append({"name": name or app, "app": app, "domain": domain})
+        record = {"name": name or app, "app": app, "domain": domain}
+        for field in ("version", "tag", "source_url"):
+            value = str(entry.get(field) or "").strip()
+            if value:
+                record[field] = value
+        apps.append(record)
     return apps
 
 
@@ -158,7 +137,7 @@ def _select_apps(apps: list[dict], app_filter: str) -> list[dict]:
 
 
 def _find_repo_app(repo_dir: Path, app_filter: str) -> dict:
-    """清单外的应用：只在目标仓里反查 domain，不看看板。"""
+    """清单外的应用：只在目标仓里反查 domain。"""
     key = testgen_scan.normalize_name(app_filter)
     matches = [
         {"name": app_filter, "app": child.name, "domain": parent.name}
@@ -179,36 +158,25 @@ def _find_repo_app(repo_dir: Path, app_filter: str) -> dict:
     return matches[0]
 
 
-def _resolve_one(
-    name: str,
-    *,
-    resolve: Callable[..., dict | None],
-    probe: Callable[[dict | None], dict],
-) -> tuple[dict | None, dict]:
-    payload = resolve(name)
-    return payload, probe(payload)
-
-
-def _build_evidence(
-    name: str,
-    new_version: str,
-    payload: dict,
-    probe_result: dict,
-    fetch_evidence: Callable[[str, str], list[dict]] | None,
+def _manual_evidence(
+    *, name: str, version: str, tag: str, source_url: str
 ) -> dict:
-    evidence = upstream_evidence.normalize(payload)
-    evidence["probe"] = probe_result
-    collector = list(evidence.get("collector") or [])
-    if fetch_evidence is not None:
-        try:
-            collector.extend(fetch_evidence(name, new_version))
-        except Exception as error:  # 证据只作参考，抓取失败不能阻断升级
-            log_stage(
-                "upgrade-scan",
-                f"{name}: 证据包抓取失败（非阻断）: {error}",
-            )
-    evidence["collector"] = collector
-    return _trim_evidence(evidence)
+    """版本由人工提供，证据只记录这次升级的输入，不抓看板。"""
+    return {
+        "source": "manual",
+        "name": name,
+        "version": version,
+        "tag": tag,
+        "tag_url": "",
+        "commit_sha": "",
+        "repo_url": source_url,
+        "collector": [],
+        "probe": {
+            "source": "manual",
+            "status": "skipped",
+            "reason": "版本由清单手动提供，未查询看板/上游",
+        },
+    }
 
 
 def find_updates(
@@ -222,32 +190,25 @@ def find_updates(
     audit_limit: int = 0,
     apps: list[dict] | None = None,
     apps_file: str | Path | None = None,
-    resolve: Callable[..., dict | None] = upstream_dashboard.resolve_version,
-    probe: Callable[[dict | None], dict] = upstream_evidence.probe,
-    fetch_evidence: Callable[[str, str], list[dict]] | None = (
-        upstream_dashboard.fetch_evidence
-    ),
     pr_exists: Callable[[str, str, str], dict | None] | None = None,
     target_repo: str = DEFAULT_TARGET_REPO,
     token: str = "",
 ) -> dict:
     app_filter = app_filter.strip()
-    entries = _select_apps(apps if apps is not None else load_apps(apps_file), app_filter)
+    entries = _select_apps(
+        apps if apps is not None else load_apps(apps_file), app_filter
+    )
 
-    # 手动指定但不在清单里的应用：只按目标仓定位，不看看板。
+    # 手动指定但不在清单里的应用：只按目标仓定位。
     ad_hoc = bool(app_filter) and not entries
     if ad_hoc:
         if not forced_version:
             raise SystemExit(
                 f"{app_filter}: 不在软件清单里，手动升级必须同时指定 --version"
-                "（清单外应用不查看看板）"
             )
         entries = [_find_repo_app(repo_dir, app_filter)]
-        evidence_fetch = None
-    else:
-        evidence_fetch = fetch_evidence
 
-    # task-spec 的 source_url 是必填项：手动升级跳过了看板，必须由调用方给出。
+    # task-spec 的 source_url 是必填项：版本已经手动提供，仓库地址也必须给。
     source_url = source_url.strip()
     if forced_version and not source_url:
         raise SystemExit(
@@ -272,81 +233,55 @@ def find_updates(
             continue
         pairs.append((entry, app_dir))
     if not pairs:
-        return {"updates": [], "skipped": skipped}
-    if forced_version:
-        # 手动指定版本：不查看板，其余照常对比本地目录。
-        # tag 不能拿版本号冒充（slurm 的版本是 26.05.6.1，上游 tag 却是
-        # slurm-26-05-6-1）；没给 tag 就留空，后续审计/修复会跳过 tag 校验。
-        forced_tag = forced_tag.strip()
-        if not forced_tag:
-            log_stage(
-                "upgrade-scan",
-                "手动指定版本但未给 tag，本次跳过 tag 校验（需要时请同时填 tag）",
-            )
-        payloads: list[tuple[dict | None, dict]] = [
-            (
-                {
-                    "name": entry["name"],
-                    "version": forced_version,
-                    "tag": forced_tag,
-                    "repo_url": source_url,
-                    "source": "manual",
-                },
-                {
-                    "source": "self-probe",
-                    "status": "skipped",
-                    "reason": "手动指定版本，未做自探",
-                },
-            )
-            for entry, _ in pairs
-        ]
-    elif app_filter:
-        payloads = [_resolve_one(pairs[0][0]["name"], resolve=resolve, probe=probe)]
-    else:
-        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(pairs))) as pool:
-            payloads = list(
-                pool.map(
-                    lambda pair: _resolve_one(pair[0]["name"], resolve=resolve, probe=probe),
-                    pairs,
-                )
-            )
+        return {"updates": [], "audits": [], "skipped": skipped}
 
     updates: list[dict] = []
     audits: list[dict] = []
-    for (entry, app_dir), (payload, probe_result) in zip(pairs, payloads):
+    for entry, app_dir in pairs:
         app = entry["app"]
         domain = entry["domain"]
-        if payload is None:
-            skipped.append({"app": app, "reason": "看板 400/404（软件不存在或入参非法）"})
-            continue
-        if not upstream_dashboard.is_usable(payload):
+        version = (forced_version or str(entry.get("version") or "")).strip()
+        if not version:
             skipped.append(
                 {
                     "app": app,
-                    "reason": f"blocked_reason={payload.get('blocked_reason')}",
+                    "reason": (
+                        "清单未提供 version（自动升级只用手动提供的版本，"
+                        "不查询看板）"
+                    ),
                 }
             )
             continue
+        if version.lower() in _PLACEHOLDER_VERSIONS:
+            skipped.append({"app": app, "reason": f"版本号无效（{version}）"})
+            continue
+
+        entry_source = source_url or str(entry.get("source_url") or "").strip()
+        if not entry_source:
+            skipped.append(
+                {
+                    "app": app,
+                    "reason": (
+                        "清单未提供 source_url（task spec 需要上游仓库 HTTPS 地址）"
+                    ),
+                }
+            )
+            continue
+        tag = (
+            forced_tag.strip()
+            if forced_version
+            else str(entry.get("tag") or "").strip()
+        )
 
         dockerfile = testgen_scan.latest_dockerfile(app_dir)
         if dockerfile is None:
             skipped.append({"app": app, "reason": "应用目录下没有 */*/Dockerfile"})
             continue
 
-        new_version = str(forced_version or payload.get("version") or "").strip()
-        if not new_version:
-            skipped.append({"app": app, "reason": "看板未给出可用版本号"})
-            continue
-        if new_version.lower() in _PLACEHOLDER_VERSIONS:
-            skipped.append(
-                {"app": app, "reason": f"看板未给出有效版本号（{new_version}）"}
-            )
-            continue
-
-        # 看板与仓库的上游源可能不是同一个（例如 parquet-java 1.x 对应仓库里的
-        # 2.x 目录）；只判断「版本目录是否存在」会把降级当成升级。
+        # 清单由人工维护时也可能填错方向；只判断「版本目录是否存在」会把降级
+        # 当成升级，纯数字版本先做一次大小保护。
         current_version = dockerfile.parts[-3]
-        new_key = _numeric_version_key(new_version)
+        new_key = _numeric_version_key(version)
         current_key = _numeric_version_key(current_version)
         if (
             not forced_version
@@ -358,20 +293,24 @@ def find_updates(
                 {
                     "app": app,
                     "reason": (
-                        f"看板版本 {new_version} 低于仓库现有版本 "
-                        f"{current_version}，跳过（疑似上游源不一致）"
+                        f"目标版本 {version} 低于仓库现有版本 "
+                        f"{current_version}，跳过"
                     ),
                 }
             )
             continue
 
-        if _normalize_version(new_version) in existing_versions(app_dir):
+        evidence = _manual_evidence(
+            name=entry["name"], version=version, tag=tag, source_url=entry_source
+        )
+
+        if _normalize_version(version) in existing_versions(app_dir):
             if audit_limit and len(audits) >= audit_limit:
                 skipped.append(
                     {
                         "app": app,
                         "reason": (
-                            f"已有版本目录 {new_version}；"
+                            f"已有版本目录 {version}；"
                             f"审计数量达到上限 {audit_limit}"
                         ),
                     }
@@ -381,25 +320,19 @@ def find_updates(
                 {
                     "app": app,
                     "domain": domain,
-                    "version": new_version,
+                    "version": version,
                     "os_version": dockerfile.parts[-2],
                     "dockerfile_path": dockerfile.relative_to(repo_dir).as_posix(),
-                    "source_url": str(payload.get("repo_url") or ""),
-                    "evidence": _build_evidence(
-                        entry["name"],
-                        new_version,
-                        payload,
-                        probe_result,
-                        evidence_fetch,
-                    ),
+                    "source_url": entry_source,
+                    "evidence": evidence,
                     "has_test_script": testgen_scan.has_any_test_script(app_dir),
-                    "reason": f"已有版本目录 {new_version}，无需升级，转入 AI 审计",
+                    "reason": f"已有版本目录 {version}，无需升级，转入 AI 审计",
                 }
             )
             continue
 
         os_version = dockerfile.parts[-2]
-        branch = f"auto/version-update/{app}/{new_version}-{_os_tag(os_version)}"
+        branch = f"auto/version-update/{app}/{version}-{_os_tag(os_version)}"
         if pr_exists is not None and token:
             if pr_exists(target_repo, branch, token):
                 skipped.append({"app": app, "reason": f"已有 open PR（{branch}）"})
@@ -409,16 +342,10 @@ def find_updates(
             {
                 "app": app,
                 "domain": domain,
-                "version": new_version,
+                "version": version,
                 "os_version": os_version,
-                "source_url": str(payload.get("repo_url") or ""),
-                "evidence": _build_evidence(
-                    entry["name"],
-                    new_version,
-                    payload,
-                    probe_result,
-                    evidence_fetch,
-                ),
+                "source_url": entry_source,
+                "evidence": evidence,
             }
         )
         if limit and len(updates) >= limit:
@@ -435,7 +362,7 @@ def main() -> int:
         default="",
         help="只处理这一个应用（可不在软件清单里，此时需配合 --version）",
     )
-    parser.add_argument("--version", default="", help="手动指定目标版本（跳过看板解析）")
+    parser.add_argument("--version", default="", help="手动指定目标版本（配合 --app）")
     parser.add_argument(
         "--tag",
         default="",
@@ -456,7 +383,7 @@ def main() -> int:
         "--audit-limit",
         type=int,
         default=0,
-        help="最多产出几个「已是最新版本」的 AI 审计（0=不限）",
+        help="最多产出几个「已存在版本目录」的 AI 审计（0=不限）",
     )
     parser.add_argument("--format", choices=("json", "github-output"), default="json")
     args = parser.parse_args()

@@ -1,4 +1,4 @@
-"""场景二升级候选发现单测（不联网）。"""
+"""场景二升级候选发现单测（不联网、不查询看板）。"""
 
 from __future__ import annotations
 
@@ -20,18 +20,16 @@ def _make_app(repo: Path, domain: str, app: str, versions=("2.16.0",),
         (image / "Dockerfile").write_text("FROM x\n", encoding="utf-8")
 
 
-def _payload(version: str, **overrides):
-    payload = {
+def _entry(version: str = "2.17.0", **overrides) -> dict:
+    entry = {
         "name": "kvrocks",
+        "app": "kvrocks",
+        "domain": "Database",
         "version": version,
-        "tag": f"v{version}",
-        "repo_url": "https://github.com/apache/kvrocks",
-        "source": "latest_release",
-        "fetched_at": "2026-11-13T01:00:00",
-        "blocked_reason": None,
+        "source_url": "https://github.com/apache/kvrocks",
     }
-    payload.update(overrides)
-    return payload
+    entry.update(overrides)
+    return entry
 
 
 class FindUpdatesTest(unittest.TestCase):
@@ -44,18 +42,12 @@ class FindUpdatesTest(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _scan(self, payload, **overrides):
-        overrides.setdefault(
-            "apps",
-            [{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
-        )
-        overrides.setdefault("resolve", lambda name: payload)
-        overrides.setdefault("probe", lambda p: {"source": "self-probe", "status": "ok"})
-        overrides.setdefault("fetch_evidence", lambda name, version: [])
+    def _scan(self, version: str = "2.17.0", **overrides):
+        overrides.setdefault("apps", [_entry(version)])
         return upgrade_scan.find_updates(repo_dir=self.repo, **overrides)
 
-    def test_new_version_becomes_an_upgrade_item(self) -> None:
-        result = self._scan(_payload("2.17.0"))
+    def test_list_version_becomes_an_upgrade_item(self) -> None:
+        result = self._scan()
         self.assertEqual(len(result["updates"]), 1)
         item = result["updates"][0]
         self.assertEqual(item["app"], "kvrocks")
@@ -63,60 +55,54 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertEqual(item["version"], "2.17.0")
         self.assertEqual(item["os_version"], "24.03-lts-sp4")
         self.assertEqual(item["source_url"], "https://github.com/apache/kvrocks")
-        self.assertEqual(item["evidence"]["probe"]["status"], "ok")
         self.assertEqual(result["skipped"], [])
 
-    def test_dashboard_evidence_is_attached_to_the_item(self) -> None:
-        checks = [
-            {"check_id": "kp.l1.arm_ci", "result": "supported"},
-            {"check_id": "kp.l1.doc_declared", "result": "not_found"},
-            {"check_id": "kp.l1.release_artifact", "result": "not_found"},
+    def test_manual_evidence_does_not_claim_dashboard_crawl(self) -> None:
+        item = self._scan()["updates"][0]
+        self.assertEqual(item["evidence"]["source"], "manual")
+        self.assertEqual(item["evidence"]["collector"], [])
+        self.assertEqual(item["evidence"]["probe"]["status"], "skipped")
+
+    def test_missing_version_is_skipped(self) -> None:
+        apps = [
+            {
+                "name": "kvrocks",
+                "app": "kvrocks",
+                "domain": "Database",
+                "source_url": "https://github.com/apache/kvrocks",
+            }
         ]
-        result = self._scan(
-            _payload("2.17.0"),
-            fetch_evidence=lambda name, version: checks,
-        )
-        item = result["updates"][0]
-        self.assertEqual(
-            [entry["check_id"] for entry in item["evidence"]["collector"]],
-            [
-                "kp.l1.arm_ci",
-                "kp.l1.doc_declared",
-                "kp.l1.release_artifact",
-            ],
-        )
+        result = self._scan(apps=apps)
+        self.assertEqual(result["updates"], [])
+        self.assertIn("未提供 version", result["skipped"][0]["reason"])
 
-    def test_evidence_fetch_failure_does_not_block_the_upgrade(self) -> None:
-        def boom(name, version):
-            raise RuntimeError("dashboard offline")
-
-        result = self._scan(_payload("2.17.0"), fetch_evidence=boom)
-        self.assertEqual(len(result["updates"]), 1)
-        self.assertEqual(result["updates"][0]["evidence"]["collector"], [])
+    def test_missing_source_url_is_skipped(self) -> None:
+        apps = [
+            {"name": "kvrocks", "app": "kvrocks", "domain": "Database", "version": "2.17.0"}
+        ]
+        result = self._scan(apps=apps)
+        self.assertEqual(result["updates"], [])
+        self.assertIn("未提供 source_url", result["skipped"][0]["reason"])
 
     def test_only_configured_apps_are_scanned(self) -> None:
         _make_app(self.repo, "Database", "unlisted")
-        result = self._scan(_payload("2.17.0"))
+        result = self._scan()
         self.assertEqual([item["app"] for item in result["updates"]], ["kvrocks"])
 
     def test_configured_app_missing_from_repo_is_skipped(self) -> None:
-        result = self._scan(
-            _payload("2.17.0"),
-            apps=[{"name": "gone", "app": "gone", "domain": "Database"}],
-        )
+        result = self._scan(apps=[_entry("2.17.0", app="gone", name="gone")])
         self.assertEqual(result["updates"], [])
         self.assertIn("目标仓没有", result["skipped"][0]["reason"])
 
-    def test_filter_matches_the_dashboard_name(self) -> None:
+    def test_filter_matches_the_list_name(self) -> None:
         result = self._scan(
-            _payload("2.17.0"),
             app_filter="Kvrocks",
-            apps=[{"name": "Kvrocks", "app": "kvrocks", "domain": "Database"}],
+            apps=[_entry("2.17.0", name="Kvrocks")],
         )
         self.assertEqual(len(result["updates"]), 1)
 
     def test_existing_version_becomes_an_audit(self) -> None:
-        result = self._scan(_payload("v2.16.0"))
+        result = self._scan("v2.16.0")
         self.assertEqual(result["updates"], [])
         self.assertEqual(len(result["audits"]), 1)
         audit = result["audits"][0]
@@ -133,10 +119,10 @@ class FindUpdatesTest(unittest.TestCase):
     def test_audit_limit_caps_the_audit_matrix(self) -> None:
         _make_app(self.repo, "Database", "redis", versions=("2.16.0",))
         result = self._scan(
-            _payload("v2.16.0"),
+            "v2.16.0",
             apps=[
-                {"name": "kvrocks", "app": "kvrocks", "domain": "Database"},
-                {"name": "Redis", "app": "redis", "domain": "Database"},
+                _entry("v2.16.0"),
+                _entry("v2.16.0", name="Redis", app="redis"),
             ],
             audit_limit=1,
         )
@@ -145,41 +131,25 @@ class FindUpdatesTest(unittest.TestCase):
             any("审计数量达到上限" in item["reason"] for item in result["skipped"])
         )
 
-    def test_blocked_reason_is_skipped(self) -> None:
-        result = self._scan(_payload("2.17.0", blocked_reason="no_release"))
-        self.assertEqual(result["updates"], [])
-        self.assertIn("blocked_reason", result["skipped"][0]["reason"])
-
-    def test_dashboard_version_lower_than_repo_is_skipped(self) -> None:
-        result = self._scan(_payload("2.15.0"))
+    def test_lower_version_than_repo_is_skipped(self) -> None:
+        result = self._scan("2.15.0")
         self.assertEqual(result["updates"], [])
         self.assertEqual(result["audits"], [])
         self.assertIn("低于仓库现有版本", result["skipped"][0]["reason"])
 
     def test_placeholder_version_is_skipped(self) -> None:
-        result = self._scan(_payload("Undefined"))
+        result = self._scan("Undefined")
         self.assertEqual(result["updates"], [])
         self.assertEqual(result["audits"], [])
-        self.assertIn("未给出有效版本号", result["skipped"][0]["reason"])
+        self.assertIn("版本号无效", result["skipped"][0]["reason"])
 
     def test_non_numeric_versions_keep_the_existing_behavior(self) -> None:
         _make_app(self.repo, "Database", "kvrocks-rc", versions=("2.16.0-rc1",))
         result = self._scan(
-            _payload("2.17.0-rc1"),
-            apps=[
-                {
-                    "name": "kvrocks",
-                    "app": "kvrocks-rc",
-                    "domain": "Database",
-                }
-            ],
+            "2.17.0-rc1",
+            apps=[_entry("2.17.0-rc1", app="kvrocks-rc")],
         )
         self.assertEqual(len(result["updates"]), 1)
-
-    def test_missing_software_is_skipped(self) -> None:
-        result = self._scan(None)
-        self.assertEqual(result["updates"], [])
-        self.assertIn("400/404", result["skipped"][0]["reason"])
 
     def test_open_pr_is_skipped(self) -> None:
         calls = []
@@ -189,7 +159,6 @@ class FindUpdatesTest(unittest.TestCase):
             return {"number": 7}
 
         result = self._scan(
-            _payload("2.17.0"),
             pr_exists=pr_exists,
             target_repo="openeuler/openeuler-docker-images",
             token="t",
@@ -200,19 +169,13 @@ class FindUpdatesTest(unittest.TestCase):
             calls, ["auto/version-update/kvrocks/2.17.0-oe2403sp4"]
         )
 
-    def test_forced_version_skips_the_dashboard(self) -> None:
-        def fail(name):
-            raise AssertionError("dashboard must not be called")
-
+    def test_forced_version_uses_cli_inputs(self) -> None:
         result = upgrade_scan.find_updates(
             repo_dir=self.repo,
             app_filter="kvrocks",
             forced_version="2.18.0",
             source_url="https://github.com/apache/kvrocks",
             apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
-            resolve=fail,
-            probe=lambda p: {},
-            fetch_evidence=lambda name, version: [],
         )
         self.assertEqual(result["updates"][0]["version"], "2.18.0")
         self.assertEqual(
@@ -229,11 +192,6 @@ class FindUpdatesTest(unittest.TestCase):
             forced_tag="v2.18.0",
             source_url="https://github.com/apache/kvrocks",
             apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
-            resolve=lambda name: (_ for _ in ()).throw(
-                AssertionError("dashboard must not be called")
-            ),
-            probe=lambda p: {},
-            fetch_evidence=lambda name, version: [],
         )
         self.assertEqual(result["updates"][0]["evidence"]["tag"], "v2.18.0")
 
@@ -244,26 +202,16 @@ class FindUpdatesTest(unittest.TestCase):
                 app_filter="kvrocks",
                 forced_version="2.18.0",
                 apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
-                resolve=lambda name: {},
-                probe=lambda payload: {},
-                fetch_evidence=lambda name, version: [],
             )
 
     def test_unlisted_app_in_repo_can_be_upgraded_with_forced_version(self) -> None:
         _make_app(self.repo, "AI", "open-webui", versions=("0.1.108",))
-
-        def boom(*args):
-            raise AssertionError("dashboard must not be called")
-
         result = upgrade_scan.find_updates(
             repo_dir=self.repo,
             app_filter="open-webui",
             forced_version="0.13.3",
             source_url="https://github.com/open-webui/open-webui",
             apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
-            resolve=boom,
-            probe=boom,
-            fetch_evidence=boom,
         )
         self.assertEqual(len(result["updates"]), 1)
         item = result["updates"][0]
@@ -281,9 +229,6 @@ class FindUpdatesTest(unittest.TestCase):
                 repo_dir=self.repo,
                 app_filter="open-webui",
                 apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
-                resolve=lambda name: {},
-                probe=lambda payload: {},
-                fetch_evidence=lambda name, version: [],
             )
 
     def test_unknown_app_raises(self) -> None:
@@ -293,10 +238,9 @@ class FindUpdatesTest(unittest.TestCase):
     def test_limit_stops_after_n_updates(self) -> None:
         _make_app(self.repo, "Database", "redis", versions=("1.0.0",))
         result = self._scan(
-            _payload("2.17.0"),
             apps=[
-                {"name": "kvrocks", "app": "kvrocks", "domain": "Database"},
-                {"name": "Redis", "app": "redis", "domain": "Database"},
+                _entry("2.17.0"),
+                _entry("2.0.0", name="Redis", app="redis"),
             ],
             limit=1,
         )
@@ -320,6 +264,32 @@ class LoadAppsTest(unittest.TestCase):
         self.assertEqual(apps[0], {"name": "ClickHouse", "app": "clickhouse", "domain": "Database"})
         self.assertEqual(apps[1], {"name": "nginx", "app": "nginx", "domain": "Cloud"})
 
+    def test_manual_version_fields_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "apps.yml"
+            path.write_text(
+                "apps:\n"
+                "- name: Ceph\n"
+                "  app: ceph\n"
+                "  domain: Storage\n"
+                "  version: '22.0.0'\n"
+                "  tag: v22.0.0\n"
+                "  source_url: https://github.com/ceph/ceph\n",
+                encoding="utf-8",
+            )
+            apps = upgrade_scan.load_apps(path)
+        self.assertEqual(
+            apps[0],
+            {
+                "name": "Ceph",
+                "app": "ceph",
+                "domain": "Storage",
+                "version": "22.0.0",
+                "tag": "v22.0.0",
+                "source_url": "https://github.com/ceph/ceph",
+            },
+        )
+
     def test_missing_app_or_domain_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "apps.yml"
@@ -333,3 +303,7 @@ class NormalizeVersionTest(unittest.TestCase):
         self.assertEqual(upgrade_scan._normalize_version("v1.2.3"), "1.2.3")
         self.assertEqual(upgrade_scan._normalize_version("V1.2.3"), "1.2.3")
         self.assertEqual(upgrade_scan._normalize_version(" 1.2.3 "), "1.2.3")
+
+
+if __name__ == "__main__":
+    unittest.main()

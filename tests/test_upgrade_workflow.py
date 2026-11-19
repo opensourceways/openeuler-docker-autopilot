@@ -37,7 +37,7 @@ def test_manual_dispatch_only_app_and_version():
     }
 
 
-def test_discover_scans_the_dashboard_and_feeds_the_matrix():
+def test_discover_uses_manual_versions_and_feeds_the_matrix():
     jobs = _workflow(UPGRADE)['jobs']
     assert list(jobs) == [
         'discover', 'upgrade', 'plan-repairs', 'repair', 'audit', 'summary'
@@ -49,8 +49,9 @@ def test_discover_scans_the_dashboard_and_feeds_the_matrix():
     assert '--apps-file' in scan_text
     assert '--audit-limit' in scan_text
     assert 'gitcode.com' in scan_text
-    # 看板地址可覆盖，且默认值写在 workflow 级 env
-    assert 'UPSTREAM_DASHBOARD_BASE' in UPGRADE.read_text(encoding='utf-8')
+    # 自动升级不再查询看板，版本由清单手动提供
+    assert 'UPSTREAM_DASHBOARD_BASE' not in UPGRADE.read_text(encoding='utf-8')
+    assert 'upstream_dashboard' not in scan_text
 
     upgrade = jobs['upgrade']
     assert upgrade['needs'] == 'discover'

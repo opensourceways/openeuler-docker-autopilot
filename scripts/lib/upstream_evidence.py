@@ -153,6 +153,8 @@ def probe(payload: dict[str, Any] | None) -> dict[str, Any]:
 def render_markdown(evidence: dict[str, Any] | None) -> str:
     """PR 正文里的「上游证据」段。"""
     evidence = evidence or {}
+    if evidence.get("source") == "manual":
+        return _render_manual_markdown(evidence)
     probe_result = evidence.get("probe") or {}
     collector = evidence.get("collector") or []
     raw = evidence.get("raw") or {}
@@ -202,9 +204,40 @@ def render_markdown(evidence: dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _render_manual_markdown(evidence: dict[str, Any]) -> str:
+    """手动提供版本时的 PR 证据段：只列输入，不冒充看板采集结果。"""
+    lines = ["## 升级来源", ""]
+    lines.append(f"- 版本：`{evidence.get('version') or 'unknown'}`")
+    if evidence.get("tag"):
+        lines.append(f"- 上游 tag：`{evidence['tag']}`")
+    if evidence.get("repo_url"):
+        lines.append(f"- 上游仓库：{evidence['repo_url']}")
+    lines.append("- 来源：清单手动提供（未查询看板）")
+    lines += [
+        "",
+        "> 版本由人工提供，是否可用以双架构原生构建 + 功能测试结果为准。",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _render_manual_prompt(evidence: dict[str, Any]) -> str:
+    parts = [
+        "## Upgrade input (provided manually; reference only)",
+        "- source: manual",
+        f"- version: {evidence.get('version') or 'unknown'}",
+        f"- tag: {evidence.get('tag') or 'unknown'}",
+        f"- repo_url: {evidence.get('repo_url') or 'unknown'}",
+        "- 版本由人工提供，未查询看板；最终以上游仓库与构建结果为准。",
+    ]
+    return "\n".join(parts)
+
+
 def render_prompt(evidence: dict[str, Any] | None) -> str:
     """注入生成提示的紧凑版证据（给 AI 参考）。"""
     evidence = evidence or {}
+    if evidence.get("source") == "manual":
+        return _render_manual_prompt(evidence)
     probe_result = evidence.get("probe") or {}
     collector = evidence.get("collector") or []
     parts = [

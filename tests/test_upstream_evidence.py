@@ -116,6 +116,24 @@ class RenderTest(unittest.TestCase):
         self.assertIn("reference only", text)
         self.assertIn("v26.8.2.7-lts", text)
 
+    def test_manual_evidence_lists_inputs_without_dashboard(self) -> None:
+        evidence = {
+            "source": "manual",
+            "version": "2.17.0",
+            "tag": "v2.17.0",
+            "repo_url": "https://github.com/apache/kvrocks",
+        }
+        markdown = upstream_evidence.render_markdown(evidence)
+        prompt = upstream_evidence.render_prompt(evidence)
+
+        self.assertIn("## 升级来源", markdown)
+        self.assertIn("v2.17.0", markdown)
+        self.assertIn("https://github.com/apache/kvrocks", markdown)
+        self.assertNotIn("看板采集", markdown)
+        self.assertIn("provided manually", prompt)
+        self.assertIn("2.17.0", prompt)
+        self.assertNotIn("Dashboard checks", prompt)
+
     def test_prompt_renders_each_dashboard_check(self) -> None:
         payload = dict(
             _PAYLOAD,

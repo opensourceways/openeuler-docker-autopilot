@@ -2,19 +2,17 @@ name: App Version Upgrade
 
 # 场景二：应用自动升级（替代社区 easysoftware-autoupgrade）。
 #
-#   按 config/upgrade-apps.yml 清单调用 upstream-dashboard
-#   /api/v1/version/resolve，拿到最新版本 + 上游证据包 → 与目标仓已有版本目录
-#   对比 → 缺新版本的应用执行「补功能测试 + AI 依证据包生成 Dockerfile +
-#   双架构原生验证 + 跨仓 PR」；已是最新版本的应用**不跳过**，交给 audit 做
-#   AI 审计（Dockerfile 问题 / 证据对齐 / 镜像版本 / 测试脚本），再由修复 Agent
-#   更新 Dockerfile 与 doc/image-info.yml，推分支开 PR。
+#   按 config/upgrade-apps.yml 清单读取人工提供的 version / source_url（可选 tag），
+#   与目标仓已有版本目录对比 → 缺新版本的应用执行「补功能测试 + AI 生成
+#   Dockerfile + 双架构原生验证 + 跨仓 PR」；目标版本目录已存在的应用**不跳过**，
+#   交给 audit 做 AI 审计（Dockerfile 问题 / 镜像版本 / 测试脚本），再由修复
+#   Agent 更新 Dockerfile 与 doc/image-info.yml，推分支开 PR。
 #
-# 版本源只认看板接口（文档见 opensourceways/upstream-dashboard docs/external-api.md）。
-# 证据包的归纳/透传见 scripts/lib/upstream_evidence.py，作为镜像构建与测试生成的
-# 输入，证据缺失时系统自探兜底；是否通过仍以双架构原生构建 + 功能测试为准。
+# 版本由清单手动维护，自动升级**不查询 upstream-dashboard**；清单项缺 version /
+# source_url 时跳过并记录原因。证据只记录本次手动输入（source=manual）。
 #
 # 触发：当前只保留 workflow_dispatch（每日定时在测试期关闭）。
-# 手动入口：app 指定单个应用；version 手动指定目标版本（跳过看板解析）。
+# 手动入口：app 指定单个应用；version 手动指定目标版本。
 #
 # 自动 repair：本轮任一应用的双架构验证失败时，plan-repairs 从 jobs 列表里挑出
 # 验证失败的 app，自动调用 _upgrade_app.yml 的 repair 模式修复已有分支并重新
@@ -28,7 +26,7 @@ on:
         required: false
         type: string
       version:
-        description: '手动指定目标版本（配合 app 使用；留空 = 用看板解析的最新版）'
+        description: '手动指定目标版本（配合 app 使用；清单项也可各自配置 version）'
         required: false
         type: string
       tag:
@@ -67,8 +65,6 @@ env:
   PYTHONUNBUFFERED: "1"
   TARGET_REPO: openeuler/openeuler-docker-images
   TARGET_BRANCH: master
-  # 看板地址（可覆盖到其它部署）
-  UPSTREAM_DASHBOARD_BASE: ${{ vars.UPSTREAM_DASHBOARD_BASE || 'https://upstream-dashboard.test.osinfra.cn' }}
 
 concurrency:
   group: app-version-upgrade-${{ github.ref }}
@@ -76,7 +72,7 @@ concurrency:
 
 jobs:
 
-  # ── 发现：看板解析 + 本地版本对比 → 升级矩阵 ─────────────────────
+  # ── 发现：清单版本 + 本地版本对比 → 升级矩阵 ─────────────────────
   discover:
     name: Discover upgradable apps
     runs-on: >-
@@ -107,7 +103,7 @@ jobs:
             "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
             source-repo
 
-      - name: Scan dashboard vs target repo
+      - name: Scan app list vs target repo
         id: scan
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
