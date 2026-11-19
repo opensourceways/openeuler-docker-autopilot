@@ -77,7 +77,12 @@ class ApplyUpgradeTest(unittest.TestCase):
             target = app / "2.2.0" / "22.03-lts-sp3"
             self.assertTrue((target / "Dockerfile").is_file())
             dockerfile = (target / "Dockerfile").read_text(encoding="utf-8")
-            self.assertEqual(dockerfile, _new_dockerfile("2.2.0"))
+            self.assertEqual(
+                dockerfile,
+                version_upgrade.ensure_broken_repos_disabled(
+                    _new_dockerfile("2.2.0")
+                ),
+            )
 
             # README / image-info 在应用根目录，原地更新
             self.assertIn("myapp:2.2.0", (app / "README.md").read_text(encoding="utf-8"))
@@ -110,7 +115,8 @@ class ApplyUpgradeTest(unittest.TestCase):
             written = (app / "2.2.0" / "22.03-lts-sp3" / "Dockerfile").read_text(
                 encoding="utf-8"
             )
-            self.assertEqual(written, custom)
+            self.assertIn("git clone --branch v2.2.0", written)
+            self.assertIn("update-source", written)
             self.assertNotIn("myapp-2.2.0.tar.gz", written)
 
     def test_same_version_is_rejected(self) -> None:
@@ -153,6 +159,29 @@ class ApplyUpgradeTest(unittest.TestCase):
             with pytest.raises(version_upgrade.UpgradeError, match="meta.yml"):
                 version_upgrade.apply_upgrade(app, plan, "2.2.0", _new_dockerfile("2.2.0"))
             self.assertFalse((app / "2.2.0" / "22.03-lts-sp3").exists())
+
+
+class EnsureBrokenReposDisabledTest(unittest.TestCase):
+    def test_injects_after_every_from(self) -> None:
+        text = (
+            "FROM openeuler/openeuler:24.03-lts-sp4 AS builder\n"
+            "RUN dnf install -y gcc\n"
+            "FROM openeuler/openeuler:24.03-lts-sp4\n"
+            "RUN dnf install -y busybox\n"
+        )
+        out = version_upgrade.ensure_broken_repos_disabled(text)
+        self.assertEqual(out.count("update-source"), 2)
+        self.assertIn(
+            "FROM openeuler/openeuler:24.03-lts-sp4\n"
+            + version_upgrade._BROKEN_REPO_RUN,
+            out,
+        )
+
+    def test_is_idempotent(self) -> None:
+        text = "FROM x\nRUN dnf install -y gcc\n"
+        once = version_upgrade.ensure_broken_repos_disabled(text)
+        twice = version_upgrade.ensure_broken_repos_disabled(once)
+        self.assertEqual(once, twice)
 
 
 class CheckDockerfileTest(unittest.TestCase):

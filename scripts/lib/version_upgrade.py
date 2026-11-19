@@ -75,6 +75,33 @@ def _replace_version(text: str, old_version: str, new_version: str) -> tuple[str
     return pattern.subn(new_version, text)
 
 
+# openEuler 24.03 基础镜像的 openEuler.repo 里，[update] / [update-source] /
+# [source] / [debuginfo] 近期返回 404 或校验和不匹配，任何 dnf/yum 元数据刷新
+# 都会失败；这些仓库只提供源码/调试包/更新包，镜像构建用不到，直接在 FROM 后禁用。
+_BROKEN_REPO_RUN = (
+    "RUN for f in /etc/yum.repos.d/*.repo; do [ -f \"$f\" ] || continue; "
+    "awk 'BEGIN{broken=0} /^\\[/"
+    "{broken=($0 ~ /^\\[(debuginfo|source|update|update-source)\\]$/)} "
+    "{if(broken && $0==\"enabled=1\") print \"enabled=0\"; else print}' "
+    "\"$f\" > \"$f.new\" && mv \"$f.new\" \"$f\"; done"
+)
+
+
+def ensure_broken_repos_disabled(text: str) -> str:
+    """在每个构建阶段的 FROM 后注入禁用损坏仓库的 RUN。
+
+    已注入过（含 ``/etc/yum.repos.d/*.repo``）时原样返回，保证可重复调用。
+    """
+    if not text or "/etc/yum.repos.d/*.repo" in text:
+        return text
+    out: list[str] = []
+    for line in text.splitlines():
+        out.append(line)
+        if re.match(r"(?i)^\s*FROM\s+\S+", line):
+            out.append(_BROKEN_REPO_RUN)
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
 def check_dockerfile(text: str, new_version: str) -> list[str]:
     """校验 AI 生成的 Dockerfile 是否真的表达新版本；返回可读问题列表。"""
     findings: list[str] = []
@@ -106,6 +133,8 @@ def apply_upgrade(
     findings = check_dockerfile(dockerfile_text, new_version)
     if findings:
         raise UpgradeError(f"{app_dir.name}: " + "；".join(findings))
+
+    dockerfile_text = ensure_broken_repos_disabled(dockerfile_text)
 
     dst_dir = app_dir / new_version / plan.os_version
     if dst_dir.exists():

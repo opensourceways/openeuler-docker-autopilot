@@ -435,6 +435,9 @@ def run(
         instructions=instructions,
     )
 
+    repaired_dockerfile = version_upgrade.ensure_broken_repos_disabled(
+        repaired_dockerfile
+    )
     dockerfile_path.write_text(repaired_dockerfile.rstrip() + "\n", encoding="utf-8")
     if repaired_test is not None:
         test_path.parent.mkdir(parents=True, exist_ok=True)
