@@ -137,6 +137,14 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertEqual(result["audits"], [])
         self.assertIn("低于仓库现有版本", result["skipped"][0]["reason"])
 
+    def test_allow_downgrade_overrides_the_guard(self) -> None:
+        result = self._scan(
+            "2.15.0", apps=[_entry("2.15.0", allow_downgrade=True)]
+        )
+        self.assertEqual(len(result["updates"]), 1)
+        self.assertEqual(result["updates"][0]["version"], "2.15.0")
+        self.assertEqual(result["skipped"], [])
+
     def test_placeholder_version_is_skipped(self) -> None:
         result = self._scan("Undefined")
         self.assertEqual(result["updates"], [])
@@ -274,7 +282,8 @@ class LoadAppsTest(unittest.TestCase):
                 "  domain: Storage\n"
                 "  version: '22.0.0'\n"
                 "  tag: v22.0.0\n"
-                "  source_url: https://github.com/ceph/ceph\n",
+                "  source_url: https://github.com/ceph/ceph\n"
+                "  allow_downgrade: true\n",
                 encoding="utf-8",
             )
             apps = upgrade_scan.load_apps(path)
@@ -287,6 +296,7 @@ class LoadAppsTest(unittest.TestCase):
                 "version": "22.0.0",
                 "tag": "v22.0.0",
                 "source_url": "https://github.com/ceph/ceph",
+                "allow_downgrade": True,
             },
         )
 

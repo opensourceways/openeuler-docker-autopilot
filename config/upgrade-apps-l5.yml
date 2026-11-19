@@ -5,7 +5,9 @@
 # 说明：
 # - source_url 以目标仓 doc/image-info.yml 的 upstream 为准；
 #   看板 repo_url 与实际镜像上游不一致时（drbd、grpc-server、parquet）已修正。
-# - DRBD 镜像构建的是 drbd-utils；9.31.0 与仓库现有版本相同，会转入审计。
+# - DRBD 镜像应构建 LINBIT/drbd 内核模块；仓库现有 9.31.0 实际构建的是
+#   drbd-utils（版本线不同），因此清单改用内核模块版本 9.3.5，并用
+#   allow_downgrade 跳过「9.3.5 < 9.31.0」的降级保护。
 # - grpc-server 构建的是 grpc-java，其最新 tag 为 v1.85.1，会转入审计。
 # - Parquet 镜像构建的是 apache-parquet-format，2.12.0 已存在，会转入审计。
 # - pwdft / ScaNN 上游只发 commit，版本沿用仓库的 7 位短 SHA 约定。
@@ -28,8 +30,9 @@ apps:
 - name: DRBD
   app: drbd
   domain: Storage
-  version: "9.31.0"
-  source_url: "https://github.com/LINBIT/drbd-utils"
+  version: "9.3.5"
+  source_url: "https://github.com/LINBIT/drbd"
+  allow_downgrade: true
 - name: Druid
   app: druid
   domain: Bigdata

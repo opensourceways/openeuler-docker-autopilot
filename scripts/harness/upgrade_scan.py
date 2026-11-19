@@ -117,6 +117,8 @@ def load_apps(path: str | Path | None = None) -> list[dict]:
             value = str(entry.get(field) or "").strip()
             if value:
                 record[field] = value
+        if entry.get("allow_downgrade") is True:
+            record["allow_downgrade"] = True
         apps.append(record)
     return apps
 
@@ -279,12 +281,15 @@ def find_updates(
             continue
 
         # 清单由人工维护时也可能填错方向；只判断「版本目录是否存在」会把降级
-        # 当成升级，纯数字版本先做一次大小保护。
+        # 当成升级，纯数字版本先做一次大小保护。镜像实际构建的上游与仓库现有
+        # 目录版本线不一致时（如 drbd 的 9.31.0 实际是 drbd-utils），清单可显式
+        # 设 allow_downgrade: true 跳过该保护。
         current_version = dockerfile.parts[-3]
         new_key = _numeric_version_key(version)
         current_key = _numeric_version_key(current_version)
         if (
             not forced_version
+            and not entry.get("allow_downgrade")
             and new_key is not None
             and current_key is not None
             and new_key < current_key
