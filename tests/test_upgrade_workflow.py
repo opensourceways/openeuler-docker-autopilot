@@ -37,7 +37,9 @@ def test_manual_dispatch_only_app_and_version():
 
 def test_discover_scans_the_dashboard_and_feeds_the_matrix():
     jobs = _workflow(UPGRADE)['jobs']
-    assert list(jobs) == ['discover', 'upgrade', 'audit', 'summary']
+    assert list(jobs) == [
+        'discover', 'upgrade', 'plan-repairs', 'repair', 'audit', 'summary'
+    ]
 
     scan_text = _squash(jobs['discover']['steps'])
     assert 'upgrade_scan.py' in scan_text
@@ -125,6 +127,29 @@ def test_repair_reuses_the_pipeline_without_regenerating_the_branch():
     assert 'upgrade-evidence-${{ inputs.app }}-x86_64' in text
     assert 'upgrade-evidence-${{ inputs.app }}-aarch64' in text
     assert "'run-id': '${{ inputs.repair_run_id }}'" in text
+
+
+def test_validation_failure_triggers_one_automatic_repair_round():
+    jobs = _workflow(UPGRADE)['jobs']
+
+    plan = jobs['plan-repairs']
+    assert plan['needs'] == ['discover', 'upgrade']
+    assert 'always()' in _squash(plan['if'])
+    assert "needs.upgrade.result == 'failure'" in _squash(plan['if'])
+    assert set(plan['outputs']) >= {'count', 'matrix'}
+    assert 'upgrade_plan_repairs.py' in _squash(plan['steps'])
+    # 读 jobs API 需要 actions: read
+    assert 'actions: read' in UPGRADE.read_text(encoding='utf-8')
+
+    repair = jobs['repair']
+    assert repair['needs'] == ['upgrade', 'plan-repairs']
+    assert repair['uses'] == './.github/workflows/_upgrade_app.yml'
+    assert 'always()' in _squash(repair['if'])
+    # 修复复用失败运行的分支与 evidence，不再生成新分支
+    assert repair['with']['repair_run_id'] == '${{ github.run_id }}'
+    assert repair['with']['repair_instructions'] == '${{ matrix.instructions }}'
+    # 只修一轮：plan-repairs 不依赖 repair，修复失败不会再次触发
+    assert 'repair' not in plan['needs']
 
 
 def test_audit_app_validates_both_arches_before_the_fix_pr():
