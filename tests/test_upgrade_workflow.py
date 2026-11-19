@@ -33,7 +33,8 @@ def test_manual_dispatch_only_app_and_version():
     assert 'schedule' not in trigger
     inputs = trigger['workflow_dispatch']['inputs']
     assert set(inputs) >= {
-        'app', 'version', 'apps_file', 'limit', 'audit_limit', 'runner_labels'
+        'app', 'version', 'apps_file', 'limit', 'audit_limit', 'runner_labels',
+        'x64_runner_labels', 'arm64_runner_labels', 'max_parallel',
     }
 
 
@@ -59,6 +60,10 @@ def test_discover_uses_manual_versions_and_feeds_the_matrix():
     assert upgrade['strategy']['matrix']['item'] == \
         '${{ fromJSON(needs.discover.outputs.updates) }}'
     assert upgrade['with']['item'] == '${{ toJSON(matrix.item) }}'
+    # 并发与机器标签可由 dispatch 输入覆盖，默认用到全部 X64 / ARM64
+    assert 'inputs.max_parallel' in upgrade['strategy']['max-parallel']
+    assert 'inputs.x64_runner_labels' in upgrade['with']['x64_runner_labels']
+    assert 'inputs.arm64_runner_labels' in upgrade['with']['arm64_runner_labels']
 
     audit = jobs['audit']
     assert audit['needs'] == 'discover'

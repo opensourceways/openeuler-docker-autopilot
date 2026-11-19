@@ -55,6 +55,18 @@ on:
         description: '轻量 job 的 runner 标签（JSON 数组），留空用 Variable / 默认值'
         required: false
         type: string
+      x64_runner_labels:
+        description: 'x86_64 构建/验证 runner 标签（JSON 数组）；留空用 Variable / 默认全部 X64'
+        required: false
+        type: string
+      arm64_runner_labels:
+        description: 'aarch64 构建/验证 runner 标签（JSON 数组）；留空用 Variable / 默认全部 ARM64'
+        required: false
+        type: string
+      max_parallel:
+        description: '单轮最多并发几个应用；留空用 Variable MAX_PARALLEL_UPGRADES / 默认 4'
+        required: false
+        type: string
 
 permissions:
   # plan-repairs 需要读取本次运行的 jobs，判断哪些应用在验证阶段失败。
@@ -142,7 +154,7 @@ jobs:
     if: needs.discover.outputs.updates != '[]' && needs.discover.outputs.updates != ''
     strategy:
       fail-fast: false
-      max-parallel: ${{ vars.MAX_PARALLEL_UPGRADES || 2 }}
+      max-parallel: ${{ fromJSON(inputs.max_parallel || vars.MAX_PARALLEL_UPGRADES || '4') }}
       matrix:
         item: ${{ fromJSON(needs.discover.outputs.updates) }}
     uses: ./.github/workflows/_upgrade_app.yml
@@ -154,6 +166,12 @@ jobs:
       version: ${{ matrix.item.version }}
       os_version: ${{ matrix.item.os_version }}
       source_url: ${{ matrix.item.source_url }}
+      x64_runner_labels: >-
+        ${{ inputs.x64_runner_labels || vars.UPGRADE_X64_RUNNER_LABELS ||
+            '["self-hosted","Linux","X64"]' }}
+      arm64_runner_labels: >-
+        ${{ inputs.arm64_runner_labels || vars.UPGRADE_ARM64_RUNNER_LABELS ||
+            '["self-hosted","Linux","ARM64"]' }}
 
   # ── 自动修复：只挑验证失败的应用，在原分支上修一轮 ─────────────────
   plan-repairs:
@@ -198,7 +216,7 @@ jobs:
           needs.plan-repairs.outputs.count != '' }}
     strategy:
       fail-fast: false
-      max-parallel: ${{ vars.MAX_PARALLEL_UPGRADES || 2 }}
+      max-parallel: ${{ fromJSON(inputs.max_parallel || vars.MAX_PARALLEL_UPGRADES || '4') }}
       matrix: ${{ fromJSON(needs.plan-repairs.outputs.matrix) }}
     uses: ./.github/workflows/_upgrade_app.yml
     secrets: inherit
@@ -207,6 +225,12 @@ jobs:
       app: ${{ matrix.app }}
       repair_run_id: ${{ github.run_id }}
       repair_instructions: ${{ matrix.instructions }}
+      x64_runner_labels: >-
+        ${{ inputs.x64_runner_labels || vars.UPGRADE_X64_RUNNER_LABELS ||
+            '["self-hosted","Linux","X64"]' }}
+      arm64_runner_labels: >-
+        ${{ inputs.arm64_runner_labels || vars.UPGRADE_ARM64_RUNNER_LABELS ||
+            '["self-hosted","Linux","ARM64"]' }}
 
   # ── 审计并修复：已是最新版本也不跳过，AI 检查后提 PR ──────────────
   audit:
@@ -215,7 +239,7 @@ jobs:
     if: needs.discover.outputs.audits != '[]' && needs.discover.outputs.audits != ''
     strategy:
       fail-fast: false
-      max-parallel: ${{ vars.MAX_PARALLEL_UPGRADES || 2 }}
+      max-parallel: ${{ fromJSON(inputs.max_parallel || vars.MAX_PARALLEL_UPGRADES || '4') }}
       matrix:
         item: ${{ fromJSON(needs.discover.outputs.audits) }}
     uses: ./.github/workflows/_audit_app.yml
@@ -229,6 +253,12 @@ jobs:
       runner_labels: >-
         ${{ inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
             '["self-hosted","Linux","X64","oe-image-x86"]' }}
+      x64_runner_labels: >-
+        ${{ inputs.x64_runner_labels || vars.UPGRADE_X64_RUNNER_LABELS ||
+            '["self-hosted","Linux","X64"]' }}
+      arm64_runner_labels: >-
+        ${{ inputs.arm64_runner_labels || vars.UPGRADE_ARM64_RUNNER_LABELS ||
+            '["self-hosted","Linux","ARM64"]' }}
 
   # ── 汇总：本轮跳过原因（含 blocked_reason / 已有 PR / 审计上限）─────
   summary:
