@@ -630,7 +630,7 @@ def apply_fix(repo_dir: Path, context: dict, payload: dict) -> list[Path]:
 
     dockerfile_path = repo_dir / context["dockerfile_path"]
     original = _read(dockerfile_path)
-    updated = version_upgrade.ensure_broken_repos_disabled(
+    updated = version_upgrade.ensure_repo_cache_cleaned(
         str(payload["dockerfile"]).rstrip() + "\n"
     )
     if updated != original:

@@ -75,25 +75,23 @@ def _replace_version(text: str, old_version: str, new_version: str) -> tuple[str
     return pattern.subn(new_version, text)
 
 
-# openEuler 24.03 基础镜像的 openEuler.repo 里，[update] / [update-source] /
-# [source] / [debuginfo] 近期返回 404 或校验和不匹配，任何 dnf/yum 元数据刷新
-# 都会失败；这些仓库只提供源码/调试包/更新包，镜像构建用不到，直接在 FROM 后禁用。
-_BROKEN_REPO_RUN = (
-    "RUN for f in /etc/yum.repos.d/*.repo; do [ -f \"$f\" ] || continue; "
-    "awk 'BEGIN{broken=0} /^\\[/"
-    "{broken=($0 ~ /^\\[(debuginfo|source|update|update-source)\\]$/)} "
-    "{if(broken && $0==\"enabled=1\") print \"enabled=0\"; else print}' "
-    "\"$f\" > \"$f.new\" && mv \"$f.new\" \"$f\"; done"
+# openEuler 官方镜像各 CDN 节点 repodata 同步不一致：基础镜像里缓存的元数据可能
+# 指向已被刷新的 primary/filelists（404）。在每个构建阶段的 FROM 后清空 dnf/yum
+# 缓存，让后续 install 强制重新拉取最新元数据。
+_CACHE_CLEAN_MARKER = "# autopilot: refresh dnf metadata"
+_CACHE_CLEAN_RUN = (
+    f"{_CACHE_CLEAN_MARKER}\n"
+    "RUN rm -rf /var/cache/dnf /var/cache/yum \\\n"
+    "    && (dnf clean all 2>/dev/null || yum clean all 2>/dev/null || true)"
 )
 
 
-def ensure_broken_repos_disabled(text: str) -> str:
-    """在每个构建阶段的 FROM 后注入禁用损坏仓库的 RUN。
+def ensure_repo_cache_cleaned(text: str) -> str:
+    """在每个构建阶段的 FROM 后注入清理 dnf/yum 缓存并强制刷新元数据的 RUN。
 
-    已注入过（含 ``/etc/yum.repos.d/*.repo``）时原样返回，保证可重复调用；
-    ``FROM scratch`` 阶段没有 shell/awk，跳过注入。
+    已注入过时原样返回，保证可重复调用；``FROM scratch`` 阶段没有 shell，跳过。
     """
-    if not text or "/etc/yum.repos.d/*.repo" in text:
+    if not text or _CACHE_CLEAN_MARKER in text:
         return text
     out: list[str] = []
     for line in text.splitlines():
@@ -102,7 +100,7 @@ def ensure_broken_repos_disabled(text: str) -> str:
             r"(?i)^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)", line
         )
         if match and match.group(1).lower() != "scratch":
-            out.append(_BROKEN_REPO_RUN)
+            out.append(_CACHE_CLEAN_RUN)
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
@@ -138,7 +136,7 @@ def apply_upgrade(
     if findings:
         raise UpgradeError(f"{app_dir.name}: " + "；".join(findings))
 
-    dockerfile_text = ensure_broken_repos_disabled(dockerfile_text)
+    dockerfile_text = ensure_repo_cache_cleaned(dockerfile_text)
 
     dst_dir = app_dir / new_version / plan.os_version
     if dst_dir.exists():

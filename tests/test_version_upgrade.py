@@ -79,7 +79,7 @@ class ApplyUpgradeTest(unittest.TestCase):
             dockerfile = (target / "Dockerfile").read_text(encoding="utf-8")
             self.assertEqual(
                 dockerfile,
-                version_upgrade.ensure_broken_repos_disabled(
+                version_upgrade.ensure_repo_cache_cleaned(
                     _new_dockerfile("2.2.0")
                 ),
             )
@@ -116,7 +116,7 @@ class ApplyUpgradeTest(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertIn("git clone --branch v2.2.0", written)
-            self.assertIn("update-source", written)
+            self.assertIn(version_upgrade._CACHE_CLEAN_MARKER, written)
             self.assertNotIn("myapp-2.2.0.tar.gz", written)
 
     def test_same_version_is_rejected(self) -> None:
@@ -161,7 +161,7 @@ class ApplyUpgradeTest(unittest.TestCase):
             self.assertFalse((app / "2.2.0" / "22.03-lts-sp3").exists())
 
 
-class EnsureBrokenReposDisabledTest(unittest.TestCase):
+class EnsureRepoCacheCleanedTest(unittest.TestCase):
     def test_injects_after_every_from(self) -> None:
         text = (
             "FROM openeuler/openeuler:24.03-lts-sp4 AS builder\n"
@@ -169,24 +169,26 @@ class EnsureBrokenReposDisabledTest(unittest.TestCase):
             "FROM openeuler/openeuler:24.03-lts-sp4\n"
             "RUN dnf install -y busybox\n"
         )
-        out = version_upgrade.ensure_broken_repos_disabled(text)
-        self.assertEqual(out.count("update-source"), 2)
+        out = version_upgrade.ensure_repo_cache_cleaned(text)
+        self.assertEqual(out.count(version_upgrade._CACHE_CLEAN_MARKER), 2)
         self.assertIn(
             "FROM openeuler/openeuler:24.03-lts-sp4\n"
-            + version_upgrade._BROKEN_REPO_RUN,
+            + version_upgrade._CACHE_CLEAN_RUN,
             out,
         )
+        self.assertIn("dnf clean all", out)
+        self.assertIn("rm -rf /var/cache/dnf", out)
 
     def test_is_idempotent(self) -> None:
         text = "FROM x\nRUN dnf install -y gcc\n"
-        once = version_upgrade.ensure_broken_repos_disabled(text)
-        twice = version_upgrade.ensure_broken_repos_disabled(once)
+        once = version_upgrade.ensure_repo_cache_cleaned(text)
+        twice = version_upgrade.ensure_repo_cache_cleaned(once)
         self.assertEqual(once, twice)
 
     def test_skips_scratch_stage(self) -> None:
         text = "FROM scratch\nCOPY --from=build /x /x\n"
         self.assertEqual(
-            version_upgrade.ensure_broken_repos_disabled(text), text
+            version_upgrade.ensure_repo_cache_cleaned(text), text
         )
 
 

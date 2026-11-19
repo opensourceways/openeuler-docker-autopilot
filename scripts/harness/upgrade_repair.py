@@ -435,7 +435,7 @@ def run(
         instructions=instructions,
     )
 
-    repaired_dockerfile = version_upgrade.ensure_broken_repos_disabled(
+    repaired_dockerfile = version_upgrade.ensure_repo_cache_cleaned(
         repaired_dockerfile
     )
     dockerfile_path.write_text(repaired_dockerfile.rstrip() + "\n", encoding="utf-8")
