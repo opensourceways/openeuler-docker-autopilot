@@ -75,20 +75,27 @@ def _replace_version(text: str, old_version: str, new_version: str) -> tuple[str
     return pattern.subn(new_version, text)
 
 
-# openEuler 官方镜像各 CDN 节点 repodata 同步不一致：基础镜像里缓存的元数据可能
-# 指向已被刷新的 primary/filelists（404）。在每个构建阶段的 FROM 后清空 dnf/yum
-# 缓存，让后续 install 强制重新拉取最新元数据。
+# openEuler 官方镜像的 [source] / [update-source] / [debuginfo] 仓库 repodata
+# 长期 404（repomd.xml 引用的 primary/filelists/updateinfo 在 repo.openeuler.org、
+# de-repo、dl-cdn 等节点均不存在）。仅清缓存不够：重新拉到的还是同一份坏元数据。
+# 因此每个构建阶段在 FROM 后先清空 dnf/yum 缓存强制刷新，再把
+# skip_if_unavailable=True 写进 dnf.conf，让 dnf 跳过不可用仓库继续安装。
 _CACHE_CLEAN_MARKER = "# autopilot: refresh dnf metadata"
 _CACHE_CLEAN_RUN = (
     f"{_CACHE_CLEAN_MARKER}\n"
     "RUN rm -rf /var/cache/dnf /var/cache/yum \\\n"
-    "    && (dnf clean all 2>/dev/null || yum clean all 2>/dev/null || true)"
+    "    && (dnf clean all 2>/dev/null || yum clean all 2>/dev/null || true) \\\n"
+    "    && mkdir -p /etc/dnf \\\n"
+    "    && (grep -qxF skip_if_unavailable=True /etc/dnf/dnf.conf 2>/dev/null \\\n"
+    "        || echo skip_if_unavailable=True >> /etc/dnf/dnf.conf)"
 )
 
 
 def ensure_repo_cache_cleaned(text: str) -> str:
-    """在每个构建阶段的 FROM 后注入清理 dnf/yum 缓存并强制刷新元数据的 RUN。
+    """在每个构建阶段的 FROM 后注入清缓存 + 容忍不可用仓库的 RUN。
 
+    openEuler 的 source/update-source 仓库 repodata 404 会让任意 ``dnf install``
+    直接失败；这里先清空元数据缓存强制重拉，再写 ``skip_if_unavailable=True``。
     已注入过时原样返回，保证可重复调用；``FROM scratch`` 阶段没有 shell，跳过。
     """
     if not text or _CACHE_CLEAN_MARKER in text:

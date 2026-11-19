@@ -178,6 +178,7 @@ class EnsureRepoCacheCleanedTest(unittest.TestCase):
         )
         self.assertIn("dnf clean all", out)
         self.assertIn("rm -rf /var/cache/dnf", out)
+        self.assertIn("skip_if_unavailable=True", out)
 
     def test_is_idempotent(self) -> None:
         text = "FROM x\nRUN dnf install -y gcc\n"
