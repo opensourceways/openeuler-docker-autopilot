@@ -39,6 +39,10 @@ on:
         description: '手动指定版本的上游仓库 HTTPS 地址（配合 version；用于 task spec）'
         required: false
         type: string
+      apps_file:
+        description: '本轮使用的软件清单路径（留空 = config/upgrade-apps.yml）'
+        required: false
+        type: string
       limit:
         description: '本轮最多升级几个应用（0 = 不限）'
         required: false
@@ -112,6 +116,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           TAG: ${{ inputs.tag }}
           SOURCE_URL: ${{ inputs.source_url }}
+          APPS_FILE: ${{ inputs.apps_file }}
           LIMIT: ${{ inputs.limit || '0' }}
           AUDIT_LIMIT: ${{ inputs.audit_limit || '0' }}
         run: |
@@ -127,6 +132,9 @@ jobs:
           fi
           if [ -n "$SOURCE_URL" ]; then
             ARGS+=(--source-url "$SOURCE_URL")
+          fi
+          if [ -n "$APPS_FILE" ]; then
+            ARGS+=(--apps-file "$APPS_FILE")
           fi
           "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_scan.py \
             "${ARGS[@]}"

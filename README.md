@@ -367,6 +367,7 @@ create_new_images.yml  (operation = scenario_one)
 |------|------|
 | `app` | 只处理这一个应用（留空 = 扫描全部应用） |
 | `version` | 手动指定目标版本（跳过看板解析，配合 `app` 使用） |
+| `apps_file` | 本轮使用的软件清单（留空 = `config/upgrade-apps.yml`；可指向 `config/upgrade-apps-l5.yml` 等子集） |
 | `limit` | 本轮最多升级几个应用（`0` = 不限） |
 | `audit_limit` | 本轮最多审计几个「已是最新版本」的应用（`0` = 不限） |
 | `runner_labels` | 发现 / 汇总 job 的 runner 标签（JSON 数组） |
@@ -376,6 +377,7 @@ create_new_images.yml  (operation = scenario_one)
 - 软件清单来自 [`config/upgrade-apps.yml`](config/upgrade-apps.yml)（人工维护，**不遍历目标仓**，当前覆盖看板 `kunpeng` 域 546 个软件，含尚未入库的软件）；初始清单由 [`scrape_upgrade_apps.py`](scripts/utils/scrape_upgrade_apps.py) 从看板一次性生成（`--domain kunpeng`）；
 - 每项包含 `name`（看板软件名，传给 `version/resolve`）、`app`（目标仓目录名）、`domain`（目标仓一级目录）；
 - `blocked_reason` 非空、目标分支已有同名升级分支的 open PR → 跳过并记录原因；清单里的软件在目标仓不存在 → 跳过并标记「尚未入库，待场景一新建镜像」；
+- 看板版本低于仓库现有版本（仅纯数字版本做大小比较）或返回 `Undefined` / `latest` 等占位值 → 跳过，避免降级 PR；
 - **最新版本目录已存在 → 不跳过**，产出 `audits` 条目交给 AI 审计；命中升级 → `{app, domain, version, os_version, source_url, evidence}` 组成升级矩阵，`os_version` 沿用该应用最新的 os 目录。
 
 看板地址默认 `https://upstream-dashboard.test.osinfra.cn`，可用 Variable `UPSTREAM_DASHBOARD_BASE` 覆盖。接口 400/404 视为确定性失败（跳过该应用），502 重试，503 直接失败。

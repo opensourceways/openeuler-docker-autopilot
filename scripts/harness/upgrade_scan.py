@@ -35,6 +35,7 @@ Stage: 场景二 —— 应用升级候选发现（upgrade_scan）
 import argparse
 import json
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -61,6 +62,28 @@ _MAX_COLLECTOR_ITEMS = 20
 def _normalize_version(value: str) -> str:
     """`v1.2.3` / `V1.2.3` / `1.2.3` 视为同一版本。"""
     return str(value or "").strip().lstrip("vV").lower()
+
+
+# 看板偶尔把 latest/Undefined 这类占位值当版本返回；它们不能当目录名。
+_PLACEHOLDER_VERSIONS = {"undefined", "latest", "null", "none", "unknown"}
+
+
+def _numeric_version_key(value: str) -> tuple[int, ...] | None:
+    """纯数字版本转成可比较的 key；含字母或占位值时返回 None。
+
+    只用于拦截「看板版本低于仓库现有版本」的降级：跨项目的 rc/beta/commit
+    等版本号没有统一排序，遇到就交回原有逻辑，不做大小判断。
+    """
+    tokens = [
+        token
+        for token in re.split(
+            r"[^0-9A-Za-z]+", str(value or "").strip().lstrip("vV")
+        )
+        if token
+    ]
+    if not tokens or not all(token.isdigit() for token in tokens):
+        return None
+    return tuple(int(token) for token in tokens)
 
 
 def existing_versions(app_dir: Path) -> set[str]:
@@ -313,6 +336,33 @@ def find_updates(
         new_version = str(forced_version or payload.get("version") or "").strip()
         if not new_version:
             skipped.append({"app": app, "reason": "看板未给出可用版本号"})
+            continue
+        if new_version.lower() in _PLACEHOLDER_VERSIONS:
+            skipped.append(
+                {"app": app, "reason": f"看板未给出有效版本号（{new_version}）"}
+            )
+            continue
+
+        # 看板与仓库的上游源可能不是同一个（例如 parquet-java 1.x 对应仓库里的
+        # 2.x 目录）；只判断「版本目录是否存在」会把降级当成升级。
+        current_version = dockerfile.parts[-3]
+        new_key = _numeric_version_key(new_version)
+        current_key = _numeric_version_key(current_version)
+        if (
+            not forced_version
+            and new_key is not None
+            and current_key is not None
+            and new_key < current_key
+        ):
+            skipped.append(
+                {
+                    "app": app,
+                    "reason": (
+                        f"看板版本 {new_version} 低于仓库现有版本 "
+                        f"{current_version}，跳过（疑似上游源不一致）"
+                    ),
+                }
+            )
             continue
 
         if _normalize_version(new_version) in existing_versions(app_dir):

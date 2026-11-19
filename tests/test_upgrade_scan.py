@@ -150,6 +150,32 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertEqual(result["updates"], [])
         self.assertIn("blocked_reason", result["skipped"][0]["reason"])
 
+    def test_dashboard_version_lower_than_repo_is_skipped(self) -> None:
+        result = self._scan(_payload("2.15.0"))
+        self.assertEqual(result["updates"], [])
+        self.assertEqual(result["audits"], [])
+        self.assertIn("低于仓库现有版本", result["skipped"][0]["reason"])
+
+    def test_placeholder_version_is_skipped(self) -> None:
+        result = self._scan(_payload("Undefined"))
+        self.assertEqual(result["updates"], [])
+        self.assertEqual(result["audits"], [])
+        self.assertIn("未给出有效版本号", result["skipped"][0]["reason"])
+
+    def test_non_numeric_versions_keep_the_existing_behavior(self) -> None:
+        _make_app(self.repo, "Database", "kvrocks-rc", versions=("2.16.0-rc1",))
+        result = self._scan(
+            _payload("2.17.0-rc1"),
+            apps=[
+                {
+                    "name": "kvrocks",
+                    "app": "kvrocks-rc",
+                    "domain": "Database",
+                }
+            ],
+        )
+        self.assertEqual(len(result["updates"]), 1)
+
     def test_missing_software_is_skipped(self) -> None:
         result = self._scan(None)
         self.assertEqual(result["updates"], [])

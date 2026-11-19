@@ -32,7 +32,9 @@ def test_manual_dispatch_only_app_and_version():
     trigger = _trigger(_workflow(UPGRADE))
     assert 'schedule' not in trigger
     inputs = trigger['workflow_dispatch']['inputs']
-    assert set(inputs) >= {'app', 'version', 'limit', 'audit_limit', 'runner_labels'}
+    assert set(inputs) >= {
+        'app', 'version', 'apps_file', 'limit', 'audit_limit', 'runner_labels'
+    }
 
 
 def test_discover_scans_the_dashboard_and_feeds_the_matrix():
@@ -44,6 +46,7 @@ def test_discover_scans_the_dashboard_and_feeds_the_matrix():
     scan_text = _squash(jobs['discover']['steps'])
     assert 'upgrade_scan.py' in scan_text
     assert '--format github-output' in scan_text
+    assert '--apps-file' in scan_text
     assert '--audit-limit' in scan_text
     assert 'gitcode.com' in scan_text
     # 看板地址可覆盖，且默认值写在 workflow 级 env
