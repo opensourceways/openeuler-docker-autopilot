@@ -63,7 +63,7 @@ jobs:
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
-          git clone --depth 1 \
+          git clone \
             "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
             conda-repo
 

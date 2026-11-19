@@ -153,7 +153,7 @@ def _write_pr(
         print(updated)
         return ""
 
-    _git(repo_dir, "fetch", "--depth", "1", "origin", base_branch)
+    _git(repo_dir, "fetch", "origin", base_branch)
     _git(repo_dir, "checkout", "-B", branch, f"origin/{base_branch}")
     yml_path.write_text(updated, encoding="utf-8")
     _git(repo_dir, "add", str(yml_path.relative_to(repo_dir)))
