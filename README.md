@@ -271,6 +271,8 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二升级 commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
 | `OPENAI_BASE_URL` | 所有场景统一的模型 API 地址（OpenAI 兼容） | `https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1` |
 | `UPGRADE_RUNNER_LABELS` | 场景二发现 / 汇总 Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
+| `UPGRADE_REPAIR_INSTRUCTIONS` | 验证失败后自动 repair 的默认说明（留空则 AI 按失败证据自行修复） | _(空)_ |
+| `AUTO_REPAIR_UPGRADES` | 设为 `false` 关闭验证失败后的自动 repair | `true` |
 | `CI_FIX_X64_RUNNER_LABELS` | CI 修复组件轻量 Job（prepare / 分析 / code-fix / 监控）的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
 | `CI_FIX_AMD64_RUNNER_LABELS` | CI 修复组件 amd64 修复 Job 的 runner 标签（需 Docker + ≥4 CPU） | `["self-hosted","Linux","X64","oe-fix-amd64"]` |
 | `CI_FIX_ARM64_RUNNER_LABELS` | CI 修复组件 arm64 首修 / 复验 Job 的 runner 标签（必须 arm64） | `["self-hosted","Linux","ARM64","oe-fix-arm64"]` |
@@ -389,15 +391,26 @@ validate-x86_64    x86_64 原生构建 + 功能测试（flow.py phase1-native-va
 validate-aarch64   aarch64 原生构建 + 功能测试（与 x86 并行）
    ↓ 两者都通过
 open-pr            跨仓 PR：变更说明 + 功能测试状态 + 上游证据
+   ↑
+plan-repairs/repair 任一验证失败时自动挑出失败应用，在原分支上修一轮后重新验证
 ```
 
 - **Dockerfile 生成**（[`upgrade_apply.py`](scripts/harness/upgrade_apply.py)）：把旧版本 Dockerfile、目标版本与看板上游证据包（优先 L1 的 3 条 `check`，缺失时回退到该版本实际存在的等级）一起注入升级 Agent，重新生成完整 Dockerfile；**不做版本串机械替换**，生成结果缺目标版本号或 `FROM` 即失败。
 - **确定性落盘**（[`version_upgrade.py`](scripts/lib/version_upgrade.py)）：把该应用最新的 `{old_version}/{os}/` 复制为 `{new_version}/{os}/`，写入 AI 生成的 Dockerfile，更新应用根目录 `README.md` / `doc/image-info.yml` 的版本号，并向 `meta.yml` 追加 `{new_version}-{oe_tag}` 条目。失败时清理半成品目录。
 - **补测试**（复用场景四）：应用没有 `tests/test.sh` 时调用 `testgen_generate.generate_test_script`，把上游证据作为额外上下文；生成失败**不阻断**升级，PR 正文标注「测试脚本待补」。
-- **双架构原生验证**：x86_64 / aarch64 各自真实构建并跑功能测试，不使用 QEMU；任一架构失败则不开 PR，证据留在 artifact，分支保留供人工或修复组件继续处理。
+- **双架构原生验证**：x86_64 / aarch64 各自真实构建并跑功能测试，不使用 QEMU；任一架构失败则不开 PR，证据留在 artifact，分支保留供自动/人工修复继续处理。
 - **分支**：`auto/version-update/<app>/<version>-<oe_tag>`，推送到 `GITCODE_FORK_REPO`（留空则直推目标仓），再从 fork 向目标仓提跨仓 PR。
 
-验证失败后不会自动重跑，也不会重新生成分支。修复入口是 [`repair_upgrade.yml`](.github/workflows/repair_upgrade.yml)（手动触发）：
+### 4.3 验证失败后的自动修复
+
+`upgrade` 有任何应用验证失败时，同一轮里的 `plan-repairs` 会查 Actions jobs 列表，挑出 `Upgrade <app> / Validate *` 失败的 app（prepare 失败不修，因为分支还没推上去），再用 `repair_run_id=<本次 run id>` 自动调用 `_upgrade_app.yml` 的 repair 模式：
+
+- 只修**一轮**：`plan-repairs` 不依赖 `repair`，修复后的验证再失败不会继续自动重试；
+- 修复说明取自 Variable `UPGRADE_REPAIR_INSTRUCTIONS`（可留空，AI 按失败证据自行判断）；
+- 分支不重建，修完直接重新走双架构验证与 open-pr；
+- 设 `AUTO_REPAIR_UPGRADES=false` 可关闭自动修复。
+
+人工兜底入口是 [`repair_upgrade.yml`](.github/workflows/repair_upgrade.yml)（手动触发，可指定具体修复说明，也可对自动修复失败的结果再修一轮）：
 
 | 输入 | 含义 |
 |------|------|
@@ -407,7 +420,7 @@ open-pr            跨仓 PR：变更说明 + 功能测试状态 + 上游证据
 
 它复用 `_upgrade_app.yml` 的 repair 模式：下载失败运行的 `task-spec` 与双架构 evidence（含诊断日志尾部），由 [`upgrade_repair.py`](scripts/harness/upgrade_repair.py) 在**已有的升级分支**上修复 `Dockerfile` / `tests/test.sh` 并推回同一分支，然后走同一套双架构验证与开 PR。分支不存在时直接报错——repair 只修复已有分支。
 
-### 4.3 已是最新版本的审计与修复
+### 4.4 已是最新版本的审计与修复
 
 看板版本与目标仓最新目录一致时不跳过，由 [`_audit_app.yml`](.github/workflows/_audit_app.yml) 审计并修复（独立分支 + PR，不直接改主分支）：
 

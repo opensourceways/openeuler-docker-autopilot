@@ -15,6 +15,10 @@ name: App Version Upgrade
 #
 # 触发：当前只保留 workflow_dispatch（每日定时在测试期关闭）。
 # 手动入口：app 指定单个应用；version 手动指定目标版本（跳过看板解析）。
+#
+# 自动 repair：本轮任一应用的双架构验证失败时，plan-repairs 从 jobs 列表里挑出
+# 验证失败的 app，自动调用 _upgrade_app.yml 的 repair 模式修复已有分支并重新
+# 验证一次；只修一轮，失败就停（prepare 失败不修，因为没有分支）。
 
 on:
   workflow_dispatch:
@@ -51,6 +55,8 @@ on:
         type: string
 
 permissions:
+  # plan-repairs 需要读取本次运行的 jobs，判断哪些应用在验证阶段失败。
+  actions: read
   contents: read
 
 env:
@@ -145,6 +151,59 @@ jobs:
       os_version: ${{ matrix.item.os_version }}
       source_url: ${{ matrix.item.source_url }}
 
+  # ── 自动修复：只挑验证失败的应用，在原分支上修一轮 ─────────────────
+  plan-repairs:
+    name: Plan automatic repairs
+    needs: [discover, upgrade]
+    if: >-
+      ${{ always() && needs.upgrade.result == 'failure' &&
+          vars.AUTO_REPAIR_UPGRADES != 'false' }}
+    runs-on: >-
+      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-image-x86"]') }}
+    timeout-minutes: 15
+    outputs:
+      count: ${{ steps.plan.outputs.count }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up runner environment
+        uses: ./.github/actions/phase1-setup
+
+      - name: Select apps whose validation failed
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          REPAIR_INSTRUCTIONS: ${{ vars.UPGRADE_REPAIR_INSTRUCTIONS }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" \
+            scripts/harness/upgrade_plan_repairs.py \
+            --repo "$REPO" \
+            --run-id "$RUN_ID" \
+            --instructions "$REPAIR_INSTRUCTIONS"
+
+  repair:
+    name: "Auto repair ${{ matrix.app }}"
+    needs: [upgrade, plan-repairs]
+    if: >-
+      ${{ always() && needs.plan-repairs.outputs.count != '0' &&
+          needs.plan-repairs.outputs.count != '' }}
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ vars.MAX_PARALLEL_UPGRADES || 2 }}
+      matrix: ${{ fromJSON(needs.plan-repairs.outputs.matrix) }}
+    uses: ./.github/workflows/_upgrade_app.yml
+    secrets: inherit
+    with:
+      item: ''
+      app: ${{ matrix.app }}
+      repair_run_id: ${{ github.run_id }}
+      repair_instructions: ${{ matrix.instructions }}
+
   # ── 审计并修复：已是最新版本也不跳过，AI 检查后提 PR ──────────────
   audit:
     name: "Audit and fix ${{ matrix.item.app }}"
@@ -170,7 +229,7 @@ jobs:
   # ── 汇总：本轮跳过原因（含 blocked_reason / 已有 PR / 审计上限）─────
   summary:
     name: Summarize round
-    needs: [discover, upgrade, audit]
+    needs: [discover, upgrade, plan-repairs, repair, audit]
     if: ${{ always() }}
     runs-on: >-
       ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
@@ -184,6 +243,7 @@ jobs:
             echo "## 应用自动升级"
             echo ""
             echo "- 升级任务结果：\`${{ needs.upgrade.result || 'skipped' }}\`"
+            echo "- 自动修复任务结果：\`${{ needs.repair.result || 'skipped' }}\`"
             echo "- 审计/修复任务结果：\`${{ needs.audit.result || 'skipped' }}\`"
             echo "- 跳过明细："
             echo ""
