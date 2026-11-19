@@ -183,6 +183,12 @@ class EnsureBrokenReposDisabledTest(unittest.TestCase):
         twice = version_upgrade.ensure_broken_repos_disabled(once)
         self.assertEqual(once, twice)
 
+    def test_skips_scratch_stage(self) -> None:
+        text = "FROM scratch\nCOPY --from=build /x /x\n"
+        self.assertEqual(
+            version_upgrade.ensure_broken_repos_disabled(text), text
+        )
+
 
 class CheckDockerfileTest(unittest.TestCase):
     def test_accepts_v_prefixed_and_bare_versions(self) -> None:

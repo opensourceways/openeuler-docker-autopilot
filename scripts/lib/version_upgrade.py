@@ -90,14 +90,18 @@ _BROKEN_REPO_RUN = (
 def ensure_broken_repos_disabled(text: str) -> str:
     """在每个构建阶段的 FROM 后注入禁用损坏仓库的 RUN。
 
-    已注入过（含 ``/etc/yum.repos.d/*.repo``）时原样返回，保证可重复调用。
+    已注入过（含 ``/etc/yum.repos.d/*.repo``）时原样返回，保证可重复调用；
+    ``FROM scratch`` 阶段没有 shell/awk，跳过注入。
     """
     if not text or "/etc/yum.repos.d/*.repo" in text:
         return text
     out: list[str] = []
     for line in text.splitlines():
         out.append(line)
-        if re.match(r"(?i)^\s*FROM\s+\S+", line):
+        match = re.match(
+            r"(?i)^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)", line
+        )
+        if match and match.group(1).lower() != "scratch":
             out.append(_BROKEN_REPO_RUN)
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
