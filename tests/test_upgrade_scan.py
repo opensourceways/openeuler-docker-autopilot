@@ -145,6 +145,16 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertEqual(result["updates"][0]["version"], "2.15.0")
         self.assertEqual(result["skipped"], [])
 
+    def test_build_notes_are_carried_into_the_update_item(self) -> None:
+        result = self._scan(
+            "2.17.0", apps=[_entry("2.17.0", build_notes="build from source")]
+        )
+        self.assertEqual(
+            result["updates"][0]["build_notes"], "build from source"
+        )
+        # 没填时不写空字段，避免污染 prepare 的任务契约
+        self.assertNotIn("build_notes", self._scan()["updates"][0])
+
     def test_placeholder_version_is_skipped(self) -> None:
         result = self._scan("Undefined")
         self.assertEqual(result["updates"], [])
@@ -283,7 +293,8 @@ class LoadAppsTest(unittest.TestCase):
                 "  version: '22.0.0'\n"
                 "  tag: v22.0.0\n"
                 "  source_url: https://github.com/ceph/ceph\n"
-                "  allow_downgrade: true\n",
+                "  allow_downgrade: true\n"
+                "  build_notes: build the kernel module\n",
                 encoding="utf-8",
             )
             apps = upgrade_scan.load_apps(path)
@@ -297,6 +308,7 @@ class LoadAppsTest(unittest.TestCase):
                 "tag": "v22.0.0",
                 "source_url": "https://github.com/ceph/ceph",
                 "allow_downgrade": True,
+                "build_notes": "build the kernel module",
             },
         )
 

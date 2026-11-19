@@ -151,6 +151,8 @@ def build_dockerfile_prompt(
         "commit_sha": evidence.get("commit_sha"),
         "output_field": "dockerfile",
     }
+    if item.get("build_notes"):
+        contract["build_notes"] = str(item["build_notes"])
     prompt += (
         "\n\n## Immutable task contract\n\n"
         + json.dumps(contract, indent=2, ensure_ascii=False)

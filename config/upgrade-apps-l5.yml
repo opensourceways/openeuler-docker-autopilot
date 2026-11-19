@@ -33,6 +33,12 @@ apps:
   version: "9.3.5"
   source_url: "https://github.com/LINBIT/drbd"
   allow_downgrade: true
+  build_notes: >-
+    镜像的核心产物是 DRBD 内核模块：从 LINBIT/drbd 的 v9.3.5 源码执行 make -j /
+    make install，KDIR 指向容器内 kernel-devel 的内核源码目录；不要只构建
+    LINBIT/drbd-utils 用户态工具（drbd-utils 是另一条版本线，没有 v9.3.5 tag）。
+    如镜像仍需要 drbdadm 等用户态命令，可另装 drbd-utils，但内核模块必须来自
+    LINBIT/drbd v9.3.5。
 - name: Druid
   app: druid
   domain: Bigdata

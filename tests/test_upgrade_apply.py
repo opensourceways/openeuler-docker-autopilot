@@ -77,6 +77,26 @@ class DockerfilePromptTest(unittest.TestCase):
         self.assertIn("ARM 原生 job 全 success", prompt)
         self.assertIn("dockerfile", prompt)
 
+    def test_prompt_carries_manifest_build_notes(self) -> None:
+        app = Path("/tmp/Storage/drbd")
+        plan = version_upgrade.UpgradePlan(
+            old_version="9.31.0",
+            os_version="24.03-lts-sp4",
+            src_dir=app / "9.31.0" / "24.03-lts-sp4",
+        )
+        prompt = upgrade_apply.build_dockerfile_prompt(
+            app="drbd",
+            domain="Storage",
+            plan=plan,
+            item={
+                "version": "9.3.5",
+                "source_url": "https://github.com/LINBIT/drbd",
+                "build_notes": "build the kernel module",
+            },
+            old_dockerfile="FROM openeuler/openeuler:24.03-lts-sp4\n",
+        )
+        self.assertIn('"build_notes": "build the kernel module"', prompt)
+
 
 class GenerateDockerfileTest(unittest.TestCase):
     def test_agent_gets_the_evidence_and_its_output_is_used(self) -> None:

@@ -113,7 +113,7 @@ def load_apps(path: str | Path | None = None) -> list[dict]:
             continue
         seen.add(key)
         record = {"name": name or app, "app": app, "domain": domain}
-        for field in ("version", "tag", "source_url"):
+        for field in ("version", "tag", "source_url", "build_notes"):
             value = str(entry.get(field) or "").strip()
             if value:
                 record[field] = value
@@ -351,6 +351,11 @@ def find_updates(
                 "os_version": os_version,
                 "source_url": entry_source,
                 "evidence": evidence,
+                **(
+                    {"build_notes": entry["build_notes"]}
+                    if entry.get("build_notes")
+                    else {}
+                ),
             }
         )
         if limit and len(updates) >= limit:
