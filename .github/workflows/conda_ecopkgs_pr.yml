@@ -1,0 +1,80 @@
+name: Conda Ecopkgs Upgrade PR
+
+# 给 openEuler/conda-ecopkgs 提交「新增版本支持」PR：按包切独立分支推到 fork，
+# 再用 GitCode API 建 PR；已有同 head 的 PR 时跳过，重跑幂等。
+# 默认项是 L5 清单里版本落后于 conda-forge 的两个包。
+
+on:
+  workflow_dispatch:
+    inputs:
+      items:
+        description: '升级项 JSON 数组（package / version / os_version / arches）'
+        required: false
+        default: '[{"package":"benchmark","version":"1.10.0","os_version":"24.03-LTS-SP4","arches":["aarch64","x86_64"]},{"package":"tesseract","version":"5.5.4","os_version":"24.03-LTS-SP4","arches":["aarch64","x86_64"]}]'
+      fork_repo:
+        description: '推送用的 GitCode fork（owner/repo）'
+        required: false
+        default: 'm0_46560176/conda-ecopkgs'
+      runner_labels:
+        description: 'runner 标签（JSON 数组），留空用 Variable / 默认值'
+        required: false
+        type: string
+      dry_run:
+        description: '只生成改动不推送、不建 PR（true/false）'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: read
+
+env:
+  TARGET_REPO: openeuler/conda-ecopkgs
+  TARGET_BRANCH: master
+
+concurrency:
+  group: conda-ecopkgs-pr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  open-pr:
+    name: Open conda upgrade PRs
+    runs-on: >-
+      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-upgrade-x64"]') }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up runner environment
+        uses: ./.github/actions/phase1-setup
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
+      - name: Clone conda-ecopkgs
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          git clone --depth 1 \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
+            conda-repo
+
+      - name: Open upgrade PRs
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GIT_COMMIT_NAME: ${{ vars.GIT_COMMIT_NAME || 'openeuler-bot' }}
+          GIT_COMMIT_EMAIL: ${{ vars.GIT_COMMIT_EMAIL || 'bot@openeuler.org' }}
+          ITEMS: ${{ inputs.items }}
+          FORK: ${{ inputs.fork_repo || 'm0_46560176/conda-ecopkgs' }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          ARGS=(--repo conda-repo --items "${ITEMS}" --target-repo "${TARGET_REPO}"
+                --base "${TARGET_BRANCH}" --fork-repo "${FORK}")
+          if [ "${DRY_RUN}" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          "${RUNNER_TEMP}/phase1-venv/bin/python" \
+            scripts/harness/conda_ecopkgs_pr.py "${ARGS[@]}"
