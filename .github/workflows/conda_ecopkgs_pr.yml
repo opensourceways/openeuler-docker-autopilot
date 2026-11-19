@@ -15,10 +15,14 @@ on:
         description: '推送用的 GitCode fork（owner/repo）'
         required: false
         default: 'm0_46560176/conda-ecopkgs'
-      runner_labels:
-        description: 'runner 标签（JSON 数组），留空用 Variable / 默认值'
+      runner_arch:
+        description: '执行 runner 架构（x64 / arm64）'
         required: false
-        type: string
+        default: 'x64'
+        type: choice
+        options:
+          - x64
+          - arm64
       dry_run:
         description: '只生成改动不推送、不建 PR（true/false）'
         required: false
@@ -39,8 +43,9 @@ jobs:
   open-pr:
     name: Open conda upgrade PRs
     runs-on: >-
-      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
-          '["self-hosted","Linux","X64","oe-upgrade-x64"]') }}
+      ${{ fromJSON(inputs.runner_arch == 'arm64'
+          && '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]'
+          || '["self-hosted","Linux","X64","oe-upgrade-x64"]') }}
     timeout-minutes: 30
     steps:
       - name: Check out workflow source
