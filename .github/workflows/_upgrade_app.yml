@@ -49,11 +49,11 @@ on:
         type: string
       x64_runner_labels:
         required: false
-        default: '["self-hosted","Linux","X64","oe-image-x86"]'
+        default: '["self-hosted","Linux","X64","oe-upgrade-x64"]'
         type: string
       arm64_runner_labels:
         required: false
-        default: '["self-hosted","Linux","ARM64","oe-image-arm64"]'
+        default: '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]'
         type: string
     secrets:
       GITCODE_TOKEN:

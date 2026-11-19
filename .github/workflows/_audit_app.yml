@@ -29,17 +29,17 @@ on:
       runner_labels:
         description: '审计/修复/开 PR job 的 runner 标签（JSON 数组）'
         required: false
-        default: '["self-hosted","Linux","X64","oe-image-x86"]'
+        default: '["self-hosted","Linux","X64","oe-upgrade-x64"]'
         type: string
       x64_runner_labels:
         description: 'x86_64 原生校验 job 的 runner 标签（JSON 数组）'
         required: false
-        default: '["self-hosted","Linux","X64","oe-image-x86"]'
+        default: '["self-hosted","Linux","X64","oe-upgrade-x64"]'
         type: string
       arm64_runner_labels:
         description: 'aarch64 原生校验 job 的 runner 标签（必须 arm64）'
         required: false
-        default: '["self-hosted","Linux","ARM64","oe-image-arm64"]'
+        default: '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]'
         type: string
     secrets:
       GITCODE_TOKEN:

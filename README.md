@@ -371,11 +371,11 @@ create_new_images.yml  (operation = scenario_one)
 | `limit` | 本轮最多升级几个应用（`0` = 不限） |
 | `audit_limit` | 本轮最多审计几个「目标版本已存在」的应用（`0` = 不限） |
 | `runner_labels` | 发现 / 汇总 job 的 runner 标签（JSON 数组） |
-| `x64_runner_labels` | x86_64 构建 / 验证 runner 标签（JSON 数组，留空 = 变量 `UPGRADE_X64_RUNNER_LABELS` / 默认全部 `X64`） |
-| `arm64_runner_labels` | aarch64 构建 / 验证 runner 标签（JSON 数组，留空 = 变量 `UPGRADE_ARM64_RUNNER_LABELS` / 默认全部 `ARM64`） |
+| `x64_runner_labels` | x86_64 构建 / 验证 runner 标签（JSON 数组，留空 = 变量 `UPGRADE_X64_RUNNER_LABELS` / 默认 `oe-upgrade-x64`） |
+| `arm64_runner_labels` | aarch64 构建 / 验证 runner 标签（JSON 数组，留空 = 变量 `UPGRADE_ARM64_RUNNER_LABELS` / 默认 `oe-upgrade-arm64`） |
 | `max_parallel` | 单轮最多并发几个应用（留空 = 变量 `MAX_PARALLEL_UPGRADES` / 默认 `4`） |
 
-> 默认标签不再绑定单台 `oe-image-*`，同架构的 Runner（如 `oe-fix-amd64` / `oe-fix-arm64`）也会参与升级验证；一台 Runner 同时只跑一个 Job，因此 `max_parallel` 设为同架构机器数即可把机器吃满。
+> 升级验证用统一标签 `oe-upgrade-x64` / `oe-upgrade-arm64` 圈定本仓的 4 台构建机（每台 2 个 runner 实例），避免误调度到其他仓库共用 `self-hosted,Linux,X64` 的临时 Runner；一台 Runner 同时只跑一个 Job，`max_parallel` 与实例总数对齐即可吃满机器。
 
 `discover` job 浅克隆目标仓后调用 [`upgrade_scan.py`](scripts/harness/upgrade_scan.py)，**不查询 upstream-dashboard**：
 
