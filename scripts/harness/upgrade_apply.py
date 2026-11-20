@@ -340,6 +340,12 @@ def _generate_dockerfile(
     base_img = build_runner.base_image(old_dockerfile) or "(unknown)"
     notes = app_notes.load(app)
     agent_timeout = app_notes.generate_timeout_seconds(notes)
+    if notes is not None and notes.body:
+        log_stage(
+            "upgrade-apply",
+            f"{app}: 已加载注意点文档 config/app-notes/{notes.app}.md "
+            f"({len(notes.body)} chars)",
+        )
     if notes is not None and notes.generate_timeout_minutes:
         log_stage(
             "upgrade-apply",

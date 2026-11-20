@@ -318,6 +318,12 @@ def _repair_files(
     output_dockerfile = Path(session["output_dockerfile"])
     notes = app_notes.load(task.app)
     agent_timeout = app_notes.generate_timeout_seconds(notes)
+    if notes is not None and notes.body:
+        log_stage(
+            "upgrade-repair",
+            f"{task.app}: 已加载注意点文档 config/app-notes/{notes.app}.md "
+            f"({len(notes.body)} chars)",
+        )
     if notes is not None and notes.generate_timeout_minutes:
         log_stage(
             "upgrade-repair",
