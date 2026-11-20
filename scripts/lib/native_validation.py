@@ -16,6 +16,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from scripts.lib import app_notes
 from scripts.lib.progress import log, run_streaming
 from scripts.lib.task_spec import TaskSpec
 from scripts.lib.target_contract import validate_test_contract
@@ -43,6 +44,20 @@ CommandRunner = Callable[
     subprocess.CompletedProcess,
 ]
 FormatValidator = Callable[..., Mapping[str, object]]
+
+
+def _build_timeout_seconds(app: str) -> int:
+    """单镜像构建预算；注意点文档可以放大默认的 2 小时。
+
+    ``build_timeout_minutes`` 同时决定 validate job 的 timeout，内部构建超时必须
+    跟着放宽，否则 7200s 会先把长构建掐掉（milvus 曾在 96% 处 Canceled）。
+    预留 10 分钟给运行期测试与清理。
+    """
+    notes = app_notes.load(app)
+    if notes is None:
+        return 7200
+    return max(7200, notes.build_timeout_minutes * 60 - 600)
+
 
 _PLATFORMS = {
     "x86_64": "linux/amd64",
@@ -1344,7 +1359,7 @@ def validate_native_image(
                 artifact_root=report_path.parent,
                 name="native_build",
                 suffix="buildx.log",
-                timeout=7200,
+                timeout=_build_timeout_seconds(task.app),
             )
             inspected = _run(
                 runner,

@@ -1865,3 +1865,12 @@ def test_docker_slug_sanitizes_versions_and_app_names():
     assert _docker_slug("2.12.0") == "2.12.0"
     assert _docker_slug("llama.cpp") == "llama.cpp"
     assert _docker_slug("") == "app"
+
+
+def test_build_timeout_follows_app_notes():
+    from scripts.lib.native_validation import _build_timeout_seconds
+
+    # milvus 注意点文档写了 300 分钟：内部构建超时必须跟着放宽，否则会在 96% 被掐断
+    assert _build_timeout_seconds("milvus") == 300 * 60 - 600
+    # 没有注意点文档的应用仍用默认 2 小时
+    assert _build_timeout_seconds("no-such-app-xyz") == 7200
