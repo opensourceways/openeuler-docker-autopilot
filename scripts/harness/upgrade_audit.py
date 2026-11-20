@@ -12,9 +12,11 @@ Stage: 场景二「已是最新版本」的 AI 审计（upgrade_audit）
 先跑确定性检查（版本、tag、meta、测试脚本、image-info），再把 Dockerfile、meta.yml、
 测试脚本和上游证据一起交给 ``upgrade_auditor`` Agent 做语义审计。修复有两种交付方式：
 
-- ``--prepare``：调用 ``upgrade_fixer`` 修正 Dockerfile 与 ``doc/image-info.yml``，
-  过确定性校验后只推送修复分支，并写出 ``task-spec.json`` / ``delivery.json``，
-  供双架构原生校验与后续开 PR 使用；
+- ``--prepare``：调用 ``upgrade_fixer`` 修正 Dockerfile 与 ``doc/image-info.yml``；
+  若该应用没有功能测试脚本，复用场景四的 ``generate_test_script`` 生成
+  ``tests/test.sh`` 一并提交（生成失败不阻断修复）；过确定性校验后只推送修复
+  分支，并写出 ``task-spec.json`` / ``delivery.json``，供双架构原生校验与后续
+  开 PR 使用；
 - ``--open-pr --delivery <delivery.json>``：校验通过后从交接文件创建 PR；
 - ``--deliver``：本地一键跑完（审计 + 修复 + 推分支 + 开 PR）。
 
@@ -492,6 +494,66 @@ def _reset_workspace(repo_dir: Path) -> None:
     _git(repo_dir, "clean", "-fd")
 
 
+def ensure_test_script(repo_dir: Path, context: dict) -> list[Path]:
+    """缺功能测试时按 KunpengTest 规范补一个 ``tests/test.sh``。
+
+    复用场景四的生成器；生成失败只记日志、不阻断本次修复（双架构校验会给出
+    最终结论）。调用前工作树必须是干净的——生成器每轮都会 reset workspace，
+    因此这一步要放在 ``run_agent_fix`` 之后、写修复/Dockerfile 之前。
+
+    返回新增的文件列表；已有测试或生成失败时为空。
+    """
+    from scripts.harness import testgen_scan
+    from scripts.harness.testgen_generate import generate_test_script
+
+    app_dir = repo_dir / str(context["domain"]) / str(context["app"])
+    if testgen_scan.has_any_test_script(app_dir):
+        return []
+
+    api_key = ai_provider.api_key()
+    executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
+    if not api_key or not executable:
+        log_stage(
+            "upgrade-audit",
+            f"{context['app']}: 缺少 AI 凭证/opencode，跳过补测试",
+        )
+        return []
+
+    findings = generate_test_script(
+        repo_dir=repo_dir,
+        app=str(context["app"]),
+        domain=str(context["domain"]),
+        dockerfile_rel=str(context["dockerfile_path"]),
+        source_url=str(context["source_url"]),
+        latest_version=str(context["version"]),
+        api_key=api_key,
+        executable=Path(executable),
+        extra_context=upstream_evidence.render_prompt(context["evidence"]),
+        timeout=AUDIT_AGENT_TIMEOUT_SECONDS,
+    )
+    if findings:
+        detail = "; ".join(f"{f['code']}: {f['message']}" for f in findings)
+        log_stage(
+            "upgrade-audit",
+            f"{context['app']}: 补测试未通过（不阻断修复）: {detail}",
+        )
+        return []
+
+    test_path = app_dir / "tests" / "test.sh"
+    if not test_path.is_file():
+        log_stage("upgrade-audit", f"{context['app']}: 生成器未落盘 tests/test.sh")
+        return []
+
+    # 校验契约要求可执行位；生成器只负责写内容，这里统一补齐。
+    test_path.chmod(test_path.stat().st_mode | 0o111)
+    relative = test_path.relative_to(repo_dir).as_posix()
+    context["test_scripts"] = [
+        {"path": relative, "content": _truncate(_read(test_path))}
+    ]
+    log_stage("upgrade-audit", f"{context['app']}: 已补功能测试 {relative}")
+    return [test_path]
+
+
 def run_agent_audit(context: dict, findings: list[dict], repo_dir: Path) -> dict:
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
@@ -707,8 +769,13 @@ def push_fix(
     repo_dir: Path,
     context: dict,
     fix_payload: dict,
+    extra_paths: list[Path] | None = None,
 ) -> tuple[str, str, list[str]]:
-    """把修复写入工作树、提交并推送分支；返回 (branch, push_repo, changed)。"""
+    """把修复写入工作树、提交并推送分支；返回 (branch, push_repo, changed)。
+
+    ``extra_paths`` 是修复结果以外需要一起提交的文件（例如审计链路补出来的
+    ``tests/test.sh``），它们已由调用方写进工作树。
+    """
     token = (os.environ.get("GITCODE_TOKEN") or "").strip()
     if not token:
         raise SystemExit("GITCODE_TOKEN is required to deliver the audit fix")
@@ -723,6 +790,9 @@ def push_fix(
         _git(repo_dir, "checkout", "-B", branch, base, check=True)
 
     changed = apply_fix(repo_dir, context, fix_payload)
+    for path in extra_paths or []:
+        if path.is_file() and path not in changed:
+            changed.append(path)
     if not changed:
         log_stage(
             "upgrade-audit",
@@ -800,9 +870,12 @@ def deliver_fix(
     findings: list[dict],
     audit_payload: dict,
     fix_payload: dict,
+    extra_paths: list[Path] | None = None,
 ) -> str:
     """提交修复、推送分支并创建 PR；没有实际改动时返回空串。"""
-    branch, push_repo, changed = push_fix(repo_dir, context, fix_payload)
+    branch, push_repo, changed = push_fix(
+        repo_dir, context, fix_payload, extra_paths=extra_paths
+    )
     if not changed:
         return ""
     return open_fix_pr(
@@ -1052,11 +1125,27 @@ def run(
     branch = ""
     if payload is not None and deliver:
         fix_payload = run_agent_fix(context, findings, payload, repo_dir)
-        pr_url = deliver_fix(repo_dir, context, findings, payload, fix_payload)
+        test_paths = ensure_test_script(repo_dir, context)
+        if test_paths:
+            # 测试已补上，PR 文案与交接文件不再保留 test.missing。
+            findings = [f for f in findings if f["component"] != "tests"]
+        pr_url = deliver_fix(
+            repo_dir,
+            context,
+            findings,
+            payload,
+            fix_payload,
+            extra_paths=test_paths,
+        )
     elif payload is not None and prepare:
         # 只推到修复分支，PR 留给双架构原生校验通过后的 deliver job
         fix_payload = run_agent_fix(context, findings, payload, repo_dir)
-        branch, push_repo, changed = push_fix(repo_dir, context, fix_payload)
+        test_paths = ensure_test_script(repo_dir, context)
+        if test_paths:
+            findings = [f for f in findings if f["component"] != "tests"]
+        branch, push_repo, changed = push_fix(
+            repo_dir, context, fix_payload, extra_paths=test_paths
+        )
         write_task_spec(out_dir, context, item)
         if changed:
             write_delivery(

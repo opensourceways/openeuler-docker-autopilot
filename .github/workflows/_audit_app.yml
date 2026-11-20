@@ -76,7 +76,9 @@ jobs:
   fix:
     name: "Audit and fix ${{ inputs.app }}"
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
-    timeout-minutes: 150
+    # 审计 30 分钟 + 修复 30 分钟；缺 test.sh 时还会跑测试生成（最多 3 轮），
+    # 与升级链路的 prepare 预算保持一致。
+    timeout-minutes: 240
     outputs:
       has_changes: ${{ steps.fix.outputs.has_changes }}
       branch: ${{ steps.fix.outputs.branch }}

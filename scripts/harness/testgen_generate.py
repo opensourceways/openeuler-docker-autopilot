@@ -210,6 +210,7 @@ def generate_test_script(
     api_key: str,
     executable: Path,
     extra_context: str = "",
+    timeout: int = 3600,
 ) -> list[dict]:
     """Run the creator with repair rounds. Returns the final findings."""
     test_rel = f"{domain}/{app}/tests/test.sh"
@@ -235,6 +236,7 @@ def generate_test_script(
             workspace=repo_dir,
             api_key=api_key,
             required_keys=REQUIRED_AGENT_KEYS,
+            timeout=timeout,
         )
         findings = check_test_script(repo_dir / test_rel)
         findings += _scope_findings(repo_dir, allowed_prefix)

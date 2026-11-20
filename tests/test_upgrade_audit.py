@@ -464,5 +464,148 @@ class DryRunTest(unittest.TestCase):
             self.assertEqual(document["ai"]["verdict"], "critical")
 
 
+class EnsureTestScriptTest(unittest.TestCase):
+    """审计链路为缺 test.sh 的应用补测试。"""
+
+    def test_existing_test_is_left_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(Path(tmp))
+            context = upgrade_audit.collect_context(repo, _ITEM)
+            with mock.patch(
+                "scripts.harness.testgen_generate.generate_test_script"
+            ) as generate:
+                paths = upgrade_audit.ensure_test_script(repo, context)
+
+        self.assertEqual(paths, [])
+        generate.assert_not_called()
+
+    def test_generated_test_is_recorded_in_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(Path(tmp), with_test=False)
+            context = upgrade_audit.collect_context(repo, _ITEM)
+            test_path = repo / "Others" / "slurm" / "tests" / "test.sh"
+
+            def fake_generate(**kwargs):
+                self.assertEqual(
+                    kwargs["dockerfile_rel"], _ITEM["dockerfile_path"]
+                )
+                self.assertEqual(kwargs["latest_version"], "26.05.6.1")
+                test_path.parent.mkdir(parents=True, exist_ok=True)
+                test_path.write_text(
+                    '#!/bin/bash\n: "${EXPECTED_VERSION:?}"\nsrun --version\n',
+                    encoding="utf-8",
+                )
+                return []
+
+            with (
+                mock.patch.dict("os.environ", {"OPENCODE_BIN": "/bin/true"}),
+                mock.patch.object(
+                    upgrade_audit.ai_provider, "api_key", return_value="key"
+                ),
+                mock.patch(
+                    "scripts.harness.testgen_generate.generate_test_script",
+                    side_effect=fake_generate,
+                ),
+            ):
+                paths = upgrade_audit.ensure_test_script(repo, context)
+
+            self.assertEqual(paths, [test_path])
+            self.assertEqual(
+                context["test_scripts"][0]["path"], "Others/slurm/tests/test.sh"
+            )
+            if sys.platform != "win32":
+                self.assertTrue(test_path.stat().st_mode & 0o111)
+
+    def test_failed_generation_is_not_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(Path(tmp), with_test=False)
+            context = upgrade_audit.collect_context(repo, _ITEM)
+            findings = [
+                {
+                    "code": "kunpeng.not_executable",
+                    "level": "retry",
+                    "owner": "testgen_creator",
+                    "message": "test.sh must have the executable bit set",
+                }
+            ]
+            with (
+                mock.patch.dict("os.environ", {"OPENCODE_BIN": "/bin/true"}),
+                mock.patch.object(
+                    upgrade_audit.ai_provider, "api_key", return_value="key"
+                ),
+                mock.patch(
+                    "scripts.harness.testgen_generate.generate_test_script",
+                    return_value=findings,
+                ),
+            ):
+                paths = upgrade_audit.ensure_test_script(repo, context)
+
+        self.assertEqual(paths, [])
+        self.assertEqual(context["test_scripts"], [])
+
+    def test_prepare_commits_generated_test_with_the_fix(self) -> None:
+        audit_payload = {
+            "success": True,
+            "verdict": "critical",
+            "dockerfile_issues": [],
+            "evidence_alignment": {},
+            "version_check": {},
+            "test_script": {},
+            "summary": "bad tag",
+        }
+        fix_payload = {
+            "success": True,
+            "dockerfile": "FROM x\nARG VERSION=26.05.6.1\nARG TAG=slurm-26-05-6-1\n",
+            "image_info": "name: slurm\n",
+            "changes": ["fix tag"],
+            "summary": "fixed",
+        }
+        branch = "auto/image-audit/slurm/26.05.6.1"
+        changed = [
+            "Others/slurm/tests/test.sh",
+            "Others/slurm/26.05.6.1/24.03-lts-sp4/Dockerfile",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _make_repo(root, with_test=False)
+            out = root / "audit-out"
+            test_path = repo / "Others" / "slurm" / "tests" / "test.sh"
+            with (
+                mock.patch.object(
+                    upgrade_audit, "run_agent_audit", return_value=audit_payload
+                ),
+                mock.patch.object(
+                    upgrade_audit, "run_agent_fix", return_value=fix_payload
+                ),
+                mock.patch.object(
+                    upgrade_audit, "ensure_test_script", return_value=[test_path]
+                ),
+                mock.patch.object(
+                    upgrade_audit,
+                    "push_fix",
+                    return_value=(branch, "fork/openeuler-docker-images", changed),
+                ) as push,
+            ):
+                code = upgrade_audit.run(
+                    _ITEM,
+                    repo_dir=repo,
+                    out_dir=out,
+                    dry_run=False,
+                    prepare=True,
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(push.call_args.kwargs["extra_paths"], [test_path])
+            delivery = json.loads(
+                (out / "delivery.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(
+                all(
+                    finding["component"] != "tests"
+                    for finding in delivery["findings"]
+                )
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
