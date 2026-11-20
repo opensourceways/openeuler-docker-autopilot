@@ -7,7 +7,8 @@ Stage: 场景二失败修复（upgrade_repair）
 1. 从失败运行的 ``task-spec.json`` 还原任务契约（app/version/os_version/source_url/evidence）；
 2. 拉取**已存在**的升级分支，读取分支上的 Dockerfile 与 ``tests/test.sh``；
 3. 把双架构 evidence（失败项 + 诊断日志尾部）和人工 ``--instructions`` 交给
-   ``upgrade_creator`` Agent，返回修复后的完整文件；
+   ``upgrade_creator`` Agent，**在容器里复现失败指令并当场修复**，返回修复后的
+   完整文件（与生成阶段共用同一套容器验证流程）；
 4. 确定性校验后覆盖分支上的文件，提交并推回同一分支。
 
 分支不存在时直接报错——repair 只修复已有分支，不重新生成。
@@ -34,12 +35,17 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.harness.upgrade_apply import (  # noqa: E402
+    DOCKER_SHIM_DIR,
     _emit_output,
     _env,
     _git,
     _reset_workspace,
+    container_name,
+    container_verification_section,
+    read_agent_file,
+    session_dir,
 )
-from scripts.lib import ai_provider, version_upgrade  # noqa: E402
+from scripts.lib import ai_provider, build_runner, version_upgrade  # noqa: E402
 from scripts.lib.agent_runtime import run_agent  # noqa: E402
 from scripts.lib.stage_common import (  # noqa: E402
     agent_prompt_file,
@@ -56,7 +62,8 @@ REPAIR_AGENT_ROLE = "upgrade_creator"
 REPAIR_REQUIRED_KEYS = ("success", "dockerfile", "summary")
 # 修复通常只有一轮；留一轮用于消化确定性校验问题。
 MAX_REPAIR_ROUNDS = 2
-REPAIR_AGENT_TIMEOUT_SECONDS = 1800
+# 修复同样要在容器里复现并跑通失败指令，与生成阶段共用 90 分钟预算。
+REPAIR_AGENT_TIMEOUT_SECONDS = 5400
 
 _LOG_TAIL_LIMIT = 4000
 _LOG_ENTRY_LIMIT = 12
@@ -168,6 +175,7 @@ def build_repair_prompt(
     evidence: dict[str, object],
     instructions: str,
     findings: list[str] | None = None,
+    session: dict | None = None,
 ) -> str:
     """组装修复提示：角色规则 + 分支现状 + 失败证据 + 人工说明。"""
     prompt = Path(agent_prompt_file("upgrade-creator")).read_text(encoding="utf-8")
@@ -231,6 +239,15 @@ def build_repair_prompt(
         + (instructions.strip() or "（未提供；请按失败证据做最小修复）")
         + "\n"
     )
+    if session:
+        prompt += container_verification_section(
+            staging=Path(session["staging"]),
+            container=str(session["container"]),
+            output_dockerfile=Path(session["output_dockerfile"]),
+            build_log=Path(session["build_log"]),
+            arch=str(session.get("arch") or "x86_64"),
+            mode="repair",
+        )
     if findings:
         prompt += (
             "\n## Findings to resolve\n\n"
@@ -282,8 +299,9 @@ def _repair_files(
     test_script_text: str,
     evidence: dict[str, object],
     instructions: str,
+    session: dict,
 ) -> tuple[str, str | None]:
-    """让 Agent 修复文件；失败即终止，不静默保留原文件。"""
+    """让 Agent 在容器里复现并修复失败指令；失败即终止，不静默保留原文件。"""
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
     if not api_key or not executable:
@@ -291,6 +309,7 @@ def _repair_files(
             f"{task.app}: 缺少 AI 凭证/opencode，无法执行修复"
         )
 
+    output_dockerfile = Path(session["output_dockerfile"])
     findings: list[str] = []
     for round_no in range(MAX_REPAIR_ROUNDS):
         prompt = build_repair_prompt(
@@ -300,8 +319,11 @@ def _repair_files(
             evidence=evidence,
             instructions=instructions,
             findings=findings or None,
+            session=session,
         )
         log_stage("upgrade-repair", f"{task.app}: repair agent round {round_no + 1}")
+        agent_error: Exception | None = None
+        result = None
         try:
             result = run_agent(
                 executable=Path(executable),
@@ -312,19 +334,35 @@ def _repair_files(
                 required_keys=REPAIR_REQUIRED_KEYS,
                 timeout=REPAIR_AGENT_TIMEOUT_SECONDS,
             )
+        except Exception as error:  # noqa: BLE001 - 落盘产物优先于退出码
+            agent_error = error
+            log_stage(
+                "upgrade-repair",
+                f"{task.app}: agent 异常 {type(error).__name__}: {error}",
+            )
         finally:
+            written = read_agent_file(output_dockerfile)
             _reset_workspace(repo_dir)
 
-        payload = result.payload
-        if not bool(payload.get("success")):
-            findings = [str(payload.get("error") or "Agent 报告修复失败")]
-            log_stage("upgrade-repair", f"{task.app}: findings={findings}")
-            continue
-        candidate = payload.get("dockerfile")
+        payload = result.payload if result is not None else {}
+        candidate = written or payload.get("dockerfile")
         if not isinstance(candidate, str) or not candidate.strip():
-            findings = ["Agent 未返回非空的 dockerfile 字符串"]
+            findings = [
+                str(payload.get("error") or "")
+                or (
+                    f"Agent 异常且未落盘 Dockerfile："
+                    f"{type(agent_error).__name__}: {agent_error}"
+                    if agent_error is not None
+                    else "Agent 未返回非空的 dockerfile 字符串"
+                )
+            ]
             log_stage("upgrade-repair", f"{task.app}: findings={findings}")
             continue
+        if agent_error is not None:
+            log_stage(
+                "upgrade-repair",
+                f"{task.app}: agent 未正常结束，但容器内已落盘 Dockerfile，继续采用",
+            )
         findings = version_upgrade.check_dockerfile(candidate, task.version)
         script = payload.get("test_script")
         repaired_script: str | None = None
@@ -426,14 +464,34 @@ def run(
         f"{task.app}: repair {branch} failures={len(evidence['failures'])} "
         f"logs={len(evidence['logs'])}",
     )
-    repaired_dockerfile, repaired_test = _repair_files(
-        repo_dir=repo_dir,
-        task=task,
-        dockerfile_text=dockerfile_text,
-        test_script_text=test_script_text,
-        evidence=evidence,
-        instructions=instructions,
-    )
+
+    # 修复也在容器里做：把版本目录复制成 staging 构建上下文，Agent 在其中
+    # 复现失败指令并当场修，和 CI 失败修复链路同一套做法。
+    root = session_dir(repo_dir, task.app, task.version, task.os_version, "repair")
+    staging = root / "context"
+    shutil.copytree(dockerfile_path.parent, staging)
+    session = {
+        "staging": staging,
+        "container": container_name(f"{task.app}-repair"),
+        "output_dockerfile": root / "final-Dockerfile",
+        "build_log": root / "build-log.md",
+        "arch": "x86_64",
+    }
+    label = build_runner.activate_docker_shim(DOCKER_SHIM_DIR)
+    try:
+        repaired_dockerfile, repaired_test = _repair_files(
+            repo_dir=repo_dir,
+            task=task,
+            dockerfile_text=dockerfile_text,
+            test_script_text=test_script_text,
+            evidence=evidence,
+            instructions=instructions,
+            session=session,
+        )
+    finally:
+        build_runner.docker_rm(str(session["container"]))
+        build_runner.docker_rm_by_label(label)
+        build_runner.docker_rm_images_by_label(label)
 
     repaired_dockerfile = version_upgrade.ensure_repo_cache_cleaned(
         repaired_dockerfile

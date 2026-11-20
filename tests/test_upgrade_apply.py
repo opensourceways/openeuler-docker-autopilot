@@ -130,6 +130,14 @@ class GenerateDockerfileTest(unittest.TestCase):
                 mock.patch.object(
                     upgrade_apply.shutil, "which", return_value="/usr/bin/opencode"
                 ),
+                mock.patch.object(
+                    upgrade_apply.build_runner, "activate_docker_shim", return_value=""
+                ),
+                mock.patch.object(upgrade_apply.build_runner, "docker_rm"),
+                mock.patch.object(upgrade_apply.build_runner, "docker_rm_by_label"),
+                mock.patch.object(
+                    upgrade_apply.build_runner, "docker_rm_images_by_label"
+                ),
             ):
                 dockerfile = upgrade_apply._generate_dockerfile(
                     repo_dir=app.parent.parent,
@@ -141,7 +149,58 @@ class GenerateDockerfileTest(unittest.TestCase):
 
         self.assertEqual(captured["role"], "upgrade_creator")
         self.assertIn("kp.l1.release_artifact", captured["prompt"])
+        self.assertIn("Container build verification", captured["prompt"])
+        self.assertIn("docker exec", captured["prompt"])
         self.assertIn("ARG VERSION=2.17.0", dockerfile)
+
+    def test_dockerfile_written_by_agent_survives_a_timeout(self) -> None:
+        """Agent 超时不等于零产出：容器里落盘的 Dockerfile 优先于退出码。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(Path(tmp))
+            plan = version_upgrade.plan_upgrade(app)
+            item = {"version": "2.17.0", "source_url": "https://example.com"}
+            fixed = (
+                "FROM openeuler/openeuler:24.03-lts-sp4\n"
+                "ARG VERSION=2.17.0\n"
+            )
+            session_root = Path(tmp) / "session"
+
+            def fake_session_dir(*args, **kwargs):
+                session_root.mkdir(parents=True, exist_ok=True)
+                return session_root
+
+            def fake_run_agent(**kwargs):
+                (session_root / "final-Dockerfile").write_text(
+                    fixed, encoding="utf-8"
+                )
+                raise TimeoutError("agent budget exhausted")
+
+            with (
+                mock.patch.object(upgrade_apply, "run_agent", fake_run_agent),
+                mock.patch.object(upgrade_apply, "session_dir", fake_session_dir),
+                mock.patch.object(upgrade_apply, "_reset_workspace"),
+                mock.patch.object(upgrade_apply.ai_provider, "api_key", return_value="k"),
+                mock.patch.object(
+                    upgrade_apply.shutil, "which", return_value="/usr/bin/opencode"
+                ),
+                mock.patch.object(
+                    upgrade_apply.build_runner, "activate_docker_shim", return_value=""
+                ),
+                mock.patch.object(upgrade_apply.build_runner, "docker_rm"),
+                mock.patch.object(upgrade_apply.build_runner, "docker_rm_by_label"),
+                mock.patch.object(
+                    upgrade_apply.build_runner, "docker_rm_images_by_label"
+                ),
+            ):
+                dockerfile = upgrade_apply._generate_dockerfile(
+                    repo_dir=app.parent.parent,
+                    app="kvrocks",
+                    domain="Database",
+                    plan=plan,
+                    item=item,
+                )
+
+        self.assertEqual(dockerfile.strip(), fixed.strip())
 
 
 if __name__ == "__main__":

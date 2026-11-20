@@ -5,7 +5,9 @@ Stage: 场景二单应用升级（upgrade_apply）
 在目标仓完整克隆上，对一个应用执行：
 
 1. 切出升级分支 ``auto/version-update/<app>/<ver>-<oe_tag>``；
-2. AI 结合看板证据包与上游源码生成新版本 Dockerfile（**不做版本串机械替换**）；
+2. AI 结合看板证据包与上游源码生成新版本 Dockerfile（**不做版本串机械替换**），
+   并在真实容器里逐条重放、失败当场修，返回「实际跑通」的版本
+   （与 CI 失败修复链路的 dockerfile-builder 同一套做法）；
 3. 若该应用缺功能测试脚本，复用场景四的 ``generate_test_script`` 生成
    ``tests/test.sh``（**只写工作树，不提交、不建 PR**）；生成失败不阻断升级；
 4. 确定性复制目录 + 写入 AI 生成的 Dockerfile + README/doc 版本更新 +
@@ -31,7 +33,7 @@ from pathlib import Path
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
-from scripts.lib import ai_provider, upstream_evidence, version_upgrade  # noqa: E402
+from scripts.lib import ai_provider, build_runner, upstream_evidence, version_upgrade  # noqa: E402
 from scripts.lib.agent_runtime import run_agent  # noqa: E402
 from scripts.lib.stage_common import (  # noqa: E402
     agent_prompt_file,
@@ -48,8 +50,12 @@ DOCKERFILE_AGENT_ROLE = "upgrade_creator"
 DOCKERFILE_REQUIRED_KEYS = ("success", "dockerfile", "summary")
 # 首次生成 + 最多 1 轮按校验问题重写。
 MAX_DOCKERFILE_ROUNDS = 2
-# prepare job 还要补测试与推送，单轮生成不能占满整个 job 预算。
-DOCKERFILE_AGENT_TIMEOUT_SECONDS = 1800
+# 生成与容器重放放在同一个 Agent 调用里：研究上游 + 起容器逐条跑通 + 当场修。
+# CI 修复链路给单轮 240 分钟，这里留 90 分钟给 Agent，prepare job 总预算 240 分钟。
+DOCKERFILE_AGENT_TIMEOUT_SECONDS = 5400
+
+# docker 包装脚本目录：给本 run 的容器自动打 run 唯一标签，便于并发安全清理
+DOCKER_SHIM_DIR = os.path.join(PROJECT_ROOT, "scripts", "lib", "docker_shim")
 
 
 def _env(name: str, default: str = "") -> str:
@@ -132,6 +138,7 @@ def build_dockerfile_prompt(
     item: dict,
     old_dockerfile: str,
     findings: list[str] | None = None,
+    session: dict | None = None,
 ) -> str:
     """组装升级 Dockerfile 生成提示：角色规则 + 任务契约 + 旧文件 + 证据包。"""
     prompt = Path(agent_prompt_file("upgrade-creator")).read_text(encoding="utf-8")
@@ -161,6 +168,13 @@ def build_dockerfile_prompt(
         + "\n```\n"
     )
     prompt += "\n\n" + upstream_evidence.render_prompt(evidence).strip() + "\n"
+    if session:
+        prompt += container_verification_section(
+            staging=Path(session["staging"]),
+            container=str(session["container"]),
+            output_dockerfile=Path(session["output_dockerfile"]),
+            build_log=Path(session["build_log"]),
+        )
     if findings:
         prompt += (
             "\n## Validation report to resolve\n\n"
@@ -179,9 +193,118 @@ def build_dockerfile_prompt(
 
 
 def _reset_workspace(repo_dir: Path) -> None:
-    """清掉 Agent 可能写下的改动；Dockerfile 只通过 JSON 返回。"""
+    """清掉 Agent 可能写下的改动；Dockerfile 只通过 JSON/落盘文件返回。"""
     _git(repo_dir, "checkout", "--", ".", check=False)
     _git(repo_dir, "clean", "-fd", check=False)
+
+
+def container_name(app: str) -> str:
+    """本应用本轮构建容器的确定性名字（清理用）。"""
+    name = re.sub(r"[^a-z0-9_.-]", "-", app.lower())
+    run_id = _env("GITHUB_RUN_ID")
+    if run_id:
+        name += f"-{run_id}"
+        attempt = _env("GITHUB_RUN_ATTEMPT")
+        if attempt:
+            name += f"-{attempt}"
+    return f"oe-upgrade-{name}"
+
+
+def session_dir(
+    repo_dir: Path, app: str, version: str, os_version: str, kind: str
+) -> Path:
+    """Agent 的构建暂存目录。
+
+    放在 ``<repo>/.oe-scratch`` 下：``run_agent`` 会把该目录写进 .git/info/exclude，
+    因此 Agent 在里面写候选 Dockerfile、``git clean -fd`` 都不会污染提交。
+    """
+    root = (
+        repo_dir / ".oe-scratch" / f"upgrade-{kind}"
+        / f"{app}-{version}-{os_version}"
+    )
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def read_agent_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def container_verification_section(
+    *,
+    staging: Path,
+    container: str,
+    output_dockerfile: Path,
+    build_log: Path,
+    arch: str = "x86_64",
+    mode: str = "generate",
+) -> str:
+    """生成/修复共用的「起容器逐条重放、失败当场修」规则。
+
+    取自 CI 失败修复链路的做法（dockerfile-builder）：把 Dockerfile 指令在活的
+    容器里按顺序执行，成功的安装不会重跑，失败的那条就地修，最后反推出真实跑通
+    的 Dockerfile。生成阶段先做这一步，验证阶段就只剩确定性构建，成功率显著更高。
+    """
+    if mode == "repair":
+        lead = (
+            "修复不能只改文本：必须把修复后的 Dockerfile 在容器里重放到通过，"
+            "再返回最终版本。若失败证据来自运行期（`tests/test.sh`、启动就绪），"
+            "还要实际启动镜像执行测试来复现与验证。"
+        )
+        arch_note = (
+            f"当前 runner 架构是 `{arch}`；若失败证据来自另一架构，修复必须架构中立"
+            "或加架构守卫（如 `if [ \"$(uname -m)\" = \"x86_64\" ]`），不能破坏另一架构。\n"
+        )
+    else:
+        lead = (
+            "生成候选 Dockerfile 只是第一步，必须在真实容器里把它逐条跑通、"
+            "失败当场修，再返回最终版本。"
+        )
+        arch_note = (
+            f"当前 runner 架构是 `{arch}`（另一架构由后续验证阶段把关）；"
+            "Dockerfile 必须保持双架构同源，不要硬编码架构。\n"
+        )
+    return (
+        "\n## Container build verification (mandatory)\n\n"
+        + lead
+        + "\n\n"
+        + arch_note
+        + f"""
+- 构建上下文（staging，已含该版本目录副本与全部 COPY 源文件）：`{staging}`
+- 先把候选/修复后的 Dockerfile 写到 `{staging}/Dockerfile`，再按它重放
+- 容器名：`{container}`（同名容器已存在时先 `docker rm -f {container}`）
+- 最终 Dockerfile 落盘：`{output_dockerfile}`（纯文本，无代码围栏）
+- 构建日志落盘：`{build_log}`（markdown）
+
+步骤：
+
+1. `docker pull <FROM 镜像>`，然后
+   `docker run -d --name {container} <FROM 镜像> sleep infinity`。
+2. 按顺序逐条重放：
+   - `ENV K=V` → `docker exec {container} sh -c 'export K=V'`（记入环境变量清单）
+   - `WORKDIR d` → `docker exec {container} mkdir -p d`
+   - `RUN cmd` → `docker exec -w <workdir> {container} sh -c 'cmd'`
+   - `COPY src dst` → `docker cp {staging}/src {container}:dst`
+   - 多阶段构建：每个 `FROM` 起一个容器（`{container}-stageN`）；`COPY --from=<stage>`
+     用 `docker cp` 从对应容器复制；`COPY --from=<外部镜像>` 可跳过并记录。
+3. 某条命令失败：读错误 → 定位根因 → 在容器里执行修复命令（装依赖、换 URL、
+   调参数）→ 重跑原命令直到成功。把「原命令 + 修复命令 + 原因」记入构建日志。
+4. **每修好一处就立即覆盖写一次 `{output_dockerfile}`**，再继续往下重放；
+   不要攒到最后——任何时刻中断都要留下可用产物。
+5. 尽力而为：`docker build -f {staging}/Dockerfile {staging}` 自检。预算不足时
+   不要死磕，落盘最佳版本并在 `summary` 里写明「未完成从零自检」。
+6. 收尾时 `docker rm -f` 清理你起的容器。
+7. 最终 JSON 的 `dockerfile` 必须与 `{output_dockerfile}` 内容一致。
+
+环境说明：openEuler 的 `[update-source]` 仓库元数据 404 是已知环境问题，harness
+会在每个 `FROM` 后注入清缓存并写 `skip_if_unavailable=True` 的 RUN；
+不要为了 404 修改仓库配置或下载源。
+"""
+    )
 
 
 def _generate_dockerfile(
@@ -192,7 +315,11 @@ def _generate_dockerfile(
     plan: version_upgrade.UpgradePlan,
     item: dict,
 ) -> str:
-    """让 AI 结合证据包生成新版本 Dockerfile；失败即终止，不回落机械替换。"""
+    """让 AI 生成新版本 Dockerfile，并在容器里逐条跑通、失败当场修。
+
+    与 CI 失败修复链路同构：生成与修复在同一次 Agent 调用里完成，
+    产物以「容器里实际跑通的那份」为准；验证阶段只做确定性构建。
+    """
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
     if not api_key or not executable:
@@ -201,48 +328,98 @@ def _generate_dockerfile(
             "（场景二禁止机械替换版本串）"
         )
 
+    new_version = str(item["version"])
     old_dockerfile = (plan.src_dir / "Dockerfile").read_text(encoding="utf-8")
+    base_img = build_runner.base_image(old_dockerfile) or "(unknown)"
+    container = container_name(app)
+    label = build_runner.activate_docker_shim(DOCKER_SHIM_DIR)
     findings: list[str] = []
-    for round_no in range(MAX_DOCKERFILE_ROUNDS):
-        prompt = build_dockerfile_prompt(
-            app=app,
-            domain=domain,
-            plan=plan,
-            item=item,
-            old_dockerfile=old_dockerfile,
-            findings=findings or None,
-        )
-        log_stage(
-            "upgrade-apply",
-            f"{app}: dockerfile agent round {round_no + 1}",
-        )
-        try:
-            result = run_agent(
-                executable=Path(executable),
-                role=DOCKERFILE_AGENT_ROLE,
-                prompt=prompt,
-                workspace=repo_dir,
-                api_key=api_key,
-                required_keys=DOCKERFILE_REQUIRED_KEYS,
-                timeout=DOCKERFILE_AGENT_TIMEOUT_SECONDS,
+    try:
+        for round_no in range(MAX_DOCKERFILE_ROUNDS):
+            root = session_dir(
+                repo_dir, app, new_version, plan.os_version, "build"
             )
-        finally:
-            _reset_workspace(repo_dir)
+            staging = root / "context"
+            shutil.copytree(plan.src_dir, staging)
+            output_dockerfile = root / "final-Dockerfile"
+            build_log = root / "build-log.md"
 
-        payload = result.payload
-        if not bool(payload.get("success")):
-            findings = [str(payload.get("error") or "Agent 报告生成失败")]
-        else:
-            candidate = payload.get("dockerfile")
-            if not isinstance(candidate, str) or not candidate.strip():
-                findings = ["Agent 未返回非空的 dockerfile 字符串"]
-            else:
-                findings = version_upgrade.check_dockerfile(
-                    candidate, str(item["version"])
+            prompt = build_dockerfile_prompt(
+                app=app,
+                domain=domain,
+                plan=plan,
+                item=item,
+                old_dockerfile=old_dockerfile,
+                findings=findings or None,
+                session={
+                    "staging": staging,
+                    "container": container,
+                    "output_dockerfile": output_dockerfile,
+                    "build_log": build_log,
+                },
+            )
+            log_stage(
+                "upgrade-apply",
+                f"{app}: dockerfile agent round {round_no + 1} "
+                f"(generate + container replay, base={base_img})",
+            )
+
+            agent_error: Exception | None = None
+            result = None
+            try:
+                result = run_agent(
+                    executable=Path(executable),
+                    role=DOCKERFILE_AGENT_ROLE,
+                    prompt=prompt,
+                    workspace=repo_dir,
+                    api_key=api_key,
+                    required_keys=DOCKERFILE_REQUIRED_KEYS,
+                    timeout=DOCKERFILE_AGENT_TIMEOUT_SECONDS,
                 )
-                if not findings:
-                    return candidate
-        log_stage("upgrade-apply", f"{app}: dockerfile findings={findings}")
+            except Exception as error:  # noqa: BLE001 - 见下：产物优先于退出码
+                # 超时/契约失败不等于一无所获：Agent 被要求每修好一处就落盘，
+                # 只要文件在，就继续用它，确定性验证阶段会兜底。
+                agent_error = error
+                log_stage(
+                    "upgrade-apply",
+                    f"{app}: agent 异常 {type(error).__name__}: {error}",
+                )
+            finally:
+                # 必须在 _reset_workspace 之前读：暂存目录虽被 git exclude，
+                # 但产物读取不应依赖这一点。
+                written = read_agent_file(output_dockerfile)
+                _reset_workspace(repo_dir)
+
+            payload = result.payload if result is not None else {}
+            candidate = written
+            if not candidate:
+                candidate = payload.get("dockerfile")
+                if not isinstance(candidate, str):
+                    candidate = ""
+            if not candidate.strip():
+                if agent_error is not None:
+                    findings = [
+                        f"Agent 异常且未落盘 Dockerfile："
+                        f"{type(agent_error).__name__}: {agent_error}"
+                    ]
+                else:
+                    findings = ["Agent 未返回非空的 dockerfile 字符串"]
+                log_stage("upgrade-apply", f"{app}: findings={findings}")
+                continue
+
+            if agent_error is not None:
+                log_stage(
+                    "upgrade-apply",
+                    f"{app}: agent 未正常结束，但容器内已落盘 Dockerfile，继续采用",
+                )
+            findings = version_upgrade.check_dockerfile(candidate, new_version)
+            if not findings:
+                return candidate
+            log_stage("upgrade-apply", f"{app}: dockerfile findings={findings}")
+    finally:
+        build_runner.docker_rm(container)
+        build_runner.docker_rm_by_label(label)
+        build_runner.docker_rm_images_by_label(label)
 
     raise version_upgrade.UpgradeError(
         f"{app}: AI 生成的 Dockerfile 未通过校验：{'；'.join(findings)}"

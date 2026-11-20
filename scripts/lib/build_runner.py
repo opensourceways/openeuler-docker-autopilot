@@ -15,6 +15,7 @@ Docker CLI 封装（依赖宿主机 docker，供 stage 脚本调用）：
 """
 
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import List, Optional
@@ -104,6 +105,46 @@ def render_diff(original: str, final: str, path: str = 'Dockerfile') -> str:
 
 def container_name(pr_number: int, arch: str) -> str:
     return f'ci-fix-{pr_number}-{arch}'
+
+
+def run_label(prefix: str = 'oe.upgrade') -> str:
+    """本 run 的容器标签；无 run 上下文（本地执行）时返回空。"""
+    label = os.environ.get('OE_CI_FIX_LABEL', '').strip()
+    if label:
+        return label
+    run_id = os.environ.get('GITHUB_RUN_ID', '').strip()
+    if not run_id:
+        return ''
+    attempt = os.environ.get('GITHUB_RUN_ATTEMPT', '').strip() or '1'
+    return f'{prefix}={run_id}-{attempt}'
+
+
+def activate_docker_shim(shim_dir: str) -> str:
+    """把 docker 包装脚本前置到 PATH，并注入本 run 的标签。
+
+    Agent 自建的容器/镜像名字不可控（如 `<name>-final`），按标签清理才能精确
+    命中本 run、不误伤同一台机器上并发运行的其他 job。没有 run 上下文或 shim
+    缺失时返回空，行为退化为不按标签清理。
+    """
+    label = run_label()
+    if not label:
+        return ''
+    shim = os.path.join(shim_dir, 'docker')
+    if not os.path.isfile(shim):
+        return ''
+    real = shutil.which('docker')
+    if not real:
+        return ''
+    try:
+        os.chmod(shim, 0o755)
+    except OSError:
+        pass
+    os.environ['OE_CI_FIX_LABEL'] = label
+    os.environ['OE_DOCKER_REAL_BIN'] = real
+    if shim_dir not in os.environ.get('PATH', '').split(os.pathsep):
+        os.environ['PATH'] = shim_dir + os.pathsep + os.environ.get('PATH', '')
+    return label
+
 
 
 def docker_rm(name: str) -> None:

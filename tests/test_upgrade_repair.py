@@ -108,6 +108,36 @@ class RepairPromptTest(unittest.TestCase):
         self.assertIn('"test_script"', prompt)
         self.assertIn("Final response contract", prompt)
 
+    def test_prompt_requires_in_container_replay(self) -> None:
+        task = TaskSpec(
+            app="demo",
+            version="1.2.3",
+            os_version="24.03-lts-sp4",
+            domain="Database",
+            source_url="https://github.com/acme/demo",
+            scenario="version-update",
+        )
+        prompt = upgrade_repair.build_repair_prompt(
+            task=task,
+            dockerfile_text="FROM openeuler/openeuler:24.03-lts-sp4\n",
+            test_script_text="",
+            evidence={"reports": [], "failures": [], "logs": []},
+            instructions="",
+            session={
+                "staging": Path("/tmp/session/context"),
+                "container": "oe-upgrade-demo",
+                "output_dockerfile": Path("/tmp/session/final-Dockerfile"),
+                "build_log": Path("/tmp/session/build-log.md"),
+                "arch": "x86_64",
+            },
+        )
+
+        self.assertIn("Container build verification", prompt)
+        self.assertIn("oe-upgrade-demo", prompt)
+        self.assertIn("docker exec", prompt)
+        # 修复轮在 x86_64 上跑，但失败证据可能来自 arm64
+        self.assertIn("架构中立", prompt)
+
 
 class TestScriptCheckTest(unittest.TestCase):
     def test_script_without_shebang_is_rejected(self) -> None:

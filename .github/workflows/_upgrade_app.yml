@@ -72,6 +72,9 @@ env:
   PYTHONUNBUFFERED: "1"
   TARGET_REPO: openeuler/openeuler-docker-images
   TARGET_BRANCH: master
+  # 生成/修复阶段会在容器里逐条重放 Dockerfile：给本 run 的容器与镜像打标签，
+  # 便于收尾按标签清理，且不会误伤同一台机器上并发运行的其他 job。
+  OE_CI_FIX_LABEL: oe.upgrade=${{ github.run_id }}-${{ github.run_attempt }}
   AI_RUNNER: ${{ vars.AI_RUNNER || 'opencode' }}
   AI_MODEL: ${{ vars.AI_MODEL || 'gateway/deepseek-v4-pro' }}
   AI_PROVIDER_ID: ${{ vars.AI_PROVIDER_ID || 'gateway' }}
@@ -90,7 +93,8 @@ jobs:
           format('Repair {0} (from run {1})', inputs.app, inputs.repair_run_id) ||
           format('Prepare {0} -> {1}', inputs.app, inputs.version) }}
     runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
-    timeout-minutes: 120
+    # 生成 + 容器内逐条重放 + 当场修 放在一个 job 里，预算与 CI 修复链路对齐。
+    timeout-minutes: 240
     outputs:
       branch: ${{ steps.apply.outputs.branch || steps.repair.outputs.branch }}
       test_status: ${{ steps.apply.outputs.test_status || steps.repair.outputs.test_status }}
@@ -197,6 +201,19 @@ jobs:
         with:
           name: upgrade-task-${{ inputs.app }}-${{ github.run_id }}
           path: ${{ runner.temp }}/task-spec.json
+
+      # Agent 可能自建名字不可控的容器/镜像，按 run 标签清理。
+      - name: Cleanup run containers and images
+        if: always()
+        run: |
+          ids=$(docker ps -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
+          if [ -n "${ids}" ]; then
+            docker rm -f ${ids} || true
+          fi
+          imgs=$(docker images -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
+          if [ -n "${imgs}" ]; then
+            docker image rm -f ${imgs} || true
+          fi
 
   validate-x86_64:
     name: "Validate x86_64"
