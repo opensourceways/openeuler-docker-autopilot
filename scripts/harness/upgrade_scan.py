@@ -46,6 +46,7 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.harness import testgen_scan  # noqa: E402
+from scripts.lib import app_notes  # noqa: E402
 from scripts.lib.stage_common import log_stage  # noqa: E402
 from scripts.lib.task_spec import _os_tag  # noqa: E402
 
@@ -158,6 +159,19 @@ def _find_repo_app(repo_dir: Path, app_filter: str) -> dict:
             f"{[(m['domain'], m['app']) for m in matches]}"
         )
     return matches[0]
+
+
+def _timeout_fields(app: str) -> dict:
+    """把注意点文档里的预算带进矩阵，供 workflow 的 job timeout 使用。"""
+    notes = app_notes.load(app)
+    if notes is None:
+        return {}
+    fields: dict[str, int] = {}
+    if notes.build_timeout_minutes:
+        fields["build_timeout_minutes"] = notes.build_timeout_minutes
+    if notes.prepare_timeout_minutes:
+        fields["prepare_timeout_minutes"] = notes.prepare_timeout_minutes
+    return fields
 
 
 def _manual_evidence(
@@ -356,6 +370,7 @@ def find_updates(
                     if entry.get("build_notes")
                     else {}
                 ),
+                **_timeout_fields(app),
             }
         )
         if limit and len(updates) >= limit:

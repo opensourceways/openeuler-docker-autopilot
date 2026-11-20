@@ -39,7 +39,12 @@ import yaml
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
-from scripts.lib import ai_provider, upstream_evidence, version_upgrade  # noqa: E402
+from scripts.lib import (  # noqa: E402
+    ai_provider,
+    app_notes,
+    upstream_evidence,
+    version_upgrade,
+)
 from scripts.lib.agent_runtime import run_agent  # noqa: E402
 from scripts.lib.ci_gitcode_api import (  # noqa: E402
     create_pull_request,
@@ -438,6 +443,7 @@ def build_prompt(context: dict, findings: list[dict]) -> str:
             + "\n```\n"
         )
     parts.append("\n\n" + upstream_evidence.render_prompt(context["evidence"]))
+    parts.append(app_notes.render_prompt(app_notes.load(context["app"])))
     parts.append(
         "\n\n## Final response contract\n\n"
         "最终响应必须恰好是一个 JSON 对象，包含以下键："
@@ -572,6 +578,7 @@ def build_fix_prompt(
             + "\n```\n"
         )
     parts.append("\n\n" + upstream_evidence.render_prompt(context["evidence"]))
+    parts.append(app_notes.render_prompt(app_notes.load(context["app"])))
     parts.append(
         "\n\n## Final response contract\n\n"
         "最终响应必须恰好是一个 JSON 对象，包含以下键："

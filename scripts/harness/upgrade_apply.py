@@ -33,7 +33,13 @@ from pathlib import Path
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
-from scripts.lib import ai_provider, build_runner, upstream_evidence, version_upgrade  # noqa: E402
+from scripts.lib import (  # noqa: E402
+    ai_provider,
+    app_notes,
+    build_runner,
+    upstream_evidence,
+    version_upgrade,
+)
 from scripts.lib.agent_runtime import run_agent  # noqa: E402
 from scripts.lib.stage_common import (  # noqa: E402
     agent_prompt_file,
@@ -51,8 +57,7 @@ DOCKERFILE_REQUIRED_KEYS = ("success", "dockerfile", "summary")
 # 首次生成 + 最多 1 轮按校验问题重写。
 MAX_DOCKERFILE_ROUNDS = 2
 # 生成与容器重放放在同一个 Agent 调用里：研究上游 + 起容器逐条跑通 + 当场修。
-# CI 修复链路给单轮 240 分钟，这里留 90 分钟给 Agent，prepare job 总预算 240 分钟。
-DOCKERFILE_AGENT_TIMEOUT_SECONDS = 5400
+# 默认预算 90 分钟（见 app_notes），单个应用可在 config/app-notes/<app>.md 调整。
 
 # docker 包装脚本目录：给本 run 的容器自动打 run 唯一标签，便于并发安全清理
 DOCKER_SHIM_DIR = os.path.join(PROJECT_ROOT, "scripts", "lib", "docker_shim")
@@ -139,6 +144,7 @@ def build_dockerfile_prompt(
     old_dockerfile: str,
     findings: list[str] | None = None,
     session: dict | None = None,
+    notes: app_notes.AppNotes | None = None,
 ) -> str:
     """组装升级 Dockerfile 生成提示：角色规则 + 任务契约 + 旧文件 + 证据包。"""
     prompt = Path(agent_prompt_file("upgrade-creator")).read_text(encoding="utf-8")
@@ -168,6 +174,7 @@ def build_dockerfile_prompt(
         + "\n```\n"
     )
     prompt += "\n\n" + upstream_evidence.render_prompt(evidence).strip() + "\n"
+    prompt += app_notes.render_prompt(notes)
     if session:
         prompt += container_verification_section(
             staging=Path(session["staging"]),
@@ -331,6 +338,13 @@ def _generate_dockerfile(
     new_version = str(item["version"])
     old_dockerfile = (plan.src_dir / "Dockerfile").read_text(encoding="utf-8")
     base_img = build_runner.base_image(old_dockerfile) or "(unknown)"
+    notes = app_notes.load(app)
+    agent_timeout = app_notes.generate_timeout_seconds(notes)
+    if notes is not None and notes.generate_timeout_minutes:
+        log_stage(
+            "upgrade-apply",
+            f"{app}: 注意点文档覆盖生成预算 {notes.generate_timeout_minutes} 分钟",
+        )
     container = container_name(app)
     label = build_runner.activate_docker_shim(DOCKER_SHIM_DIR)
     findings: list[str] = []
@@ -357,6 +371,7 @@ def _generate_dockerfile(
                     "output_dockerfile": output_dockerfile,
                     "build_log": build_log,
                 },
+                notes=notes,
             )
             log_stage(
                 "upgrade-apply",
@@ -374,7 +389,7 @@ def _generate_dockerfile(
                     workspace=repo_dir,
                     api_key=api_key,
                     required_keys=DOCKERFILE_REQUIRED_KEYS,
-                    timeout=DOCKERFILE_AGENT_TIMEOUT_SECONDS,
+                    timeout=agent_timeout,
                 )
             except Exception as error:  # noqa: BLE001 - 见下：产物优先于退出码
                 # 超时/契约失败不等于一无所获：Agent 被要求每修好一处就落盘，

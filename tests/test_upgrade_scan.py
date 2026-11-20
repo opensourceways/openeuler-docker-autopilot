@@ -155,6 +155,25 @@ class FindUpdatesTest(unittest.TestCase):
         # 没填时不写空字段，避免污染 prepare 的任务契约
         self.assertNotIn("build_notes", self._scan()["updates"][0])
 
+    def test_app_notes_timeouts_are_carried_into_the_update_item(self) -> None:
+        from unittest import mock
+
+        from scripts.lib import app_notes
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "kvrocks.md").write_text(
+                "---\napp: kvrocks\nbuild_timeout_minutes: 300\n"
+                "generate_timeout_minutes: 120\n---\n# kvrocks\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(app_notes, "NOTES_DIR", Path(tmp)):
+                result = self._scan()
+
+        item = result["updates"][0]
+        self.assertEqual(item["build_timeout_minutes"], 300)
+        # prepare = build + 60（或 generate + 60 的较大值）
+        self.assertEqual(item["prepare_timeout_minutes"], 360)
+
     def test_placeholder_version_is_skipped(self) -> None:
         result = self._scan("Undefined")
         self.assertEqual(result["updates"], [])

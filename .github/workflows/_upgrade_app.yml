@@ -55,6 +55,20 @@ on:
         required: false
         default: '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]'
         type: string
+      build_timeout_minutes:
+        description: >-
+          单架构原生验证预算（分钟）。upgrade_scan 会从
+          config/app-notes/<app>.md 的 build_timeout_minutes 带入。
+        required: false
+        default: '180'
+        type: string
+      prepare_timeout_minutes:
+        description: >-
+          生成/修复 job 预算（分钟）。upgrade_scan 会从
+          config/app-notes/<app>.md 的 prepare_timeout_minutes 带入。
+        required: false
+        default: '240'
+        type: string
     secrets:
       GITCODE_TOKEN:
         required: true
@@ -93,8 +107,8 @@ jobs:
           format('Repair {0} (from run {1})', inputs.app, inputs.repair_run_id) ||
           format('Prepare {0} -> {1}', inputs.app, inputs.version) }}
     runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
-    # 生成 + 容器内逐条重放 + 当场修 放在一个 job 里，预算与 CI 修复链路对齐。
-    timeout-minutes: 240
+    # 生成 + 容器内逐条重放 + 当场修 放在一个 job 里；预算按应用注意点文档调整。
+    timeout-minutes: ${{ fromJSON(inputs.prepare_timeout_minutes) }}
     outputs:
       branch: ${{ steps.apply.outputs.branch || steps.repair.outputs.branch }}
       test_status: ${{ steps.apply.outputs.test_status || steps.repair.outputs.test_status }}
@@ -219,7 +233,7 @@ jobs:
     name: "Validate x86_64"
     needs: prepare
     runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
-    timeout-minutes: 180
+    timeout-minutes: ${{ fromJSON(inputs.build_timeout_minutes) }}
     steps:
       - name: Check out workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -279,7 +293,7 @@ jobs:
     name: "Validate aarch64"
     needs: prepare
     runs-on: ${{ fromJSON(inputs.arm64_runner_labels) }}
-    timeout-minutes: 180
+    timeout-minutes: ${{ fromJSON(inputs.build_timeout_minutes) }}
     steps:
       - name: Check out workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

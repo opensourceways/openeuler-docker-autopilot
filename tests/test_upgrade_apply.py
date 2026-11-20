@@ -97,6 +97,32 @@ class DockerfilePromptTest(unittest.TestCase):
         )
         self.assertIn('"build_notes": "build the kernel module"', prompt)
 
+    def test_prompt_carries_the_app_notes_document(self) -> None:
+        from scripts.lib import app_notes
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "kvrocks.md").write_text(
+                "---\napp: kvrocks\n---\n# kvrocks\n\n先确认下载 URL。\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(app_notes, "NOTES_DIR", Path(tmp)):
+                notes = app_notes.load("kvrocks")
+        prompt = upgrade_apply.build_dockerfile_prompt(
+            app="kvrocks",
+            domain="Database",
+            plan=version_upgrade.UpgradePlan(
+                old_version="2.16.0",
+                os_version="24.03-lts-sp4",
+                src_dir=Path("/tmp/Database/kvrocks/2.16.0/24.03-lts-sp4"),
+            ),
+            item={"version": "2.17.0", "source_url": "https://example.com"},
+            old_dockerfile="FROM openeuler/openeuler:24.03-lts-sp4\n",
+            notes=notes,
+        )
+
+        self.assertIn("## App upgrade notes", prompt)
+        self.assertIn("先确认下载 URL", prompt)
+
 
 class GenerateDockerfileTest(unittest.TestCase):
     def test_agent_gets_the_evidence_and_its_output_is_used(self) -> None:

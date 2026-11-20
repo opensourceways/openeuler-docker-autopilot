@@ -45,7 +45,12 @@ from scripts.harness.upgrade_apply import (  # noqa: E402
     read_agent_file,
     session_dir,
 )
-from scripts.lib import ai_provider, build_runner, version_upgrade  # noqa: E402
+from scripts.lib import (  # noqa: E402
+    ai_provider,
+    app_notes,
+    build_runner,
+    version_upgrade,
+)
 from scripts.lib.agent_runtime import run_agent  # noqa: E402
 from scripts.lib.stage_common import (  # noqa: E402
     agent_prompt_file,
@@ -62,8 +67,7 @@ REPAIR_AGENT_ROLE = "upgrade_creator"
 REPAIR_REQUIRED_KEYS = ("success", "dockerfile", "summary")
 # 修复通常只有一轮；留一轮用于消化确定性校验问题。
 MAX_REPAIR_ROUNDS = 2
-# 修复同样要在容器里复现并跑通失败指令，与生成阶段共用 90 分钟预算。
-REPAIR_AGENT_TIMEOUT_SECONDS = 5400
+# 修复同样要在容器里复现并跑通失败指令；默认 90 分钟，可按应用覆盖（app_notes）。
 
 _LOG_TAIL_LIMIT = 4000
 _LOG_ENTRY_LIMIT = 12
@@ -176,6 +180,7 @@ def build_repair_prompt(
     instructions: str,
     findings: list[str] | None = None,
     session: dict | None = None,
+    notes: app_notes.AppNotes | None = None,
 ) -> str:
     """组装修复提示：角色规则 + 分支现状 + 失败证据 + 人工说明。"""
     prompt = Path(agent_prompt_file("upgrade-creator")).read_text(encoding="utf-8")
@@ -213,6 +218,7 @@ def build_repair_prompt(
         )
     else:
         prompt += "\n## Current tests/test.sh on the upgrade branch\n\n（该分支没有 tests/test.sh）\n"
+    prompt += app_notes.render_prompt(notes)
     prompt += (
         "\n## Validation evidence from the failed run\n\n"
         + json.dumps(
@@ -310,6 +316,14 @@ def _repair_files(
         )
 
     output_dockerfile = Path(session["output_dockerfile"])
+    notes = app_notes.load(task.app)
+    agent_timeout = app_notes.generate_timeout_seconds(notes)
+    if notes is not None and notes.generate_timeout_minutes:
+        log_stage(
+            "upgrade-repair",
+            f"{task.app}: 注意点文档覆盖修复预算 "
+            f"{notes.generate_timeout_minutes} 分钟",
+        )
     findings: list[str] = []
     for round_no in range(MAX_REPAIR_ROUNDS):
         prompt = build_repair_prompt(
@@ -320,6 +334,7 @@ def _repair_files(
             instructions=instructions,
             findings=findings or None,
             session=session,
+            notes=notes,
         )
         log_stage("upgrade-repair", f"{task.app}: repair agent round {round_no + 1}")
         agent_error: Exception | None = None
@@ -332,7 +347,7 @@ def _repair_files(
                 workspace=repo_dir,
                 api_key=api_key,
                 required_keys=REPAIR_REQUIRED_KEYS,
-                timeout=REPAIR_AGENT_TIMEOUT_SECONDS,
+                timeout=agent_timeout,
             )
         except Exception as error:  # noqa: BLE001 - 落盘产物优先于退出码
             agent_error = error

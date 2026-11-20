@@ -24,6 +24,10 @@ import urllib.request
 from pathlib import Path
 from typing import Iterable, Mapping
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from scripts.lib import app_notes  # noqa: E402
+
 _JOB_NAME = re.compile(r"^Upgrade (?P<app>[^/]+?) / (?P<step>.+)$")
 # 目标仓目录名：不允许空格与斜杠，避免拼进 artifact 名称/路径时产生歧义。
 _APP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -48,12 +52,18 @@ def select_failed_apps(jobs: Iterable[Mapping[str, object]]) -> list[str]:
     return sorted(apps)
 
 
-def build_matrix(apps: Iterable[str], instructions: str) -> dict[str, list[dict[str, str]]]:
-    return {
-        "include": [
-            {"app": app, "instructions": instructions} for app in sorted(apps)
-        ]
-    }
+def build_matrix(apps: Iterable[str], instructions: str) -> dict[str, list[dict[str, object]]]:
+    include: list[dict[str, object]] = []
+    for app in sorted(apps):
+        entry: dict[str, object] = {"app": app, "instructions": instructions}
+        notes = app_notes.load(app)
+        if notes is not None:
+            if notes.build_timeout_minutes:
+                entry["build_timeout_minutes"] = notes.build_timeout_minutes
+            if notes.prepare_timeout_minutes:
+                entry["prepare_timeout_minutes"] = notes.prepare_timeout_minutes
+        include.append(entry)
+    return {"include": include}
 
 
 def fetch_jobs(*, repo: str, run_id: str, token: str) -> list[dict[str, object]]:

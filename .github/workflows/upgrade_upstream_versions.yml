@@ -172,6 +172,8 @@ jobs:
       arm64_runner_labels: >-
         ${{ inputs.arm64_runner_labels || vars.UPGRADE_ARM64_RUNNER_LABELS ||
             '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]' }}
+      build_timeout_minutes: ${{ matrix.item.build_timeout_minutes || '180' }}
+      prepare_timeout_minutes: ${{ matrix.item.prepare_timeout_minutes || '240' }}
 
   # ── 自动修复：只挑验证失败的应用，在原分支上修一轮 ─────────────────
   plan-repairs:
@@ -231,6 +233,8 @@ jobs:
       arm64_runner_labels: >-
         ${{ inputs.arm64_runner_labels || vars.UPGRADE_ARM64_RUNNER_LABELS ||
             '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]' }}
+      build_timeout_minutes: ${{ matrix.build_timeout_minutes || '180' }}
+      prepare_timeout_minutes: ${{ matrix.prepare_timeout_minutes || '240' }}
 
   # ── 审计并修复：已是最新版本也不跳过，AI 检查后提 PR ──────────────
   audit:
