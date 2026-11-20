@@ -125,14 +125,19 @@ def load_apps(path: str | Path | None = None) -> list[dict]:
 
 
 def _select_apps(apps: list[dict], app_filter: str) -> list[dict]:
+    """按名称筛选；支持逗号分隔一次重跑多个应用。"""
     if not app_filter:
         return apps
-    key = testgen_scan.normalize_name(app_filter)
+    keys = {
+        testgen_scan.normalize_name(part)
+        for part in app_filter.split(",")
+        if part.strip()
+    }
     return [
         entry
         for entry in apps
-        if key
-        in {
+        if keys
+        & {
             testgen_scan.normalize_name(entry["app"]),
             testgen_scan.normalize_name(entry["name"]),
         }
@@ -218,6 +223,10 @@ def find_updates(
     # 手动指定但不在清单里的应用：只按目标仓定位。
     ad_hoc = bool(app_filter) and not entries
     if ad_hoc:
+        if "," in app_filter:
+            raise SystemExit(
+                "逗号分隔多应用只支持软件清单里的应用；清单外的应用请单独指定"
+            )
         if not forced_version:
             raise SystemExit(
                 f"{app_filter}: 不在软件清单里，手动升级必须同时指定 --version"
@@ -385,7 +394,10 @@ def main() -> int:
     parser.add_argument(
         "--app",
         default="",
-        help="只处理这一个应用（可不在软件清单里，此时需配合 --version）",
+        help=(
+            "只处理这些应用（逗号分隔可一次指定多个）；"
+            "不在清单里时必须配合 --version 且只能指定一个"
+        ),
     )
     parser.add_argument("--version", default="", help="手动指定目标版本（配合 --app）")
     parser.add_argument(

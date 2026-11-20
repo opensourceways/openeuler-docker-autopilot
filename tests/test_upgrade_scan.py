@@ -101,6 +101,20 @@ class FindUpdatesTest(unittest.TestCase):
         )
         self.assertEqual(len(result["updates"]), 1)
 
+    def test_comma_separated_filter_selects_multiple_apps(self) -> None:
+        _make_app(self.repo, "Database", "redis", versions=("2.16.0",))
+        apps = [
+            _entry("2.17.0"),
+            _entry("2.17.0", name="redis", app="redis"),
+            _entry("2.17.0", name="other", app="other"),
+        ]
+        result = self._scan(app_filter="kvrocks, redis", apps=apps)
+
+        self.assertEqual(
+            sorted(item["app"] for item in result["updates"]),
+            ["kvrocks", "redis"],
+        )
+
     def test_existing_version_becomes_an_audit(self) -> None:
         result = self._scan("v2.16.0")
         self.assertEqual(result["updates"], [])

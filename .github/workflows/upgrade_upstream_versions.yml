@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       app:
-        description: '只升级这一个应用（留空 = 全量扫描）'
+        description: '只升级这些应用（逗号分隔可多个；留空 = 全量扫描）'
         required: false
         type: string
       version:
