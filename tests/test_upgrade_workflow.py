@@ -178,6 +178,8 @@ def test_audit_app_validates_both_arches_before_the_fix_pr():
 
     for name in ('validate-x86_64', 'validate-aarch64'):
         assert jobs[name]['needs'] == 'fix'
+        # 只要审计改动了 Dockerfile / image-info / 补了 test.sh，就必须跑双架构校验
+        assert "needs.fix.outputs.has_changes == 'true'" in _squash(jobs[name]['if'])
         text = _squash(jobs[name]['steps'])
         assert 'phase1-native-validate' in text
         assert 'task-spec' in text
@@ -188,7 +190,10 @@ def test_audit_app_validates_both_arches_before_the_fix_pr():
     assert 'ARM64' in arm64_labels
 
     deliver = jobs['deliver']
+    # 两个架构都成功、且确实有改动，才允许开 PR
     assert deliver['needs'] == ['fix', 'validate-x86_64', 'validate-aarch64']
-    assert 'success()' in _squash(deliver['if'])
+    deliver_if = _squash(deliver['if'])
+    assert 'success()' in deliver_if
+    assert "needs.fix.outputs.has_changes == 'true'" in deliver_if
     assert '--open-pr' in _squash(deliver['steps'])
     assert '--delivery' in _squash(deliver['steps'])
