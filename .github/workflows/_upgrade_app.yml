@@ -287,7 +287,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" -c \
-            "import json,os,sys; p=os.environ['REPORT']; r=json.load(open(p)) if os.path.isfile(p) else {'status':'missing'}; s=r.get('status'); print(s); app=os.environ.get('APP',''); fl=[str(x.get('failure') or '') for x in (r.get('failures') or [])]; print('::error::'+(app+' x86_64 validation '+str(s)+': '+'; '.join(fl[:3])+'. 修复：运行 Repair upgrade branch 工作流，source_run_id='+os.environ.get('RUN_ID','')+'，app='+app)) if s!='passed' else None; sys.exit(0 if s=='passed' else 1)"
+            "import json,os,sys; p=os.environ['REPORT']; r=json.load(open(p)) if os.path.isfile(p) else {'status':'missing'}; s=r.get('status'); print(s); app=os.environ.get('APP',''); fl=[str(x.get('failure') or '').replace(chr(10),' | ') for x in (r.get('failures') or [])]; print('::error::'+(app+' x86_64 validation '+str(s)+': '+'; '.join(fl[:3])+'. 修复：运行 Repair upgrade branch 工作流，source_run_id='+os.environ.get('RUN_ID','')+'，app='+app)) if s!='passed' else None; sys.exit(0 if s=='passed' else 1)"
 
   validate-aarch64:
     name: "Validate aarch64"
@@ -345,7 +345,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" -c \
-            "import json,os,sys; p=os.environ['REPORT']; r=json.load(open(p)) if os.path.isfile(p) else {'status':'missing'}; s=r.get('status'); print(s); app=os.environ.get('APP',''); fl=[str(x.get('failure') or '') for x in (r.get('failures') or [])]; print('::error::'+(app+' aarch64 validation '+str(s)+': '+'; '.join(fl[:3])+'. 修复：运行 Repair upgrade branch 工作流，source_run_id='+os.environ.get('RUN_ID','')+'，app='+app)) if s!='passed' else None; sys.exit(0 if s=='passed' else 1)"
+            "import json,os,sys; p=os.environ['REPORT']; r=json.load(open(p)) if os.path.isfile(p) else {'status':'missing'}; s=r.get('status'); print(s); app=os.environ.get('APP',''); fl=[str(x.get('failure') or '').replace(chr(10),' | ') for x in (r.get('failures') or [])]; print('::error::'+(app+' aarch64 validation '+str(s)+': '+'; '.join(fl[:3])+'. 修复：运行 Repair upgrade branch 工作流，source_run_id='+os.environ.get('RUN_ID','')+'，app='+app)) if s!='passed' else None; sys.exit(0 if s=='passed' else 1)"
 
   open-pr:
     name: "Open PR for ${{ inputs.app }}"

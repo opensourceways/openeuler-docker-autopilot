@@ -1,4 +1,4 @@
-import json
+﻿import json
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -1039,7 +1039,7 @@ def test_native_validation_reports_only_build_and_runtime_test(tmp_path):
         "runtime_test": True,
     }
     runtime_evidence = report["container_evidence"][
-        "oe-e2e-123456-x86-64-runtime"
+        "oe-e2e-123456-kvrocks-x86-64-runtime"
     ]
     assert runtime_evidence["probe"] == (
         "wait_status=RUNNING_NO_PROBE carrier=default"
@@ -1161,7 +1161,7 @@ def test_native_validation_reports_each_runtime_substage_failure(tmp_path):
         failure["check"] == "runtime_test" for failure in report["failures"]
     )
     runtime_evidence = report["container_evidence"][
-        "oe-e2e-123456-x86-64-runtime"
+        "oe-e2e-123456-kvrocks-x86-64-runtime"
     ]
     assert runtime_evidence["readiness_mode"] == "health"
     assert runtime_evidence["has_healthcheck"] is True
@@ -1193,8 +1193,8 @@ def test_native_validation_failure_cleans_only_owned_resources(tmp_path):
         "runtime_test": None,
     }
     commands = [" ".join(command) for command in runner.calls]
-    assert "docker rm --force oe-e2e-123456-aarch64-runtime" in commands
-    assert "docker rm --force oe-e2e-123456-aarch64-runtime-test" in commands
+    assert "docker rm --force oe-e2e-123456-kvrocks-aarch64-runtime" in commands
+    assert "docker rm --force oe-e2e-123456-kvrocks-aarch64-runtime-test" in commands
     assert any(command.startswith("docker image rm --force") for command in commands)
     assert not any("system prune" in command for command in commands)
     assert not any(command.startswith("docker buildx rm") for command in commands)
@@ -1429,7 +1429,7 @@ def test_runtime_failure_captures_state_logs_and_probe_before_cleanup(tmp_path):
     assert "application refused to start" in combined
     assert "cannot bind 0.0.0.0:6666" in combined
     assert "ClassNotFoundException" in combined
-    runtime = "oe-e2e-123456-x86-64-runtime"
+    runtime = "oe-e2e-123456-kvrocks-x86-64-runtime"
     probe_path = report_path.parent / evidence[runtime]["full_probe"]["path"]
     assert "ClassNotFoundException" in probe_path.read_text()
     logs_at = next(
@@ -1437,10 +1437,13 @@ def test_runtime_failure_captures_state_logs_and_probe_before_cleanup(tmp_path):
         for index, command in enumerate(runner.calls)
         if command[:2] == ["docker", "logs"]
     )
+    # 开头会先清理上一轮残留的同名容器，这里要的是读完证据之后再清理。
     cleanup_at = next(
         index
         for index, command in enumerate(runner.calls)
-        if command[:3] == ["docker", "rm", "--force"]
+        if index > logs_at
+        and command[:3] == ["docker", "rm", "--force"]
+        and command[3] == runtime
     )
     assert logs_at < cleanup_at
 
@@ -1450,7 +1453,7 @@ def test_runtime_failure_saves_complete_logs_but_reports_bounded_summary(tmp_pat
     runner = _failing_runtime_runner(container_logs=container_logs)
     report_path, report = _run_expected_runtime_failure(tmp_path, runner)
 
-    evidence = report["container_evidence"]["oe-e2e-123456-x86-64-runtime"]
+    evidence = report["container_evidence"]["oe-e2e-123456-kvrocks-x86-64-runtime"]
     metadata = evidence["full_logs"]
     saved = report_path.parent / metadata["path"]
     assert saved.read_text() == container_logs
@@ -1478,7 +1481,7 @@ def test_runtime_failure_marks_timed_out_log_capture_incomplete(tmp_path):
     )
 
     metadata = report["container_evidence"][
-        "oe-e2e-123456-x86-64-runtime"
+        "oe-e2e-123456-kvrocks-x86-64-runtime"
     ]["full_logs"]
     assert metadata["capture_status"] == "timeout"
     assert set(metadata) == {"path", "size_bytes", "capture_status"}
@@ -1507,7 +1510,7 @@ def test_evidence_capture_failure_does_not_replace_runtime_report(
     assert report["failed_stage"] == "wait_healthcheck"
     assert report["container_evidence"] == {
         "capture_error": "diagnostics unavailable",
-        "oe-e2e-123456-x86-64-runtime": {
+        "oe-e2e-123456-kvrocks-x86-64-runtime": {
             "readiness_mode": "health",
             "has_healthcheck": True,
         },
@@ -1852,3 +1855,13 @@ def test_native_smoke_does_not_accept_waiter_crash_as_expected_timeout(tmp_path)
             repair_report_dir=tmp_path / "repairs",
             runner=CrashedWaiterRunner(),
         )
+
+
+def test_docker_slug_sanitizes_versions_and_app_names():
+    from scripts.lib.native_validation import _docker_slug
+
+    # openjdk 28+24：`+` 不是合法 docker tag 字符，否则构建前就报 invalid reference format
+    assert _docker_slug("28+24") == "28-24"
+    assert _docker_slug("2.12.0") == "2.12.0"
+    assert _docker_slug("llama.cpp") == "llama.cpp"
+    assert _docker_slug("") == "app"

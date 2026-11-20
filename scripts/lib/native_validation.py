@@ -575,6 +575,16 @@ def validated_patch_digest(workspace: Path) -> str:
     return hashlib.sha256(completed.stdout).hexdigest()
 
 
+def _docker_slug(value: str) -> str:
+    """Docker 容器名/镜像标签允许的字符集；其余字符替换为 '-'。
+
+    版本号里可能出现 `+`（openjdk `28+24`），直接拼进 docker tag 会得到
+    `invalid reference format`，与镜像本身是否正确无关。
+    """
+    slug = re.sub(r"[^A-Za-z0-9_.-]", "-", str(value or "")).strip("-")
+    return slug or "app"
+
+
 def _builder_name(kind: str, run_id: str, architecture: str) -> str:
     return f"oe-{kind}-{run_id}-{architecture.replace('_', '-')}-builder"
 
@@ -1209,11 +1219,16 @@ def validate_native_image(
 
     platform = _PLATFORMS[architecture]
     slug = architecture.replace("_", "-")
-    prefix = f"oe-e2e-{run_id}-{slug}"
-    builder = f"{prefix}-builder"
+    # builder 仍按 run+架构共享（跨应用复用层缓存）；容器必须带上应用名：
+    # 同一台机器上可能同时跑两个 runner，同名容器会互相冲突。
+    builder = f"oe-e2e-{run_id}-{slug}-builder"
+    prefix = f"oe-e2e-{run_id}-{_docker_slug(task.app)}-{slug}"
     container = f"{prefix}-runtime"
     test_container = f"{prefix}-runtime-test"
-    image = f"oe-autopilot/{task.app}:{task.version}-{run_id}-{slug}"
+    image = (
+        f"oe-autopilot/{_docker_slug(task.app).lower()}:"
+        f"{_docker_slug(task.version)}-{run_id}-{slug}"
+    )
     validated_patch_sha256 = validated_patch_digest(workspace)
     image_id = ""
     native_build_evidence: dict[str, object] = {}
@@ -1224,6 +1239,16 @@ def validate_native_image(
     checks: dict[str, bool | None] = {name: None for name in _E2E_CHECKS}
     stage = f"native:{architecture}"
     log(stage, "START validation")
+    # 上一轮 job 超时不会执行 finally 里的清理；自托管 runner 共享 docker daemon，
+    # 残留的同名容器会让本轮 docker create 直接报 name conflict。先按名字清掉。
+    for stale in (container, test_container):
+        _run(
+            runner,
+            ["docker", "rm", "--force", stale],
+            cwd=workspace,
+            timeout=120,
+            check=False,
+        )
 
     def record_failure(
         check: str,
