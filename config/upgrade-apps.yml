@@ -308,6 +308,9 @@ apps:
 - name: etcd
   app: etcd
   domain: Database
+  version: 3.7.4
+  tag: v3.7.4
+  source_url: https://github.com/etcd-io/etcd
 - name: InfluxDB
   app: influxdb
   domain: Database
@@ -1192,6 +1195,9 @@ apps:
 - name: Hiredis
   app: hiredis
   domain: Others
+  version: 1.5.1
+  tag: v1.5.1
+  source_url: https://github.com/redis/hiredis
 - name: hnswlib
   app: hnswlib
   domain: Others
@@ -1375,6 +1381,9 @@ apps:
 - name: PHP
   app: php
   domain: Others
+  version: 8.6.0
+  tag: php-8.6.0
+  source_url: https://github.com/php/php-src
 - name: pigz
   app: pigz
   domain: Others
@@ -1480,12 +1489,18 @@ apps:
 - name: Spring Boot
   app: spring-boot
   domain: Others
+  version: 4.2.0
+  tag: v4.2.0
+  source_url: https://github.com/spring-projects/spring-boot
 - name: Spring Cloud
   app: spring-cloud
   domain: Others
 - name: Spring Framework
   app: spring-framework
   domain: Others
+  version: 7.1.0
+  tag: v7.1.0
+  source_url: https://github.com/spring-projects/spring-framework
 - name: sundials
   app: sundials
   domain: Others
@@ -1495,6 +1510,9 @@ apps:
 - name: Swagger UI
   app: swagger-ui
   domain: Others
+  version: 5.35.1
+  tag: v5.35.1
+  source_url: https://github.com/swagger-api/swagger-ui
 - name: sysbench
   app: sysbench
   domain: Others
