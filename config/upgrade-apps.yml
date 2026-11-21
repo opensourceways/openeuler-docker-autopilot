@@ -319,6 +319,9 @@ apps:
 - name: InfluxDB
   app: influxdb
   domain: Database
+  version: 3.12.3
+  tag: v3.12.3
+  source_url: https://github.com/influxdata/influxdb
 - name: LevelDB
   app: leveldb
   domain: Database
