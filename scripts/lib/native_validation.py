@@ -54,7 +54,7 @@ def _build_timeout_seconds(app: str) -> int:
     预留 10 分钟给运行期测试与清理。
     """
     notes = app_notes.load(app)
-    if notes is None:
+    if notes is None or not notes.build_timeout_minutes:
         return 7200
     return max(7200, notes.build_timeout_minutes * 60 - 600)
 

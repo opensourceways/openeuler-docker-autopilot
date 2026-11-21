@@ -1872,5 +1872,7 @@ def test_build_timeout_follows_app_notes():
 
     # milvus 注意点文档写了 300 分钟：内部构建超时必须跟着放宽，否则会在 96% 被掐断
     assert _build_timeout_seconds("milvus") == 300 * 60 - 600
-    # 没有注意点文档的应用仍用默认 2 小时
+    # 文档存在但没写构建预算（openjdk 目前就是这样）时回落默认 2 小时
+    assert _build_timeout_seconds("openjdk") == 7200
+    # 没有注意点文档的应用也回落默认值
     assert _build_timeout_seconds("no-such-app-xyz") == 7200
