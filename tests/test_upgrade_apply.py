@@ -123,6 +123,21 @@ class DockerfilePromptTest(unittest.TestCase):
         self.assertIn("## App upgrade notes", prompt)
         self.assertIn("先确认下载 URL", prompt)
 
+    def test_replay_section_targets_the_second_architecture(self) -> None:
+        section = upgrade_apply.container_verification_section(
+            staging=Path("/tmp/context"),
+            container="oe-upgrade-demo-replay",
+            output_dockerfile=Path("/tmp/final-Dockerfile"),
+            build_log=Path("/tmp/build-log.md"),
+            arch="aarch64",
+            mode="replay",
+        )
+
+        self.assertIn("aarch64", section)
+        self.assertIn("x86_64 的容器里逐条重放通过", section)
+        self.assertIn("只修复与架构相关的问题", section)
+        self.assertIn("docker exec", section)
+
 
 class GenerateDockerfileTest(unittest.TestCase):
     def test_agent_gets_the_evidence_and_its_output_is_used(self) -> None:

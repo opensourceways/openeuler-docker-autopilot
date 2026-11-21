@@ -49,16 +49,44 @@ def _version_key(name: str) -> tuple:
     return tuple(key)
 
 
-def plan_upgrade(app_dir: Path) -> UpgradePlan:
-    """取该应用版本号最高、os 也最高的镜像目录作为复制源。"""
-    best: Path | None = None
-    best_key: tuple | None = None
-    for dockerfile in app_dir.glob("*/*/Dockerfile"):
-        key = (_version_key(dockerfile.parts[-3]), _version_key(dockerfile.parts[-2]))
-        if best is None or key > best_key:
-            best, best_key = dockerfile, key
-    if best is None:
+def _numeric_parts(name: str) -> tuple[int, ...] | None:
+    """纯数字版本（1.18.2 / 2026.11.16）转成可比较的 key；否则返回 None。"""
+    parts = [part for part in re.split(r"[.-]", str(name or "").strip().lstrip("vV")) if part]
+    if not parts or not all(part.isdigit() for part in parts):
+        return None
+    return tuple(int(part) for part in parts)
+
+
+def plan_upgrade(app_dir: Path, target_version: str = "") -> UpgradePlan:
+    """选取复制源：优先同一版本线上、低于目标版本的最高目录。
+
+    一个应用目录里可能同时存在多条版本线（例如 parquet 的 1.18.x 与 2.x
+    分别对应不同上游产品）。目标版本是纯数字时，不能直接复制目录里版本号
+    更高的另一条线，否则 README / doc 会被错误改写；此时只在严格低于目标
+    版本的目录里选最高者。没有可用候选时回退到原来的“最高版本”行为。
+    """
+    dockerfiles = list(app_dir.glob("*/*/Dockerfile"))
+    if not dockerfiles:
         raise UpgradeError(f"{app_dir.name}: 没有 */*/Dockerfile，无法规划升级")
+
+    target = _numeric_parts(target_version) if target_version else None
+    if target is not None:
+        candidates = [
+            dockerfile
+            for dockerfile in dockerfiles
+            if (parts := _numeric_parts(dockerfile.parts[-3])) is not None
+            and parts < target
+        ]
+        if candidates:
+            dockerfiles = candidates
+
+    best = max(
+        dockerfiles,
+        key=lambda dockerfile: (
+            _version_key(dockerfile.parts[-3]),
+            _version_key(dockerfile.parts[-2]),
+        ),
+    )
     return UpgradePlan(
         old_version=best.parts[-3],
         os_version=best.parts[-2],

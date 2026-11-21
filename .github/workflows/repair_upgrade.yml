@@ -4,7 +4,7 @@ name: Repair upgrade branch
 #
 #   失败的升级运行不会自动重跑；运维看过失败步骤后，用本工作流把
 #   「失败证据 + 人工说明」交给 AI，在**同一个升级分支**上修复
-#   Dockerfile / tests/test.sh，然后复用双架构原生验证与开 PR。
+#   Dockerfile / tests/test.sh，然后复用双架构容器重放、原生验证与开 PR。
 #
 # 不会重新生成分支，也不会重跑首次生成。source_run_id 填 Upgrade one app
 # 所属的父运行 ID（artifact 名称里的那个 run id）。

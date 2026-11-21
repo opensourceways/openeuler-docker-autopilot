@@ -266,13 +266,24 @@ def container_verification_section(
             f"当前 runner 架构是 `{arch}`；若失败证据来自另一架构，修复必须架构中立"
             "或加架构守卫（如 `if [ \"$(uname -m)\" = \"x86_64\" ]`），不能破坏另一架构。\n"
         )
+    elif mode == "replay":
+        lead = (
+            "这份候选 Dockerfile 已在 x86_64 的容器里逐条重放通过；本次是在 "
+            "aarch64 上对同一份文件再做一次完整重放。只修复与架构相关的问题"
+            "（包名、产物名、下载地址的架构差异、编译守卫、依赖可用性），"
+            "不要改版本、下载源或 x86_64 下已验证通过的步骤。"
+        )
+        arch_note = (
+            f"当前 runner 架构是 `{arch}`；必须在真实容器里逐条执行，不能只做文本修改。"
+            "重放通过后，后续仍会做双架构原生构建与功能测试。\n"
+        )
     else:
         lead = (
             "生成候选 Dockerfile 只是第一步，必须在真实容器里把它逐条跑通、"
             "失败当场修，再返回最终版本。"
         )
         arch_note = (
-            f"当前 runner 架构是 `{arch}`（另一架构由后续验证阶段把关）；"
+            f"当前 runner 架构是 `{arch}`（另一架构由后续 arm64 容器重放与原生验证把关）；"
             "Dockerfile 必须保持双架构同源，不要硬编码架构。\n"
         )
     return (
@@ -459,7 +470,7 @@ def run(item: dict, *, task_spec_out: Path) -> int:
     if not app_dir.is_dir():
         raise SystemExit(f"{app}: 目标仓里没有 {domain}/{app}")
 
-    plan = version_upgrade.plan_upgrade(app_dir)
+    plan = version_upgrade.plan_upgrade(app_dir, target_version=new_version)
     branch = f"auto/version-update/{app}/{new_version}-{_os_tag(plan.os_version)}"
     base_branch = _env("TARGET_BRANCH", DEFAULT_TARGET_BRANCH)
 

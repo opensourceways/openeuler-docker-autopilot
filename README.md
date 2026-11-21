@@ -391,6 +391,8 @@ create_new_images.yml  (operation = scenario_one)
 ```
 prepare            完整克隆目标仓 → AI 依证据生成 Dockerfile → 缺测试则补 tests/test.sh → 确定性落盘 → commit → 推分支
    ↓
+replay-aarch64     同一份 Dockerfile 在 arm64 容器里再完整重放一遍，修架构差异（无差异则不改分支）
+   ↓
 validate-x86_64    x86_64 原生构建 + 功能测试（flow.py phase1-native-validate）
 validate-aarch64   aarch64 原生构建 + 功能测试（与 x86 并行）
    ↓ 两者都通过
@@ -400,6 +402,7 @@ plan-repairs/repair 任一验证失败时自动挑出失败应用，在原分支
 ```
 
 - **Dockerfile 生成**（[`upgrade_apply.py`](scripts/harness/upgrade_apply.py)）：把旧版本 Dockerfile、清单提供的目标版本与上游地址（可选 tag）一起注入升级 Agent，参考上游源码重新生成完整 Dockerfile；**不做版本串机械替换**，生成结果缺目标版本号或 `FROM` 即失败。
+- **双架构容器重放**：生成阶段先在 x86_64 容器里把候选 Dockerfile 逐条跑通，随后在 arm64 Runner 上用同一份文件再做一次完整重放（[`upgrade_repair.py --mode replay`](scripts/harness/upgrade_repair.py)）；只修架构相关问题，没有差异时不产生空提交。
 - **确定性落盘**（[`version_upgrade.py`](scripts/lib/version_upgrade.py)）：把该应用最新的 `{old_version}/{os}/` 复制为 `{new_version}/{os}/`，写入 AI 生成的 Dockerfile，更新应用根目录 `README.md` / `doc/image-info.yml` 的版本号，并向 `meta.yml` 追加 `{new_version}-{oe_tag}` 条目。失败时清理半成品目录。
 - **补测试**（复用场景四）：应用没有 `tests/test.sh` 时调用 `testgen_generate.generate_test_script`，把上游证据作为额外上下文；生成失败**不阻断**升级，PR 正文标注「测试脚本待补」。
 - **双架构原生验证**：x86_64 / aarch64 各自真实构建并跑功能测试，不使用 QEMU；任一架构失败则不开 PR，证据留在 artifact，分支保留供自动/人工修复继续处理。
@@ -698,7 +701,7 @@ openeuler-docker-images-workflow/
 │   │   ├── create_new_images.yml            # ① 主编排（prepare → 4 轮 → 交付）
 │   │   ├── _create_new_image_rounds.yml     # ① 单轮验证-修复-决策组件
 │   │   ├── upgrade_upstream_versions.yml    # ② 应用自动升级主编排（手动；定时测试期关闭）
-│   │   ├── _upgrade_app.yml                 # ② 单应用升级组件（prepare → 双架构验证 → PR）
+│   │   ├── _upgrade_app.yml                 # ② 单应用升级组件（prepare → x64/arm64 容器重放 → 双架构验证 → PR）
 │   │   ├── generate_test_scripts.yml        # ④ 存量补功能测试（手动单应用）
 │   │   ├── monitor_ci_failed_prs.yml        # CI 修复组件：扫 ci_failed PR（仅手动）
 │   │   ├── ci_fix_pipeline.yml              # CI 修复组件入口薄壳（手动 / repository_dispatch）

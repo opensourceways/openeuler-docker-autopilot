@@ -80,12 +80,27 @@ def test_discover_uses_manual_versions_and_feeds_the_matrix():
 
 def test_each_app_runs_prepare_dual_arch_validation_then_pr():
     jobs = _workflow(APP)['jobs']
-    assert list(jobs) == ['prepare', 'validate-x86_64', 'validate-aarch64', 'open-pr']
+    assert list(jobs) == [
+        'prepare', 'replay-aarch64', 'validate-x86_64', 'validate-aarch64', 'open-pr'
+    ]
     assert _squash(jobs['validate-x86_64']['runs-on']) == '${{ fromJSON(inputs.x64_runner_labels) }}'
     assert _squash(jobs['validate-aarch64']['runs-on']) == '${{ fromJSON(inputs.arm64_runner_labels) }}'
     # arm64 的机器只能换机器，不能换架构
     arm64_labels = _trigger(_workflow(APP))['workflow_call']['inputs']['arm64_runner_labels']['default']
     assert 'ARM64' in arm64_labels
+
+    # 生成阶段的容器重放必须在两个架构上都跑：x64 prepare 之后再到 arm64 重放
+    replay = jobs['replay-aarch64']
+    assert replay['needs'] == 'prepare'
+    assert _squash(replay['runs-on']) == '${{ fromJSON(inputs.arm64_runner_labels) }}'
+    replay_text = _squash(replay['steps'])
+    assert 'upgrade_repair.py' in replay_text
+    assert '--mode replay' in replay_text
+    assert '--arch aarch64' in replay_text
+    # 重放可能推分支，必须完整克隆
+    assert '--depth' not in replay_text
+    for name in ('validate-x86_64', 'validate-aarch64'):
+        assert jobs[name]['needs'] == ['prepare', 'replay-aarch64']
 
     for name in ('validate-x86_64', 'validate-aarch64'):
         text = _squash(jobs[name]['steps'])
@@ -95,6 +110,9 @@ def test_each_app_runs_prepare_dual_arch_validation_then_pr():
         assert 'always()' in _squash(jobs[name])
         # continue-on-error 之后必须有显式断言，否则 open-pr 仍会执行
         assert 'Assert native validation passed' in text
+    assert jobs['open-pr']['needs'] == [
+        'prepare', 'replay-aarch64', 'validate-x86_64', 'validate-aarch64'
+    ]
     assert 'success()' in _squash(jobs['open-pr']['if'])
     assert 'upgrade_open_pr.py' in _squash(jobs['open-pr']['steps'])
 

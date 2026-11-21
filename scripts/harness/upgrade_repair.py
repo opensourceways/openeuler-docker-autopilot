@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stage: 场景二失败修复（upgrade_repair）
+Stage: 场景二失败修复 / 双架构重放（upgrade_repair）
 
 失败运行留下的分支不重新生成：本脚本只做
 
@@ -11,11 +11,17 @@ Stage: 场景二失败修复（upgrade_repair）
    完整文件（与生成阶段共用同一套容器验证流程）；
 4. 确定性校验后覆盖分支上的文件，提交并推回同一分支。
 
+``--mode replay --arch aarch64`` 是生成阶段的双架构重放：不依赖失败 evidence，
+只把分支上已有的 Dockerfile 在 arm64 容器里完整重放一遍，修掉架构相关问题；
+没有改动时正常退出、不产生空提交。
+
 分支不存在时直接报错——repair 只修复已有分支，不重新生成。
 
-输入: --task-spec（失败运行的 task-spec.json）
+输入: --task-spec（生成/失败运行的 task-spec.json）
       --evidence-dir（可重复；失败运行上传的 evidence 目录，缺失时按空处理）
       --instructions（人工给 AI 的修复说明，可为空）
+      --mode（repair=失败修复；replay=双架构重放，默认 repair）
+      --arch（x86_64 / aarch64；留空按当前 runner 自动识别）
       --task-spec-out
 环境: GITCODE_TOKEN, GITCODE_FORK_REPO(可选), SOURCE_REPO_DIR, TARGET_REPO,
       TARGET_BRANCH, GIT_COMMIT_NAME/EMAIL, AI_API_KEY, OPENCODE_BIN
@@ -25,6 +31,7 @@ Stage: 场景二失败修复（upgrade_repair）
 import argparse
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -72,6 +79,14 @@ MAX_REPAIR_ROUNDS = 2
 _LOG_TAIL_LIMIT = 4000
 _LOG_ENTRY_LIMIT = 12
 _DETAIL_LIMIT = 2000
+_SUPPORTED_ARCHES = ("x86_64", "aarch64")
+
+
+def _detect_arch() -> str:
+    """按 runner 架构选择重放/修复的容器架构。"""
+    machine = platform.machine().lower()
+    return "aarch64" if machine in {"aarch64", "arm64"} else "x86_64"
+
 
 
 def _redact(text: str) -> str:
@@ -181,11 +196,15 @@ def build_repair_prompt(
     findings: list[str] | None = None,
     session: dict | None = None,
     notes: app_notes.AppNotes | None = None,
+    mode: str = "repair",
+    arch: str = "x86_64",
 ) -> str:
-    """组装修复提示：角色规则 + 分支现状 + 失败证据 + 人工说明。"""
+    """组装修复/重放提示：角色规则 + 分支现状 + 失败证据 + 人工说明。"""
+    mode = (mode or "repair").strip().lower()
     prompt = Path(agent_prompt_file("upgrade-creator")).read_text(encoding="utf-8")
     contract = {
-        "mode": "repair",
+        "mode": mode,
+        "arch": arch,
         "app": task.app,
         "domain": task.domain,
         "version": task.version,
@@ -197,19 +216,36 @@ def build_repair_prompt(
         "source_url": task.source_url,
         "output_fields": ["dockerfile", "test_script"],
     }
-    reports = evidence.get("reports") or ["（未找到 evidence 报告）"]
-    prompt += (
-        "\n\n## Repair mode\n\n"
-        "这是对**已有升级分支**的失败修复，不是重新生成升级：禁止新建或切换分支，"
-        "禁止改动与失败无关的文件。\n"
-        "- `dockerfile` 必填，返回修复后的完整 Dockerfile 文本；\n"
-        "- 需要调整功能测试时返回修复后的完整 `tests/test.sh` 文本，否则 `test_script` 为 `null`。\n"
-        "\n## Immutable repair contract\n\n"
-        + json.dumps(contract, indent=2, ensure_ascii=False)
-        + "\n\n## Current Dockerfile on the upgrade branch\n\n```dockerfile\n"
-        + dockerfile_text.rstrip()
-        + "\n```\n"
-    )
+    if mode == "replay":
+        prompt += (
+            f"\n\n## Dual-arch replay mode ({arch})\n\n"
+            "生成阶段已在 x86_64 的容器里把这份 Dockerfile 逐条重放通过；本次不是"
+            "重新生成版本，也不是按失败证据修复，而是在当前架构上对同一份文件做"
+            "完整重放校验。\n"
+            "- 只修复架构相关问题（包名、产物名、下载地址的架构差异、编译守卫、"
+            "依赖可用性）；\n"
+            "- 不得改版本、下载源、ENTRYPOINT/CMD 语义，不得删功能来绕过失败；\n"
+            "- x86_64 下已经验证通过的步骤保持原样，必要时加架构守卫；\n"
+            "- 不需要改测试时 `test_script` 返回 `null`。\n"
+            "\n## Immutable replay contract\n\n"
+            + json.dumps(contract, indent=2, ensure_ascii=False)
+            + "\n\n## Current Dockerfile on the upgrade branch\n\n```dockerfile\n"
+            + dockerfile_text.rstrip()
+            + "\n```\n"
+        )
+    else:
+        prompt += (
+            "\n\n## Repair mode\n\n"
+            "这是对**已有升级分支**的失败修复，不是重新生成升级：禁止新建或切换分支，"
+            "禁止改动与失败无关的文件。\n"
+            "- `dockerfile` 必填，返回修复后的完整 Dockerfile 文本；\n"
+            "- 需要调整功能测试时返回修复后的完整 `tests/test.sh` 文本，否则 `test_script` 为 `null`。\n"
+            "\n## Immutable repair contract\n\n"
+            + json.dumps(contract, indent=2, ensure_ascii=False)
+            + "\n\n## Current Dockerfile on the upgrade branch\n\n```dockerfile\n"
+            + dockerfile_text.rstrip()
+            + "\n```\n"
+        )
     if test_script_text.strip():
         prompt += (
             "\n## Current tests/test.sh on the upgrade branch\n\n```bash\n"
@@ -219,30 +255,39 @@ def build_repair_prompt(
     else:
         prompt += "\n## Current tests/test.sh on the upgrade branch\n\n（该分支没有 tests/test.sh）\n"
     prompt += app_notes.render_prompt(notes)
-    prompt += (
-        "\n## Validation evidence from the failed run\n\n"
-        + json.dumps(
-            {
-                "reports": reports,
-                "failures": evidence.get("failures") or [],
-            },
-            indent=2,
-            ensure_ascii=False,
-        )
-        + "\n"
-    )
-    logs = evidence.get("logs") or []
-    if logs:
-        prompt += "\n## Diagnostic log tails\n"
-        for log in logs:
-            prompt += (
-                f"\n### {log.get('path')}\n\n```text\n"
-                + str(log.get("tail") or "").rstrip()
-                + "\n```\n"
+    if mode != "replay":
+        reports = evidence.get("reports") or ["（未找到 evidence 报告）"]
+        prompt += (
+            "\n## Validation evidence from the failed run\n\n"
+            + json.dumps(
+                {
+                    "reports": reports,
+                    "failures": evidence.get("failures") or [],
+                },
+                indent=2,
+                ensure_ascii=False,
             )
+            + "\n"
+        )
+        logs = evidence.get("logs") or []
+        if logs:
+            prompt += "\n## Diagnostic log tails\n"
+            for log in logs:
+                prompt += (
+                    f"\n### {log.get('path')}\n\n```text\n"
+                    + str(log.get("tail") or "").rstrip()
+                    + "\n```\n"
+                )
     prompt += (
         "\n## Operator instructions\n\n"
-        + (instructions.strip() or "（未提供；请按失败证据做最小修复）")
+        + (
+            instructions.strip()
+            or (
+                "（未提供；只做当前架构的重放校验，不改版本与功能）"
+                if mode == "replay"
+                else "（未提供；请按失败证据做最小修复）"
+            )
+        )
         + "\n"
     )
     if session:
@@ -251,9 +296,10 @@ def build_repair_prompt(
             container=str(session["container"]),
             output_dockerfile=Path(session["output_dockerfile"]),
             build_log=Path(session["build_log"]),
-            arch=str(session.get("arch") or "x86_64"),
-            mode="repair",
+            arch=arch,
+            mode="replay" if mode == "replay" else "repair",
         )
+
     if findings:
         prompt += (
             "\n## Findings to resolve\n\n"
@@ -306,6 +352,8 @@ def _repair_files(
     evidence: dict[str, object],
     instructions: str,
     session: dict,
+    mode: str = "repair",
+    arch: str = "x86_64",
 ) -> tuple[str, str | None]:
     """让 Agent 在容器里复现并修复失败指令；失败即终止，不静默保留原文件。"""
     api_key = ai_provider.api_key()
@@ -315,18 +363,19 @@ def _repair_files(
             f"{task.app}: 缺少 AI 凭证/opencode，无法执行修复"
         )
 
+    stage = "upgrade-replay" if mode == "replay" else "upgrade-repair"
     output_dockerfile = Path(session["output_dockerfile"])
     notes = app_notes.load(task.app)
     agent_timeout = app_notes.generate_timeout_seconds(notes)
     if notes is not None and notes.body:
         log_stage(
-            "upgrade-repair",
+            stage,
             f"{task.app}: 已加载注意点文档 config/app-notes/{notes.app}.md "
             f"({len(notes.body)} chars)",
         )
     if notes is not None and notes.generate_timeout_minutes:
         log_stage(
-            "upgrade-repair",
+            stage,
             f"{task.app}: 注意点文档覆盖修复预算 "
             f"{notes.generate_timeout_minutes} 分钟",
         )
@@ -341,8 +390,10 @@ def _repair_files(
             findings=findings or None,
             session=session,
             notes=notes,
+            mode=mode,
+            arch=arch,
         )
-        log_stage("upgrade-repair", f"{task.app}: repair agent round {round_no + 1}")
+        log_stage(stage, f"{task.app}: {mode} agent round {round_no + 1}")
         agent_error: Exception | None = None
         result = None
         try:
@@ -358,7 +409,7 @@ def _repair_files(
         except Exception as error:  # noqa: BLE001 - 落盘产物优先于退出码
             agent_error = error
             log_stage(
-                "upgrade-repair",
+                stage,
                 f"{task.app}: agent 异常 {type(error).__name__}: {error}",
             )
         finally:
@@ -377,11 +428,11 @@ def _repair_files(
                     else "Agent 未返回非空的 dockerfile 字符串"
                 )
             ]
-            log_stage("upgrade-repair", f"{task.app}: findings={findings}")
+            log_stage(stage, f"{task.app}: findings={findings}")
             continue
         if agent_error is not None:
             log_stage(
-                "upgrade-repair",
+                stage,
                 f"{task.app}: agent 未正常结束，但容器内已落盘 Dockerfile，继续采用",
             )
         findings = version_upgrade.check_dockerfile(candidate, task.version)
@@ -392,7 +443,7 @@ def _repair_files(
             repaired_script = script
         if not findings:
             return candidate, repaired_script
-        log_stage("upgrade-repair", f"{task.app}: findings={findings}")
+        log_stage(stage, f"{task.app}: findings={findings}")
 
     raise version_upgrade.UpgradeError(
         f"{task.app}: 修复未通过校验：{'；'.join(findings)}"
@@ -425,7 +476,17 @@ def run(
     instructions: str,
     task_spec_out: Path,
     branch_override: str = "",
+    mode: str = "repair",
+    arch: str = "",
 ) -> int:
+    mode = (mode or "repair").strip().lower()
+    if mode not in {"repair", "replay"}:
+        raise SystemExit(f"unsupported mode: {mode}")
+    arch = (arch or "").strip().lower() or _detect_arch()
+    if arch not in _SUPPORTED_ARCHES:
+        raise SystemExit(f"unsupported arch: {arch}")
+    stage = "upgrade-replay" if mode == "replay" else "upgrade-repair"
+
     raw = json.loads(Path(task_spec_path).read_text(encoding="utf-8"))
     task = TaskSpec.from_json(json.dumps(raw))
     evidence_payload = raw.get("evidence") or {}
@@ -481,22 +542,23 @@ def run(
 
     evidence = collect_evidence(evidence_dirs)
     log_stage(
-        "upgrade-repair",
-        f"{task.app}: repair {branch} failures={len(evidence['failures'])} "
-        f"logs={len(evidence['logs'])}",
+        stage,
+        f"{task.app}: {mode} {branch} arch={arch} "
+        f"failures={len(evidence['failures'])} logs={len(evidence['logs'])}",
     )
 
-    # 修复也在容器里做：把版本目录复制成 staging 构建上下文，Agent 在其中
+    # 修复/重放都在容器里做：把版本目录复制成 staging 构建上下文，Agent 在其中
     # 复现失败指令并当场修，和 CI 失败修复链路同一套做法。
-    root = session_dir(repo_dir, task.app, task.version, task.os_version, "repair")
+    kind = "replay" if mode == "replay" else "repair"
+    root = session_dir(repo_dir, task.app, task.version, task.os_version, kind)
     staging = root / "context"
     shutil.copytree(dockerfile_path.parent, staging)
     session = {
         "staging": staging,
-        "container": container_name(f"{task.app}-repair"),
+        "container": container_name(f"{task.app}-{kind}"),
         "output_dockerfile": root / "final-Dockerfile",
         "build_log": root / "build-log.md",
-        "arch": "x86_64",
+        "arch": arch,
     }
     label = build_runner.activate_docker_shim(DOCKER_SHIM_DIR)
     try:
@@ -508,6 +570,8 @@ def run(
             evidence=evidence,
             instructions=instructions,
             session=session,
+            mode=mode,
+            arch=arch,
         )
     finally:
         build_runner.docker_rm(str(session["container"]))
@@ -524,23 +588,33 @@ def run(
         test_path.chmod(0o755)
 
     _git(repo_dir, "add", "-A", app_rel)
-    if not _git(
-        repo_dir, "status", "--porcelain", "--", app_rel, check=False
-    ).stdout.strip():
-        raise SystemExit(f"{task.app}: 修复没有产生任何文件改动，未提交")
-
-    commit_name = _env("GIT_COMMIT_NAME", "github-actions[bot]")
-    commit_email = _env(
-        "GIT_COMMIT_EMAIL", "github-actions[bot]@users.noreply.github.com"
+    changed = bool(
+        _git(
+            repo_dir, "status", "--porcelain", "--", app_rel, check=False
+        ).stdout.strip()
     )
-    _git(
-        repo_dir,
-        "-c", f"user.name={commit_name}",
-        "-c", f"user.email={commit_email}",
-        "commit", "-m", f"fix: repair {task.app} {task.version} upgrade branch",
-    )
-    _git(repo_dir, "push", push_url, f"+refs/heads/{branch}:refs/heads/{branch}")
-    log_stage("upgrade-repair", f"{task.app}: pushed {branch} -> {push_repo}")
+    if not changed:
+        if mode != "replay":
+            raise SystemExit(f"{task.app}: 修复没有产生任何文件改动，未提交")
+        log_stage(stage, f"{task.app}: {arch} 重放未发现架构差异，无改动")
+    else:
+        commit_name = _env("GIT_COMMIT_NAME", "github-actions[bot]")
+        commit_email = _env(
+            "GIT_COMMIT_EMAIL", "github-actions[bot]@users.noreply.github.com"
+        )
+        message = (
+            f"fix: replay {task.app} {task.version} on {arch}"
+            if mode == "replay"
+            else f"fix: repair {task.app} {task.version} upgrade branch"
+        )
+        _git(
+            repo_dir,
+            "-c", f"user.name={commit_name}",
+            "-c", f"user.email={commit_email}",
+            "commit", "-m", message,
+        )
+        _git(repo_dir, "push", push_url, f"+refs/heads/{branch}:refs/heads/{branch}")
+        log_stage(stage, f"{task.app}: pushed {branch} -> {push_repo}")
 
     task_spec_out.parent.mkdir(parents=True, exist_ok=True)
     payload = json.loads(task.to_json())
@@ -555,24 +629,36 @@ def run(
         push_repo=push_repo,
         item_json=json.dumps(item, ensure_ascii=False, separators=(",", ":")),
     )
-    log_stage("upgrade-repair", f"{task.app}: done")
+    log_stage(stage, f"{task.app}: done mode={mode} arch={arch}")
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--task-spec", required=True, help="失败运行产出的 task-spec.json"
+        "--task-spec", required=True, help="生成/失败运行产出的 task-spec.json"
     )
     parser.add_argument(
         "--evidence-dir",
         action="append",
         default=[],
-        help="失败运行的 evidence 目录，可重复",
+        help="失败运行的 evidence 目录，可重复；replay 模式不需要",
     )
     parser.add_argument("--instructions", default="", help="人工给 AI 的修复说明")
     parser.add_argument(
         "--branch", default="", help="已有升级分支（留空按 task spec 推导）"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("repair", "replay"),
+        default="repair",
+        help="repair=失败修复；replay=生成后的双架构重放",
+    )
+    parser.add_argument(
+        "--arch",
+        choices=("", "x86_64", "aarch64"),
+        default="",
+        help="重放/修复使用的容器架构；留空按当前 runner 自动识别",
     )
     parser.add_argument(
         "--task-spec-out",
@@ -587,6 +673,8 @@ def main() -> int:
         instructions=args.instructions,
         task_spec_out=Path(args.task_spec_out),
         branch_override=args.branch,
+        mode=args.mode,
+        arch=args.arch,
     )
 
 

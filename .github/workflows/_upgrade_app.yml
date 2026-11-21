@@ -2,13 +2,14 @@ name: Upgrade one app
 
 # 场景二的单应用流水线（由 upgrade_upstream_versions.yml 按应用矩阵调用）：
 #   prepare（AI 依证据包生成 Dockerfile + 补测试 + 确定性元数据登记 + 推分支）
+#   → aarch64 容器重放（同一份 Dockerfile 在 arm64 上再完整跑一遍，修架构差异）
 #   → 双架构原生验证 → 跨仓 PR
 #
 # 一应用一 PR：任一架构验证失败则不开 PR，分支保留供人工/修复组件继续处理。
 #
 # repair 模式（由 repair_upgrade.yml 调用）：prepare 不重新生成分支，而是下载失败
 # 运行的 task-spec + 双架构 evidence，在已有分支上按失败证据与人工说明修复
-# Dockerfile / tests/test.sh，然后走同一套验证与开 PR。
+# Dockerfile / tests/test.sh，然后走同一套双架构重放、验证与开 PR。
 
 on:
   workflow_call:
@@ -229,9 +230,78 @@ jobs:
             docker image rm -f ${imgs} || true
           fi
 
+  # ── aarch64 容器重放：生成阶段在 x86_64 跑通后，同一份 Dockerfile 再在 arm64 上完整重放
+  replay-aarch64:
+    name: "Replay aarch64"
+    needs: prepare
+    if: ${{ needs.prepare.outputs.branch != '' }}
+    runs-on: ${{ fromJSON(inputs.arm64_runner_labels) }}
+    # 与 prepare 共用生成预算：arm64 重放也是一次完整的容器构建验证。
+    timeout-minutes: ${{ fromJSON(inputs.prepare_timeout_minutes) }}
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up tooling
+        id: tools
+        uses: ./.github/actions/phase1-setup
+        with:
+          arch: aarch64
+          preflight: "true"
+
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
+      - name: Download task spec
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: upgrade-task-${{ inputs.app }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/upgrade-task
+
+      - name: Clone upgrade branch
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          # 重放可能修正 Dockerfile 并推回同一分支，必须完整克隆。
+          git clone --branch "${{ needs.prepare.outputs.branch }}" \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${{ needs.prepare.outputs.push_repo }}.git" \
+            source-repo
+
+      - name: Replay Dockerfile on aarch64
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_FORK_REPO: ${{ vars.GITCODE_FORK_REPO }}
+          GIT_COMMIT_NAME: ${{ vars.GIT_COMMIT_NAME }}
+          GIT_COMMIT_EMAIL: ${{ vars.GIT_COMMIT_EMAIL }}
+          SOURCE_REPO_DIR: ${{ github.workspace }}/source-repo
+          OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
+          TASK_SPEC: ${{ runner.temp }}/upgrade-task/task-spec.json
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_repair.py \
+            --task-spec "$TASK_SPEC" \
+            --branch "$BRANCH" \
+            --mode replay \
+            --arch aarch64 \
+            --task-spec-out "${RUNNER_TEMP}/replay-task-spec.json"
+
+      - name: Cleanup run containers and images
+        if: always()
+        run: |
+          ids=$(docker ps -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
+          if [ -n "${ids}" ]; then
+            docker rm -f ${ids} || true
+          fi
+          imgs=$(docker images -aq --filter "label=${OE_CI_FIX_LABEL}" || true)
+          if [ -n "${imgs}" ]; then
+            docker image rm -f ${imgs} || true
+          fi
+
   validate-x86_64:
     name: "Validate x86_64"
-    needs: prepare
+    needs: [prepare, replay-aarch64]
     runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
     timeout-minutes: ${{ fromJSON(inputs.build_timeout_minutes) }}
     steps:
@@ -291,7 +361,7 @@ jobs:
 
   validate-aarch64:
     name: "Validate aarch64"
-    needs: prepare
+    needs: [prepare, replay-aarch64]
     runs-on: ${{ fromJSON(inputs.arm64_runner_labels) }}
     timeout-minutes: ${{ fromJSON(inputs.build_timeout_minutes) }}
     steps:
@@ -349,7 +419,7 @@ jobs:
 
   open-pr:
     name: "Open PR for ${{ inputs.app }}"
-    needs: [prepare, validate-x86_64, validate-aarch64]
+    needs: [prepare, replay-aarch64, validate-x86_64, validate-aarch64]
     if: ${{ success() }}
     runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
     timeout-minutes: 20

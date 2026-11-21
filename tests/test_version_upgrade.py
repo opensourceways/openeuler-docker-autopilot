@@ -64,6 +64,36 @@ class PlanUpgradeTest(unittest.TestCase):
             with pytest.raises(version_upgrade.UpgradeError):
                 version_upgrade.plan_upgrade(empty)
 
+    def test_prefers_the_same_version_line_below_the_target(self) -> None:
+        """parquet 这类多版本线应用：1.18.2 不能复制版本更高的 2.12.0。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            app = Path(tmp) / "Bigdata" / "parquet"
+            for version in ("1.18.1", "2.12.0"):
+                directory = app / version / "24.03-lts-sp4"
+                directory.mkdir(parents=True)
+                (directory / "Dockerfile").write_text(
+                    "FROM openeuler/openeuler:24.03-lts-sp4\n", encoding="utf-8"
+                )
+
+            plan = version_upgrade.plan_upgrade(app, target_version="1.18.2")
+
+            self.assertEqual(plan.old_version, "1.18.1")
+            self.assertEqual(plan.os_version, "24.03-lts-sp4")
+
+    def test_target_newer_than_all_versions_keeps_highest_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = Path(tmp) / "Bigdata" / "parquet"
+            for version in ("1.18.1", "2.12.0"):
+                directory = app / version / "24.03-lts-sp4"
+                directory.mkdir(parents=True)
+                (directory / "Dockerfile").write_text(
+                    "FROM openeuler/openeuler:24.03-lts-sp4\n", encoding="utf-8"
+                )
+
+            plan = version_upgrade.plan_upgrade(app, target_version="3.0.0")
+
+            self.assertEqual(plan.old_version, "2.12.0")
+
 
 class ApplyUpgradeTest(unittest.TestCase):
     def test_copies_tree_writes_generated_dockerfile_and_appends_meta(self) -> None:

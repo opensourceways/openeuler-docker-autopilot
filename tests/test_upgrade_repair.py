@@ -138,6 +138,40 @@ class RepairPromptTest(unittest.TestCase):
         # 修复轮在 x86_64 上跑，但失败证据可能来自 arm64
         self.assertIn("架构中立", prompt)
 
+    def test_replay_prompt_targets_aarch64_without_failure_evidence(self) -> None:
+        task = TaskSpec(
+            app="demo",
+            version="1.2.3",
+            os_version="24.03-lts-sp4",
+            domain="Database",
+            source_url="https://github.com/acme/demo",
+            scenario="version-update",
+        )
+        prompt = upgrade_repair.build_repair_prompt(
+            task=task,
+            dockerfile_text="FROM openeuler/openeuler:24.03-lts-sp4\n",
+            test_script_text="",
+            evidence={"reports": [], "failures": [], "logs": []},
+            instructions="",
+            session={
+                "staging": Path("/tmp/session/context"),
+                "container": "oe-upgrade-demo-replay",
+                "output_dockerfile": Path("/tmp/session/final-Dockerfile"),
+                "build_log": Path("/tmp/session/build-log.md"),
+                "arch": "aarch64",
+            },
+            mode="replay",
+            arch="aarch64",
+        )
+
+        # 重放模式不按失败证据修复，也不覆盖另一架构已验证的步骤
+        self.assertIn("Dual-arch replay mode (aarch64)", prompt)
+        self.assertIn("只修复架构相关问题", prompt)
+        self.assertIn("Container build verification", prompt)
+        self.assertIn("当前 runner 架构是 `aarch64`", prompt)
+        self.assertNotIn("## Repair mode", prompt)
+        self.assertNotIn("Validation evidence from the failed run", prompt)
+
 
 class TestScriptCheckTest(unittest.TestCase):
     def test_script_without_shebang_is_rejected(self) -> None:
