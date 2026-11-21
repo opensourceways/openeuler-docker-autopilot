@@ -41,6 +41,16 @@ on:
         required: false
         default: '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]'
         type: string
+      build_timeout_minutes:
+        description: '单架构构建/校验预算（分钟）；矩阵会用 config/app-notes 覆盖'
+        required: false
+        default: '180'
+        type: string
+      prepare_timeout_minutes:
+        description: '审计+修复+补测试预算（分钟）；矩阵会用 config/app-notes 覆盖'
+        required: false
+        default: '240'
+        type: string
     secrets:
       GITCODE_TOKEN:
         required: true
@@ -76,9 +86,8 @@ jobs:
   fix:
     name: "Audit and fix ${{ inputs.app }}"
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
-    # 审计 30 分钟 + 修复 30 分钟；缺 test.sh 时还会跑测试生成（最多 3 轮），
-    # 与升级链路的 prepare 预算保持一致。
-    timeout-minutes: 240
+    # 审计 + 修复 + 补测试；长构建应用的预算由 config/app-notes 经矩阵传入。
+    timeout-minutes: ${{ fromJSON(inputs.prepare_timeout_minutes) }}
     outputs:
       has_changes: ${{ steps.fix.outputs.has_changes }}
       branch: ${{ steps.fix.outputs.branch }}
@@ -134,7 +143,7 @@ jobs:
     needs: fix
     if: needs.fix.outputs.has_changes == 'true'
     runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
-    timeout-minutes: 180
+    timeout-minutes: ${{ fromJSON(inputs.build_timeout_minutes) }}
     steps:
       - name: Check out workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -191,7 +200,7 @@ jobs:
     needs: fix
     if: needs.fix.outputs.has_changes == 'true'
     runs-on: ${{ fromJSON(inputs.arm64_runner_labels) }}
-    timeout-minutes: 180
+    timeout-minutes: ${{ fromJSON(inputs.build_timeout_minutes) }}
     steps:
       - name: Check out workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -130,6 +130,24 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertFalse(audit["has_test_script"])
         self.assertIn("转入 AI 审计", audit["reason"])
 
+    def test_audit_item_carries_the_app_build_budget(self) -> None:
+        from unittest import mock
+
+        from scripts.lib import app_notes
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "kvrocks.md").write_text(
+                "---\napp: kvrocks\nbuild_timeout_minutes: 300\n"
+                "generate_timeout_minutes: 120\n---\n# kvrocks\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(app_notes, "NOTES_DIR", Path(tmp)):
+                result = self._scan("v2.16.0")
+
+        audit = result["audits"][0]
+        self.assertEqual(audit["build_timeout_minutes"], 300)
+        self.assertEqual(audit["prepare_timeout_minutes"], 360)
+
     def test_audit_limit_caps_the_audit_matrix(self) -> None:
         _make_app(self.repo, "Database", "redis", versions=("2.16.0",))
         result = self._scan(

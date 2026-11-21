@@ -71,6 +71,11 @@ def test_discover_uses_manual_versions_and_feeds_the_matrix():
     assert audit['strategy']['matrix']['item'] == \
         '${{ fromJSON(needs.discover.outputs.audits) }}'
     assert audit['with']['item'] == '${{ toJSON(matrix.item) }}'
+    # 审计链路同样按 config/app-notes 的预算跑修复与双架构校验
+    assert audit['with']['build_timeout_minutes'] == \
+        "${{ matrix.item.build_timeout_minutes || '180' }}"
+    assert audit['with']['prepare_timeout_minutes'] == \
+        "${{ matrix.item.prepare_timeout_minutes || '240' }}"
 
 
 def test_each_app_runs_prepare_dual_arch_validation_then_pr():
@@ -175,9 +180,14 @@ def test_audit_app_validates_both_arches_before_the_fix_pr():
     assert '--depth' not in fix_text
     assert 'upload-artifact' in fix_text
     assert set(jobs['fix']['outputs']) >= {'has_changes', 'branch', 'push_repo'}
+    # 长构建应用的预算来自 config/app-notes，经矩阵从上游 workflow 传入
+    assert jobs['fix']['timeout-minutes'] == \
+        '${{ fromJSON(inputs.prepare_timeout_minutes) }}'
 
     for name in ('validate-x86_64', 'validate-aarch64'):
         assert jobs[name]['needs'] == 'fix'
+        assert jobs[name]['timeout-minutes'] == \
+            '${{ fromJSON(inputs.build_timeout_minutes) }}'
         # 只要审计改动了 Dockerfile / image-info / 补了 test.sh，就必须跑双架构校验
         assert "needs.fix.outputs.has_changes == 'true'" in _squash(jobs[name]['if'])
         text = _squash(jobs[name]['steps'])

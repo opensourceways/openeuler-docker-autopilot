@@ -263,6 +263,8 @@ jobs:
       arm64_runner_labels: >-
         ${{ inputs.arm64_runner_labels || vars.UPGRADE_ARM64_RUNNER_LABELS ||
             '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]' }}
+      build_timeout_minutes: ${{ matrix.item.build_timeout_minutes || '180' }}
+      prepare_timeout_minutes: ${{ matrix.item.prepare_timeout_minutes || '240' }}
 
   # ── 汇总：本轮跳过原因（含 blocked_reason / 已有 PR / 审计上限）─────
   summary:

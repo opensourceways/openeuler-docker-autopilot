@@ -355,6 +355,7 @@ def find_updates(
                     "evidence": evidence,
                     "has_test_script": testgen_scan.has_any_test_script(app_dir),
                     "reason": f"已有版本目录 {version}，无需升级，转入 AI 审计",
+                    **_timeout_fields(app),
                 }
             )
             continue
