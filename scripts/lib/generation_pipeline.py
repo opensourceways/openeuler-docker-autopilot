@@ -11,6 +11,7 @@ from typing import Callable, Mapping, Sequence
 
 import yaml
 
+from scripts.lib.agent_policy import architecture_parity_policy
 from scripts.lib.agent_runtime import (
     SCRATCH_DIR,
     AgentContractError,
@@ -399,6 +400,8 @@ def build_role_prompt(
         "- Do not create workflow control assets, lifecycle mode files, or "
         "target-side readiness scripts.",
         "- Do not modify any other path.",
+        "",
+        architecture_parity_policy().rstrip(),
     ]
     if role in {"testcase_creator", "testcase_qa", "fixer"}:
         contract_lines.extend(

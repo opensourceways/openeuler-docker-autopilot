@@ -26,6 +26,7 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.lib.ai_runner import run_agent
+from scripts.lib.agent_policy import architecture_parity_policy
 from scripts.lib.stage_common import (
     agent_prompt_file, log_stage, get_conventions_file,
 )
@@ -334,6 +335,8 @@ def build_mode(env: dict):
             '你的修复必须架构中立或用架构守卫（如 if [ "$(uname -m)" = "x86_64" ]），'
             '且不得破坏 arm64 构建——所有架构中立的问题（如发行版判定）必须在这一并解决。'
         )
+
+    instruction += '\n\n' + architecture_parity_policy()
 
     # agent 一落盘就增量上传：机器的命比 agent 的预算更不可控，而产物只在本地磁盘
     # 上的话，整机失联就等于整轮攻坚白干（2026-09-30 实测过一次）。

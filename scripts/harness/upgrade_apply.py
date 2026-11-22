@@ -40,6 +40,7 @@ from scripts.lib import (  # noqa: E402
     upstream_evidence,
     version_upgrade,
 )
+from scripts.lib.agent_policy import architecture_parity_policy  # noqa: E402
 from scripts.lib.agent_runtime import run_agent  # noqa: E402
 from scripts.lib.stage_common import (  # noqa: E402
     agent_prompt_file,
@@ -169,6 +170,8 @@ def build_dockerfile_prompt(
     prompt += (
         "\n\n## Immutable task contract\n\n"
         + json.dumps(contract, indent=2, ensure_ascii=False)
+        + "\n\n"
+        + architecture_parity_policy()
         + "\n\n## Current Dockerfile (previous version)\n\n```dockerfile\n"
         + old_dockerfile.rstrip()
         + "\n```\n"

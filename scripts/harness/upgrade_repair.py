@@ -58,6 +58,7 @@ from scripts.lib import (  # noqa: E402
     build_runner,
     version_upgrade,
 )
+from scripts.lib.agent_policy import architecture_parity_policy  # noqa: E402
 from scripts.lib.agent_runtime import run_agent  # noqa: E402
 from scripts.lib.stage_common import (  # noqa: E402
     agent_prompt_file,
@@ -225,10 +226,14 @@ def build_repair_prompt(
             "- 只修复架构相关问题（包名、产物名、下载地址的架构差异、编译守卫、"
             "依赖可用性）；\n"
             "- 不得改版本、下载源、ENTRYPOINT/CMD 语义，不得删功能来绕过失败；\n"
-            "- x86_64 下已经验证通过的步骤保持原样，必要时加架构守卫；\n"
+            "- x86_64 下已经验证通过的步骤保持原样；需要区分架构时，守卫只能用于"
+            "包名、产物名、下载地址等实现差异，不能把编译、安装或测试整体跳过；\n"
+            "- 两个架构都必须产出功能等价的可用产物，不允许用单架构守卫伪造通过；\n"
             "- 不需要改测试时 `test_script` 返回 `null`。\n"
             "\n## Immutable replay contract\n\n"
             + json.dumps(contract, indent=2, ensure_ascii=False)
+            + "\n\n"
+            + architecture_parity_policy()
             + "\n\n## Current Dockerfile on the upgrade branch\n\n```dockerfile\n"
             + dockerfile_text.rstrip()
             + "\n```\n"
@@ -242,6 +247,8 @@ def build_repair_prompt(
             "- 需要调整功能测试时返回修复后的完整 `tests/test.sh` 文本，否则 `test_script` 为 `null`。\n"
             "\n## Immutable repair contract\n\n"
             + json.dumps(contract, indent=2, ensure_ascii=False)
+            + "\n\n"
+            + architecture_parity_policy()
             + "\n\n## Current Dockerfile on the upgrade branch\n\n```dockerfile\n"
             + dockerfile_text.rstrip()
             + "\n```\n"
