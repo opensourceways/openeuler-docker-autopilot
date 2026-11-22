@@ -286,6 +286,9 @@ apps:
 - name: rdma-core
   app: rdma-core
   domain: Cloud
+  version: "66.0"
+  tag: v66.0
+  source_url: https://github.com/linux-rdma/rdma-core
 - name: Squid
   app: squid
   domain: Cloud
@@ -583,8 +586,11 @@ apps:
   app: folly
   domain: HPC
 - name: FSL
-  app: fslpy
+  app: fsl
   domain: HPC
+  version: 6.0.7.13
+  tag: 6.0.7.13
+  source_url: https://git.fmrib.ox.ac.uk/fsl/fsl
 - name: FVCOM
   app: fvcom
   domain: HPC
@@ -789,6 +795,9 @@ apps:
 - name: NEMO
   app: nemo
   domain: HPC
+  version: 6.8.5
+  tag: 6.8.5
+  source_url: https://github.com/linuxmint/nemo
 - name: NOVOPlasty
   app: novoplasty
   domain: HPC
@@ -999,6 +1008,9 @@ apps:
 - name: VASP
   app: vasp
   domain: HPC
+  version: 6.6.1
+  tag: 6.6.1
+  source_url: https://www.vasp.at
 - name: vaspkit
   app: vaspkit
   domain: HPC
@@ -1293,6 +1305,9 @@ apps:
 - name: Maven
   app: maven
   domain: Others
+  version: 3.10.2
+  tag: maven-3.10.2
+  source_url: https://github.com/apache/maven
 - name: Memtester
   app: memtester
   domain: Others
@@ -1365,6 +1380,9 @@ apps:
 - name: jdk
   app: openjdk
   domain: Others
+  version: 28+25
+  tag: jdk-28+25
+  source_url: https://github.com/openjdk/jdk
 - name: openssl
   app: openssl
   domain: Others
@@ -1461,6 +1479,9 @@ apps:
 - name: Shiny
   app: shiny
   domain: Others
+  version: 1.15.0
+  tag: v1.15.0
+  source_url: https://github.com/rstudio/shiny
 - name: siege
   app: siege
   domain: Others
@@ -1605,6 +1626,9 @@ apps:
 - name: Zlib
   app: zlib
   domain: Others
+  version: "1.4"
+  tag: v1.4
+  source_url: https://github.com/madler/zlib
 - name: zlib-ng
   app: zlib-ng
   domain: Others
@@ -1623,6 +1647,12 @@ apps:
 - name: cubefs
   app: cubefs
   domain: Storage
+- name: fuse
+  app: fuse
+  domain: Storage
+  version: 3.16.2
+  tag: fuse-3.16.2
+  source_url: https://github.com/libfuse/libfuse
 - name: CURVE
   app: curve
   domain: Storage
@@ -1653,6 +1683,9 @@ apps:
 - name: Lustre
   app: lustre
   domain: Storage
+  version: 2.17.62
+  tag: v2_17_62
+  source_url: https://github.com/lustre/lustre-release
 - name: MinIO
   app: minio
   domain: Storage
