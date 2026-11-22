@@ -58,7 +58,7 @@ from scripts.lib import (  # noqa: E402
     build_runner,
     version_upgrade,
 )
-from scripts.lib.agent_policy import architecture_parity_policy  # noqa: E402
+from scripts.lib.agent_policy import build_policy  # noqa: E402
 from scripts.lib.agent_runtime import run_agent  # noqa: E402
 from scripts.lib.stage_common import (  # noqa: E402
     agent_prompt_file,
@@ -233,7 +233,7 @@ def build_repair_prompt(
             "\n## Immutable replay contract\n\n"
             + json.dumps(contract, indent=2, ensure_ascii=False)
             + "\n\n"
-            + architecture_parity_policy()
+            + build_policy()
             + "\n\n## Current Dockerfile on the upgrade branch\n\n```dockerfile\n"
             + dockerfile_text.rstrip()
             + "\n```\n"
@@ -248,7 +248,7 @@ def build_repair_prompt(
             "\n## Immutable repair contract\n\n"
             + json.dumps(contract, indent=2, ensure_ascii=False)
             + "\n\n"
-            + architecture_parity_policy()
+            + build_policy()
             + "\n\n## Current Dockerfile on the upgrade branch\n\n```dockerfile\n"
             + dockerfile_text.rstrip()
             + "\n```\n"

@@ -47,7 +47,7 @@ from scripts.lib import (  # noqa: E402
     upstream_evidence,
     version_upgrade,
 )
-from scripts.lib.agent_policy import architecture_parity_policy  # noqa: E402
+from scripts.lib.agent_policy import build_policy  # noqa: E402
 from scripts.lib.agent_runtime import run_agent  # noqa: E402
 from scripts.lib.ci_gitcode_api import (  # noqa: E402
     create_pull_request,
@@ -422,7 +422,7 @@ def build_prompt(context: dict, findings: list[dict]) -> str:
         prompt,
         "\n\n## Immutable audit contract\n\n"
         + json.dumps(contract, indent=2, ensure_ascii=False),
-        "\n\n" + architecture_parity_policy(),
+        "\n\n" + build_policy(),
         "\n\n## Deterministic findings (Harness facts)\n\n"
         + json.dumps(findings, indent=2, ensure_ascii=False),
         "\n\n## Dockerfile under audit\n\n```dockerfile\n"
@@ -616,7 +616,7 @@ def build_fix_prompt(
         prompt,
         "\n\n## Immutable fix contract\n\n"
         + json.dumps(contract, indent=2, ensure_ascii=False),
-        "\n\n" + architecture_parity_policy(),
+        "\n\n" + build_policy(),
         "\n\n## Deterministic findings\n\n"
         + json.dumps(findings, indent=2, ensure_ascii=False),
         "\n\n## AI audit conclusion\n\n"
