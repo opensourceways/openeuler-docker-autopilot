@@ -23,6 +23,14 @@ _TEST_STATUS_TEXT = {
 }
 
 
+def build_title(item: dict) -> str:
+    """与场景一 ``[New Image] Add ...`` 对齐的升级 PR 标题。"""
+    return (
+        f"[自动升级] Upgrade {item['app']} to {item['version']} "
+        f"for openEuler {item['os_version']}"
+    )
+
+
 def build_body(item: dict, test_status: str) -> str:
     app = item["app"]
     version = item["version"]
@@ -79,7 +87,7 @@ def main() -> int:
         target_repo,
         head,
         args.base,
-        f"feat: upgrade {item['app']} to {item['version']}",
+        build_title(item),
         build_body(item, args.test_status),
         token,
     )
