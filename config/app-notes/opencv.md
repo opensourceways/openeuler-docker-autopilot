@@ -1,5 +1,5 @@
 <!-- oe-app-note:auto:5.1.0/24.03-lts-sp4 -->
 ## 自动沉淀：5.1.0 / 24.03-lts-sp4
 
-opencv 目录同时存在 CANN 变体（5.1.0-cann9.1.0-python3.12）与纯源码变体（5.1.0），二者共享 AI/opencv/tests/test.sh；纯源码变体的测试不能硬编码 /usr/local/opencv-cann 或 CANN 断言，应以 /usr/local/bin/opencv_version + cv2.__version__ + cv2.dnn 为准。纯源码构建在 openEuler 24.03-lts-sp4 上依赖 dnf 的 python3-devel 与 python3-numpy（3.11.6 / 1.24.3）即可，cmake 需显式传 PYTHON_INCLUDE_DIR=/usr/include/python3.11、PYTHON_LIBRARY=/usr/lib64/libpython3.11.so；16 核全量 install 约 4~5 分钟。
+纯 OpenCV(非 CANN)变体与 CANN 变体共用同一套源码构建骨架，仅需：基础镜像用 openeuler/openeuler:24.03-lts-sp4、去掉 opencv_contrib/WITH_CANN/整段 CANN 补丁、BUILD_LIST 用 core,imgproc,imgcodecs,videoio,dnn,python3(不带 cannops)、编译库落 /usr/local/lib64(ld.so.conf)而 cv2 落 /usr/local/lib/python3.11/site-packages(该目录一旦存在便自动进入 sys.path，无需 .pth)。buildkit 会对 GIT_CONFIG_KEY_* 的 ENV 报 'SecretsUsedInArgOrEnv' 误报警告，可忽略。完整云上构建(含 IPP 下载)约 10 分钟(16 核 --parallel $(nproc))。
 <!-- /oe-app-note:auto -->
