@@ -14,6 +14,7 @@ from parse_issue import (
     IssueParseError,
     parse_issue_body,
     parse_issue_request,
+    parse_upgrade_issue_request,
     validate,
 )
 
@@ -272,3 +273,90 @@ def test_parse_minimal_issue_rejects_title_and_body_package_mismatch():
 
 def test_validate_accepts_the_target_repository_three_field_body():
     assert validate(parse_issue_body(MINIMAL_TARGET_ISSUE)) == []
+
+
+UPGRADE_ISSUE_TITLE = (
+    "【new-version】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4"
+)
+
+
+def test_parse_upgrade_issue_needs_only_the_title():
+    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, "")
+
+    assert fields == {
+        "app": "grpc",
+        "version": "1.85.4",
+        "os_version": "24.03-lts-sp4",
+        "source_url": "",
+    }
+
+
+def test_parse_upgrade_issue_takes_the_upstream_url_from_json():
+    body = json.dumps(
+        {"software": {"repo_url": "https://github.com/grpc/grpc"}}
+    )
+
+    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
+
+    assert fields["source_url"] == "https://github.com/grpc/grpc"
+
+
+def test_parse_upgrade_issue_takes_the_upstream_url_from_markdown():
+    body = (
+        "**源码仓库（Source Repository）：** "
+        "https://github.com/grpc/grpc\n"
+    )
+
+    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
+
+    assert fields["source_url"] == "https://github.com/grpc/grpc"
+
+
+def test_parse_upgrade_issue_ignores_other_body_fields():
+    body = json.dumps(
+        {
+            "software": {"repo_url": "https://github.com/grpc/grpc"},
+            "upstream_evidence": {"evidence": {"result": "unknown"}},
+            "install_candidates": [{"type": "package"}],
+        }
+    )
+
+    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
+
+    assert fields["app"] == "grpc"
+    assert fields["source_url"] == "https://github.com/grpc/grpc"
+
+
+def test_parse_upgrade_issue_tolerates_a_non_json_body():
+    fields = parse_upgrade_issue_request(
+        UPGRADE_ISSUE_TITLE,
+        "升级到 1.85.4，请参考上游发布说明。\n",
+    )
+
+    assert fields["version"] == "1.85.4"
+    assert fields["source_url"] == ""
+
+
+def test_parse_upgrade_issue_requires_an_https_source_url():
+    body = json.dumps(
+        {"software": {"repo_url": "http://github.com/grpc/grpc"}}
+    )
+
+    with pytest.raises(IssueParseError, match="HTTPS"):
+        parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
+
+
+def test_parse_upgrade_issue_rejects_an_unsafe_app_name():
+    with pytest.raises(IssueParseError, match="app name"):
+        parse_upgrade_issue_request(
+            "【new-version】upgrade grpc;rm to 1.85.4 on openEuler 24.03-lts",
+            "",
+        )
+
+
+def test_parse_upgrade_issue_rejects_a_non_matching_title():
+    with pytest.raises(IssueParseError, match="title must match"):
+        parse_upgrade_issue_request(
+            "【new-image】add grpc 1.85.4 docker image on openEuler 24.03-lts",
+            "",
+        )

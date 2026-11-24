@@ -86,7 +86,7 @@ def _script_writer(scripts: list[str]):
         workspace = Path(kwargs["workspace"])
         (workspace / "Database" / "myapp" / "tests").mkdir(parents=True, exist_ok=True)
         (workspace / "Database" / "myapp" / "tests" / "test.sh").write_text(
-            scripts.pop(0), encoding="utf-8"
+            scripts.pop(0), encoding="utf-8", newline="\n"
         )
         return mock.Mock(payload={"success": True})
 

@@ -1,4 +1,4 @@
-"""Policies for terminal failure Issues and the explicit E2E Issue probe."""
+"""Policies for GitCode Issue lifecycle: claim, dispatch and finalize."""
 
 from __future__ import annotations
 
@@ -24,6 +24,11 @@ class IssueOperationForbiddenError(IssueLifecycleError):
 
 _SAFE_DYNAMIC_VALUE = re.compile(r"^[A-Za-z0-9._-]+$")
 _NEW_IMAGE_TITLE = "【new-image】"
+_UPGRADE_TITLE = "【new-version】"
+_UPGRADE_APP_RE = re.compile(
+    r"^\s*【new-version】\s*upgrade\s+(?P<app>\S+)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +36,23 @@ class ClaimedIssue:
     number: int
     url: str
     task: TaskSpec
+
+
+@dataclass(frozen=True)
+class UpgradeRequest:
+    """Minimal scenario-two request parsed from one 【new-version】 Issue."""
+
+    app: str
+    version: str
+    os_version: str
+    source_url: str
+
+
+@dataclass(frozen=True)
+class ClaimedUpgradeIssue:
+    number: int
+    url: str
+    request: UpgradeRequest
 
 
 @dataclass(frozen=True)
@@ -340,33 +362,118 @@ def _workflow_inputs(task: TaskSpec, issue_number: int) -> dict[str, str]:
     }
 
 
-def claim_new_image_issue(
+def _upgrade_workflow_inputs(
+    request: UpgradeRequest,
+    issue_number: int,
+) -> dict[str, str]:
+    # source_url may be empty: upgrade_scan.py falls back to config/upgrade-apps.yml.
+    # os_version is used by the conda scan, while docker derives it from the
+    # target repository layout.
+    return {
+        "app": request.app,
+        "version": request.version,
+        "os_version": request.os_version,
+        "source_url": request.source_url,
+        "source_issue": str(issue_number),
+    }
+
+
+def _title_has_prefix(issue: Mapping[str, object], prefix: str) -> bool:
+    return str(issue.get("title", "")).strip().startswith(prefix)
+
+
+def _upgrade_app(issue: Mapping[str, object]) -> str | None:
+    match = _UPGRADE_APP_RE.match(str(issue.get("title", "")))
+    if match is None:
+        return None
+    return match.group("app").strip() or None
+
+
+def _select_new_issue(
+    issues: list[Mapping[str, object]],
+    title_prefix: str,
+) -> Mapping[str, object] | None:
+    return next(
+        (
+            candidate
+            for candidate in issues
+            if _title_has_prefix(candidate, title_prefix)
+            and _issue_status(candidate) == "新建"
+        ),
+        None,
+    )
+
+
+def _select_queued_upgrade_issue(
+    issues: list[Mapping[str, object]],
+) -> Mapping[str, object] | None:
+    # Same-app requests queue: a new request for an app whose previous request
+    # is still 已接纳 is skipped so the next poll picks it up after that run
+    # finishes. Other apps keep flowing in the same scan.
+    accepted_apps = {
+        app
+        for issue in issues
+        if _issue_status(issue) == "已接纳"
+        for app in (_upgrade_app(issue),)
+        if app
+    }
+    return next(
+        (
+            candidate
+            for candidate in issues
+            if _title_has_prefix(candidate, _UPGRADE_TITLE)
+            and _issue_status(candidate) == "新建"
+            and _upgrade_app(candidate) not in accepted_apps
+        ),
+        None,
+    )
+
+
+def _reject_issue(
+    *,
+    client: Any,
+    target_repo: str,
+    issue: Mapping[str, object],
+    reason: str,
+) -> None:
+    client.create_issue_comment(
+        target_repo=target_repo,
+        number=_issue_number(issue),
+        body=f"自动处理未启动：{reason}",
+    )
+    _update_source_issue(
+        client=client,
+        target_repo=target_repo,
+        issue=issue,
+        issue_status="已拒绝",
+        state="open",
+    )
+
+
+def _claim_new_issue(
     *,
     client: Any,
     target_repo: str,
     issue_number: int | None,
+    title_prefix: str,
+    select_issue: Callable[
+        [list[Mapping[str, object]]],
+        Mapping[str, object] | None,
+    ],
+    parse_task: Callable[[Mapping[str, object]], Any],
+    build_inputs: Callable[[Any, int], Mapping[str, str]],
     dispatch: Callable[[Mapping[str, str]], None],
-    parse_task: Callable[[Mapping[str, object]], TaskSpec],
-) -> ClaimedIssue | None:
-    """Claim one new Issue by status, then dispatch the canonical workflow."""
+    accepted_comment: str,
+) -> tuple[int, str, Any] | None:
+    """Claim one 新建 Issue by status, then dispatch its workflow."""
 
     if issue_number is None:
         issues = client.list_issues(
             target_repo=target_repo,
             state="open",
-            search=_NEW_IMAGE_TITLE,
+            search=title_prefix,
         )
-        issue = next(
-            (
-                candidate
-                for candidate in issues
-                if str(candidate.get("title", "")).strip().startswith(
-                    _NEW_IMAGE_TITLE
-                )
-                and _issue_status(candidate) == "新建"
-            ),
-            None,
-        )
+        issue = select_issue(issues)
         if issue is None:
             return None
     else:
@@ -383,17 +490,11 @@ def claim_new_image_issue(
     try:
         task = parse_task(issue)
     except ValueError as error:
-        client.create_issue_comment(
-            target_repo=target_repo,
-            number=number,
-            body=f"自动处理未启动：{error}",
-        )
-        _update_source_issue(
+        _reject_issue(
             client=client,
             target_repo=target_repo,
             issue=issue,
-            issue_status="已拒绝",
-            state="open",
+            reason=str(error),
         )
         return None
 
@@ -405,7 +506,7 @@ def claim_new_image_issue(
         state="open",
     )
     try:
-        dispatch(_workflow_inputs(task, number))
+        dispatch(build_inputs(task, number))
     except Exception as error:
         try:
             _update_source_issue(
@@ -424,12 +525,66 @@ def claim_new_image_issue(
     client.create_issue_comment(
         target_repo=target_repo,
         number=number,
-        body="该请求已接纳，自动镜像流水线已经触发。",
+        body=accepted_comment,
     )
-    return ClaimedIssue(number=number, url=_issue_url(issue), task=task)
+    return number, _issue_url(issue), task
 
 
-def finalize_new_image_issue(
+def claim_new_image_issue(
+    *,
+    client: Any,
+    target_repo: str,
+    issue_number: int | None,
+    dispatch: Callable[[Mapping[str, str]], None],
+    parse_task: Callable[[Mapping[str, object]], TaskSpec],
+) -> ClaimedIssue | None:
+    """Claim one new-image Issue by status, then dispatch scenario one."""
+
+    result = _claim_new_issue(
+        client=client,
+        target_repo=target_repo,
+        issue_number=issue_number,
+        title_prefix=_NEW_IMAGE_TITLE,
+        select_issue=lambda issues: _select_new_issue(issues, _NEW_IMAGE_TITLE),
+        parse_task=parse_task,
+        build_inputs=_workflow_inputs,
+        dispatch=dispatch,
+        accepted_comment="该请求已接纳，自动镜像流水线已经触发。",
+    )
+    if result is None:
+        return None
+    number, url, task = result
+    return ClaimedIssue(number=number, url=url, task=task)
+
+
+def claim_upgrade_issue(
+    *,
+    client: Any,
+    target_repo: str,
+    issue_number: int | None,
+    dispatch: Callable[[Mapping[str, str]], None],
+    parse_task: Callable[[Mapping[str, object]], UpgradeRequest],
+) -> ClaimedUpgradeIssue | None:
+    """Claim one 【new-version】 Issue, queueing requests for a busy app."""
+
+    result = _claim_new_issue(
+        client=client,
+        target_repo=target_repo,
+        issue_number=issue_number,
+        title_prefix=_UPGRADE_TITLE,
+        select_issue=_select_queued_upgrade_issue,
+        parse_task=parse_task,
+        build_inputs=_upgrade_workflow_inputs,
+        dispatch=dispatch,
+        accepted_comment="该升级请求已接纳，自动升级流水线已经触发。",
+    )
+    if result is None:
+        return None
+    number, url, request = result
+    return ClaimedUpgradeIssue(number=number, url=url, request=request)
+
+
+def _finalize_issue(
     *,
     client: Any,
     target_repo: str,
@@ -439,8 +594,10 @@ def finalize_new_image_issue(
     pr_url: str = "",
     failure_summary: str = "",
     failure_evidence_dir: Path | None = None,
+    pipeline_label: str = "自动镜像流水线",
+    require_pr_on_success: bool = True,
 ) -> Any | None:
-    """Write the terminal scenario-one result back to its source Issue."""
+    """Write one terminal pipeline result back to its source Issue."""
 
     if outcome not in {"success", "failure", "needs-human-review"}:
         raise ValueError(
@@ -448,7 +605,11 @@ def finalize_new_image_issue(
         )
     if not run_url.startswith("https://"):
         raise ValueError("run_url must be an HTTPS URL")
-    if outcome == "success" and not pr_url.startswith("https://"):
+    if (
+        outcome == "success"
+        and require_pr_on_success
+        and not pr_url.startswith("https://")
+    ):
         raise ValueError("successful outcome requires an HTTPS PR URL")
 
     issue = client.get_issue(
@@ -471,14 +632,15 @@ def finalize_new_image_issue(
         )
 
     if outcome == "success":
-        comment = "\n".join(
-            (
-                "自动镜像流水线已生成 PR，Issue 已完成。",
-                "",
-                f"- Workflow: {run_url}",
-                f"- Pull request: {pr_url}",
-            )
+        headline = (
+            f"{pipeline_label}已生成 PR，Issue 已完成。"
+            if pr_url
+            else f"{pipeline_label}已完成，Issue 已关闭。"
         )
+        lines = [headline, "", f"- Workflow: {run_url}"]
+        if pr_url:
+            lines.append(f"- Pull request: {pr_url}")
+        comment = "\n".join(lines)
     elif outcome == "needs-human-review":
         if failure_evidence_dir is not None:
             try:
@@ -492,7 +654,7 @@ def finalize_new_image_issue(
             )
         comment = "\n".join(
             (
-                "needs-human-review: 自动镜像流水线未收敛，需要人工处理。",
+                f"needs-human-review: {pipeline_label}未收敛，需要人工处理。",
                 "",
                 failure_summary,
                 "",
@@ -504,7 +666,7 @@ def finalize_new_image_issue(
     else:
         comment = "\n".join(
             (
-                "自动镜像流水线未完成，Issue 已挂起等待人工处理。",
+                f"{pipeline_label}未完成，Issue 已挂起等待人工处理。",
                 "",
                 f"- Workflow: {run_url}",
                 f"- Failure summary: {failure_summary or 'see workflow run'}",
@@ -521,6 +683,60 @@ def finalize_new_image_issue(
         issue=issue,
         issue_status=target_status,
         state=target_state,
+    )
+
+
+def finalize_new_image_issue(
+    *,
+    client: Any,
+    target_repo: str,
+    issue_number: int,
+    outcome: str,
+    run_url: str,
+    pr_url: str = "",
+    failure_summary: str = "",
+    failure_evidence_dir: Path | None = None,
+) -> Any | None:
+    """Write the terminal scenario-one result back to its source Issue."""
+
+    return _finalize_issue(
+        client=client,
+        target_repo=target_repo,
+        issue_number=issue_number,
+        outcome=outcome,
+        run_url=run_url,
+        pr_url=pr_url,
+        failure_summary=failure_summary,
+        failure_evidence_dir=failure_evidence_dir,
+    )
+
+
+def finalize_upgrade_issue(
+    *,
+    client: Any,
+    target_repo: str,
+    issue_number: int,
+    outcome: str,
+    run_url: str,
+    pr_url: str = "",
+    failure_summary: str = "",
+) -> Any | None:
+    """Write the terminal scenario-two result back to its source Issue.
+
+    Upgrade runs may legitimately end without a PR (for example an audit-only
+    round), so a successful outcome does not require a PR URL.
+    """
+
+    return _finalize_issue(
+        client=client,
+        target_repo=target_repo,
+        issue_number=issue_number,
+        outcome=outcome,
+        run_url=run_url,
+        pr_url=pr_url,
+        failure_summary=failure_summary,
+        pipeline_label="自动升级流水线",
+        require_pr_on_success=False,
     )
 
 

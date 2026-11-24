@@ -37,6 +37,7 @@ from scripts.lib import (  # noqa: E402
     ai_provider,
     app_notes,
     build_runner,
+    supporting_files,
     upstream_evidence,
     version_upgrade,
 )
@@ -104,19 +105,35 @@ def _ensure_test_script(
     plan: version_upgrade.UpgradePlan,
     item: dict,
 ) -> str:
-    """缺测试就生成；返回 added / existing / pending。"""
-    from scripts.harness import testgen_scan
+    """确保测试脚本存在且通过静态契约；返回 added / existing。
+
+    升级不允许在没有测试脚本的情况下继续：缺脚本就生成，生成失败或现有脚本
+    不满足 KunpengTest 契约都直接失败，不推分支、不浪费双架构构建。
+    """
     from scripts.harness.testgen_generate import generate_test_script
+    from scripts.lib.kunpeng_test_contract import check_test_script
 
     app_dir = repo_dir / domain / app
-    if testgen_scan.has_any_test_script(app_dir):
+    existing = _existing_test_script(app_dir)
+    if existing is not None:
+        findings = check_test_script(existing)
+        if findings:
+            detail = "; ".join(
+                f"{finding['code']}: {finding['message']}" for finding in findings
+            )
+            raise version_upgrade.UpgradeError(
+                f"{app}: 现有测试脚本 "
+                f"{existing.relative_to(repo_dir).as_posix()} 未通过静态契约：{detail}"
+            )
         return "existing"
 
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
     if not api_key or not executable:
-        log_stage("upgrade-apply", f"{app}: 缺少 AI 凭证/opencode，跳过补测试")
-        return "pending"
+        raise version_upgrade.UpgradeError(
+            f"{app}: 缺 tests/test.sh，且没有 AI 凭证/opencode 可生成；"
+            "升级要求测试脚本必须存在并通过契约"
+        )
 
     findings = generate_test_script(
         repo_dir=repo_dir,
@@ -131,9 +148,17 @@ def _ensure_test_script(
     )
     if findings:
         detail = "; ".join(f"{f['code']}: {f['message']}" for f in findings)
-        log_stage("upgrade-apply", f"{app}: 测试脚本生成未通过（非阻断）: {detail}")
-        return "pending"
+        raise version_upgrade.UpgradeError(f"{app}: 测试脚本生成未通过：{detail}")
     return "added"
+
+
+def _existing_test_script(app_dir: Path) -> Path | None:
+    """按 CI 的三个搜索位置找现有 test.sh。"""
+    for candidate in (app_dir / "tests" / "test.sh", app_dir / "test.sh"):
+        if candidate.is_file():
+            return candidate
+    matches = sorted(app_dir.glob("*/*/test.sh"))
+    return matches[0] if matches else None
 
 
 def build_dockerfile_prompt(
@@ -146,6 +171,7 @@ def build_dockerfile_prompt(
     findings: list[str] | None = None,
     session: dict | None = None,
     notes: app_notes.AppNotes | None = None,
+    supporting: list[supporting_files.SupportingFile] | None = None,
 ) -> str:
     """组装升级 Dockerfile 生成提示：角色规则 + 任务契约 + 旧文件 + 证据包。"""
     prompt = Path(agent_prompt_file("upgrade-creator")).read_text(encoding="utf-8")
@@ -163,7 +189,10 @@ def build_dockerfile_prompt(
         "tag": evidence.get("tag"),
         "tag_url": evidence.get("tag_url"),
         "commit_sha": evidence.get("commit_sha"),
-        "output_field": "dockerfile",
+        "output_fields": (
+            ["dockerfile", "supporting_files"] if supporting else ["dockerfile"]
+        ),
+        "supporting_files": [item.path for item in supporting or []],
     }
     if item.get("build_notes"):
         contract["build_notes"] = str(item["build_notes"])
@@ -176,6 +205,7 @@ def build_dockerfile_prompt(
         + old_dockerfile.rstrip()
         + "\n```\n"
     )
+    prompt += supporting_files.render_prompt(supporting or [])
     prompt += "\n\n" + upstream_evidence.render_prompt(evidence).strip() + "\n"
     prompt += app_notes.render_prompt(notes)
     if session:
@@ -196,8 +226,13 @@ def build_dockerfile_prompt(
         "\n## Final response contract\n\n"
         "最终响应必须恰好是一个 JSON 对象，包含以下键："
         "success(bool)、dockerfile(str，完整 Dockerfile 文本)、"
-        "summary(str)、error(null 或 str)。"
-        "不得修改工作区文件；只返回 JSON。\n"
+        "summary(str)、error(null 或 str)"
+        + (
+            "、supporting_files(list，逐个辅助文件的审计结论)"
+            if supporting
+            else ""
+        )
+        + "。不得修改工作区文件；只返回 JSON。\n"
     )
     return prompt
 
@@ -335,11 +370,12 @@ def _generate_dockerfile(
     domain: str,
     plan: version_upgrade.UpgradePlan,
     item: dict,
-) -> str:
+) -> tuple[str, dict[str, str]]:
     """让 AI 生成新版本 Dockerfile，并在容器里逐条跑通、失败当场修。
 
     与 CI 失败修复链路同构：生成与修复在同一次 Agent 调用里完成，
     产物以「容器里实际跑通的那份」为准；验证阶段只做确定性构建。
+    同时审计 Dockerfile 引用的辅助脚本，返回 (Dockerfile, 需要写回的辅助文件)。
     """
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
@@ -351,6 +387,13 @@ def _generate_dockerfile(
 
     new_version = str(item["version"])
     old_dockerfile = (plan.src_dir / "Dockerfile").read_text(encoding="utf-8")
+    supporting = supporting_files.collect(plan.src_dir, old_dockerfile)
+    if supporting:
+        log_stage(
+            "upgrade-apply",
+            f"{app}: 需要审计 {len(supporting)} 个辅助文件 "
+            f"{[item.path for item in supporting]}",
+        )
     base_img = build_runner.base_image(old_dockerfile) or "(unknown)"
     notes = app_notes.load(app)
     agent_timeout = app_notes.generate_timeout_seconds(notes)
@@ -392,6 +435,7 @@ def _generate_dockerfile(
                     "build_log": build_log,
                 },
                 notes=notes,
+                supporting=supporting,
             )
             log_stage(
                 "upgrade-apply",
@@ -448,9 +492,18 @@ def _generate_dockerfile(
                     f"{app}: agent 未正常结束，但容器内已落盘 Dockerfile，继续采用",
                 )
             findings = version_upgrade.check_dockerfile(candidate, new_version)
+            findings += supporting_files.deterministic_findings(
+                supporting,
+                old_version=plan.old_version,
+                new_version=new_version,
+            )
+            review_findings, updates = supporting_files.validate(
+                supporting, payload
+            )
+            findings += review_findings
             if not findings:
-                return candidate
-            log_stage("upgrade-apply", f"{app}: dockerfile findings={findings}")
+                return candidate, updates
+            log_stage("upgrade-apply", f"{app}: findings={findings}")
     finally:
         build_runner.docker_rm(container)
         build_runner.docker_rm_by_label(label)
@@ -485,14 +538,18 @@ def run(item: dict, *, task_spec_out: Path) -> int:
         "upgrade-apply",
         f"{app}: {plan.old_version} -> {new_version} (os={plan.os_version})",
     )
-    dockerfile_text = _generate_dockerfile(
+    dockerfile_text, supporting_updates = _generate_dockerfile(
         repo_dir=repo_dir, app=app, domain=domain, plan=plan, item=item
     )
     test_status = _ensure_test_script(
         repo_dir=repo_dir, app=app, domain=domain, plan=plan, item=item
     )
     changed = version_upgrade.apply_upgrade(
-        app_dir, plan, new_version, dockerfile_text
+        app_dir,
+        plan,
+        new_version,
+        dockerfile_text,
+        supporting_files=supporting_updates,
     )
 
     _git(repo_dir, "add", "-A", str(app_dir.relative_to(repo_dir)))

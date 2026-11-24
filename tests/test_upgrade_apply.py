@@ -180,7 +180,7 @@ class GenerateDockerfileTest(unittest.TestCase):
                     upgrade_apply.build_runner, "docker_rm_images_by_label"
                 ),
             ):
-                dockerfile = upgrade_apply._generate_dockerfile(
+                dockerfile, supporting = upgrade_apply._generate_dockerfile(
                     repo_dir=app.parent.parent,
                     app="kvrocks",
                     domain="Database",
@@ -188,11 +188,70 @@ class GenerateDockerfileTest(unittest.TestCase):
                     item=item,
                 )
 
+        self.assertEqual(supporting, {})
         self.assertEqual(captured["role"], "upgrade_creator")
         self.assertIn("kp.l1.release_artifact", captured["prompt"])
         self.assertIn("Container build verification", captured["prompt"])
         self.assertIn("docker exec", captured["prompt"])
         self.assertIn("ARG VERSION=2.17.0", dockerfile)
+
+    def test_agent_must_audit_every_supporting_script(self) -> None:
+        """Dockerfile 引用的辅助脚本少了审计结论就判失败，不允许静默沿用旧脚本。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(Path(tmp))
+            src = app / "2.16.0" / "24.03-lts-sp4"
+            (src / "build.sh").write_text("#!/bin/bash\nmake\n", encoding="utf-8")
+            (src / "Dockerfile").write_text(
+                "FROM openeuler/openeuler:24.03-lts-sp4\n"
+                "ARG VERSION=2.16.0\n"
+                "COPY build.sh /opt/\n",
+                encoding="utf-8",
+            )
+            plan = version_upgrade.plan_upgrade(app)
+            item = {"version": "2.17.0", "source_url": "https://example.com"}
+            prompts: list[str] = []
+
+            def fake_run_agent(**kwargs):
+                prompts.append(kwargs["prompt"])
+                return SimpleNamespace(
+                    payload={
+                        "success": True,
+                        "dockerfile": (
+                            "FROM openeuler/openeuler:24.03-lts-sp4\n"
+                            "ARG VERSION=2.17.0\n"
+                            "COPY build.sh /opt/\n"
+                        ),
+                        "summary": "bump",
+                    }
+                )
+
+            with (
+                mock.patch.object(upgrade_apply, "run_agent", fake_run_agent),
+                mock.patch.object(upgrade_apply, "_reset_workspace"),
+                mock.patch.object(upgrade_apply.ai_provider, "api_key", return_value="k"),
+                mock.patch.object(
+                    upgrade_apply.shutil, "which", return_value="/usr/bin/opencode"
+                ),
+                mock.patch.object(
+                    upgrade_apply.build_runner, "activate_docker_shim", return_value=""
+                ),
+                mock.patch.object(upgrade_apply.build_runner, "docker_rm"),
+                mock.patch.object(upgrade_apply.build_runner, "docker_rm_by_label"),
+                mock.patch.object(
+                    upgrade_apply.build_runner, "docker_rm_images_by_label"
+                ),
+            ):
+                with self.assertRaises(version_upgrade.UpgradeError):
+                    upgrade_apply._generate_dockerfile(
+                        repo_dir=app.parent.parent,
+                        app="kvrocks",
+                        domain="Database",
+                        plan=plan,
+                        item=item,
+                    )
+
+        self.assertIn("Supporting build scripts (mandatory audit)", prompts[0])
+        self.assertIn("build.sh", prompts[0])
 
     def test_dockerfile_written_by_agent_survives_a_timeout(self) -> None:
         """Agent 超时不等于零产出：容器里落盘的 Dockerfile 优先于退出码。"""
@@ -233,7 +292,7 @@ class GenerateDockerfileTest(unittest.TestCase):
                     upgrade_apply.build_runner, "docker_rm_images_by_label"
                 ),
             ):
-                dockerfile = upgrade_apply._generate_dockerfile(
+                dockerfile, _ = upgrade_apply._generate_dockerfile(
                     repo_dir=app.parent.parent,
                     app="kvrocks",
                     domain="Database",
@@ -242,6 +301,50 @@ class GenerateDockerfileTest(unittest.TestCase):
                 )
 
         self.assertEqual(dockerfile.strip(), fixed.strip())
+
+
+class EnsureTestScriptTest(unittest.TestCase):
+    def test_missing_test_script_fails_fast_without_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(Path(tmp))
+            plan = version_upgrade.plan_upgrade(app)
+            with (
+                mock.patch.object(upgrade_apply.ai_provider, "api_key", return_value=""),
+                mock.patch.dict(upgrade_apply.os.environ, {"OPENCODE_BIN": ""}),
+                mock.patch.object(upgrade_apply.shutil, "which", return_value=None),
+            ):
+                with self.assertRaises(version_upgrade.UpgradeError):
+                    upgrade_apply._ensure_test_script(
+                        repo_dir=app.parent.parent,
+                        app="kvrocks",
+                        domain="Database",
+                        plan=plan,
+                        item={"version": "2.17.0"},
+                    )
+
+    def test_existing_script_without_assertion_fails_fast(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(Path(tmp))
+            tests_dir = app / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test.sh").write_text(
+                "#!/bin/bash\n"
+                ': "${EXPECTED_VERSION:?EXPECTED_VERSION is required}"\n'
+                "test_nothing() {\n"
+                '    echo "PASS: nothing was checked"\n'
+                "}\n"
+                "test_nothing\n",
+                encoding="utf-8",
+            )
+            plan = version_upgrade.plan_upgrade(app)
+            with self.assertRaises(version_upgrade.UpgradeError):
+                upgrade_apply._ensure_test_script(
+                    repo_dir=app.parent.parent,
+                    app="kvrocks",
+                    domain="Database",
+                    plan=plan,
+                    item={"version": "2.17.0"},
+                )
 
 
 if __name__ == "__main__":

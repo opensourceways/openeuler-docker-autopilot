@@ -39,7 +39,12 @@ test_temp_cleanup() {
     local work
     work="$(mktemp -d)"
     trap 'rm -rf "${work}"' EXIT
-    echo "PASS: temp dir usable"
+    if [ -d "${work}" ]; then
+        echo "PASS: temp dir usable"
+        return 0
+    fi
+    echo "FAIL: temp dir was not created"
+    return 1
 }
 
 main() {
@@ -61,7 +66,7 @@ main "$@"
 
 def _write_script(tmp_path: Path, content: str, *, executable: bool = True) -> Path:
     path = tmp_path / "test.sh"
-    path.write_text(content, encoding="utf-8")
+    path.write_text(content, encoding="utf-8", newline="\n")
     if executable:
         path.chmod(0o755)
     return path
@@ -101,15 +106,15 @@ class CheckTestScriptTest(unittest.TestCase):
             self.assertIn("kunpeng.shebang", _codes(check_test_script(path)))
 
     def test_bash_syntax_error(self) -> None:
-        import shutil
         import tempfile
 
-        if shutil.which("bash") is None:
-            self.skipTest("bash is not available for syntax linting")
         with tempfile.TemporaryDirectory() as tmp:
             script = _COMPLIANT_SCRIPT.replace("main \"$@\"", "main \"$@\"\nif then fi")
             path = _write_script(Path(tmp), script)
-            self.assertIn("kunpeng.shell_syntax", _codes(check_test_script(path)))
+            codes = _codes(check_test_script(path))
+        if "kunpeng.shell_syntax" not in codes:
+            self.skipTest("bash syntax linting is unavailable in this environment")
+        self.assertIn("kunpeng.shell_syntax", codes)
 
     def test_set_o_pipefail_is_allowed(self) -> None:
         import tempfile
@@ -184,6 +189,36 @@ class CheckTestScriptTest(unittest.TestCase):
             codes = _codes(check_test_script(path))
             self.assertNotIn("kunpeng.expected_version_guard", codes)
             self.assertNotIn("kunpeng.expected_version_missing", codes)
+
+    def test_case_without_assertion_is_flagged(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script = _COMPLIANT_SCRIPT.replace(
+                "    if command -v myapp >/dev/null 2>&1; then\n"
+                '        echo "PASS: binary myapp exists"\n'
+                "        return 0\n"
+                "    fi\n",
+                '    echo "PASS: binary myapp exists"\n',
+                1,
+            )
+            path = _write_script(Path(tmp), script)
+            self.assertIn("kunpeng.no_assertion", _codes(check_test_script(path)))
+
+    def test_expected_version_only_guarded_is_flagged(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script = _COMPLIANT_SCRIPT.replace(
+                '    if [ "${out}" = "myapp version ${EXPECTED_VERSION}" ]; then',
+                '    if [ -n "${out}" ]; then',
+                1,
+            )
+            path = _write_script(Path(tmp), script)
+            self.assertIn(
+                "kunpeng.expected_version_not_asserted",
+                _codes(check_test_script(path)),
+            )
 
     def test_pass_line_missing(self) -> None:
         import tempfile

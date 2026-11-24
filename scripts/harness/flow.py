@@ -41,10 +41,14 @@ from scripts.lib.gitcode_client import (
 )
 from scripts.lib.issue_lifecycle import (
     ClaimedIssue,
+    ClaimedUpgradeIssue,
     IssueLifecycleError,
+    UpgradeRequest,
     claim_new_image_issue,
+    claim_upgrade_issue,
     dispatch_github_workflow,
     finalize_new_image_issue,
+    finalize_upgrade_issue,
     run_controlled_issue_probe,
 )
 from scripts.lib.native_repair import (
@@ -73,7 +77,10 @@ from scripts.lib.target_contract import (
     validate_new_image_target_base,
 )
 from scripts.lib.upstream_format_check import run_upstream_format_check
-from scripts.harness.parse_issue import parse_issue_request
+from scripts.harness.parse_issue import (
+    parse_issue_request,
+    parse_upgrade_issue_request,
+)
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -311,6 +318,84 @@ def _issue_finalize(args: argparse.Namespace) -> None:
     if failure_evidence_dir is not None:
         finalize_args["failure_evidence_dir"] = failure_evidence_dir
     finalize_new_image_issue(**finalize_args)
+    _print_json(
+        {
+            "issue_number": args.issue_number,
+            "outcome": args.outcome,
+        }
+    )
+
+
+def _upgrade_issue_watch(args: argparse.Namespace) -> None:
+    gitcode_token = os.environ.get("GITCODE_TOKEN", "")
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    if not gitcode_token:
+        raise IssueLifecycleError("GITCODE_TOKEN is required")
+    if not github_token:
+        raise IssueLifecycleError("GITHUB_TOKEN is required")
+
+    def dispatch(inputs: dict[str, str]) -> None:
+        dispatch_github_workflow(
+            github_token=github_token,
+            github_repository=args.github_repository,
+            workflow=args.workflow,
+            ref=args.github_ref,
+            inputs=inputs,
+        )
+
+    def parse_task(issue: dict[str, object]) -> UpgradeRequest:
+        fields = parse_upgrade_issue_request(
+            str(issue.get("title", "")),
+            str(issue.get("body", "") or ""),
+        )
+        return UpgradeRequest(
+            app=fields["app"],
+            version=fields["version"],
+            os_version=fields["os_version"],
+            source_url=fields["source_url"],
+        )
+
+    if args.issue_number is None and args.max_issues < 1:
+        raise IssueLifecycleError("--max-issues must be a positive integer")
+    limit = args.max_issues if args.issue_number is None else 1
+    claimed: list[ClaimedUpgradeIssue] = []
+    for _ in range(limit):
+        # Each pass re-lists open Issues so a request queued behind another
+        # accepted request for the same app waits for the next poll.
+        result = claim_upgrade_issue(
+            client=GitCodeClient(token=gitcode_token),
+            target_repo=args.target_repo,
+            issue_number=args.issue_number,
+            dispatch=dispatch,
+            parse_task=parse_task,
+        )
+        if result is None:
+            break
+        claimed.append(result)
+    _print_json(
+        {
+            "dispatched": bool(claimed),
+            "issues": [
+                {"issue_number": item.number, "issue_url": item.url}
+                for item in claimed
+            ],
+        }
+    )
+
+
+def _upgrade_issue_finalize(args: argparse.Namespace) -> None:
+    token = os.environ.get("GITCODE_TOKEN", "")
+    if not token:
+        raise IssueLifecycleError("GITCODE_TOKEN is required")
+    finalize_upgrade_issue(
+        client=GitCodeClient(token=token),
+        target_repo=args.target_repo,
+        issue_number=args.issue_number,
+        outcome=args.outcome,
+        run_url=args.run_url,
+        pr_url=args.pr_url,
+        failure_summary=args.failure_summary,
+    )
     _print_json(
         {
             "issue_number": args.issue_number,
@@ -721,6 +806,48 @@ def _add_delivery_commands(commands: argparse._SubParsersAction) -> None:
     issue_finalize.add_argument("--failure-summary", default="")
     issue_finalize.add_argument("--failure-evidence-dir", type=Path)
     issue_finalize.set_defaults(handler=_issue_finalize)
+
+    upgrade_watch = commands.add_parser(
+        "upgrade-issue-watch",
+        description=(
+            "Claim 【new-version】 Issues and dispatch scenario two; requests "
+            "for an app that already has an accepted Issue stay queued."
+        ),
+    )
+    upgrade_watch.add_argument("--target-repo", required=True)
+    upgrade_watch.add_argument("--issue-number", type=int)
+    upgrade_watch.add_argument(
+        "--max-issues",
+        type=int,
+        default=1,
+        help=(
+            "Maximum new Issues claimed per scan run; ignored when "
+            "--issue-number is set (default: 1)"
+        ),
+    )
+    upgrade_watch.add_argument("--github-repository", required=True)
+    upgrade_watch.add_argument("--github-ref", required=True)
+    upgrade_watch.add_argument(
+        "--workflow",
+        default="upgrade_upstream_versions.yml",
+    )
+    upgrade_watch.set_defaults(handler=_upgrade_issue_watch)
+
+    upgrade_finalize = commands.add_parser(
+        "upgrade-issue-finalize",
+        description="Write a scenario_two result back to its source Issue.",
+    )
+    upgrade_finalize.add_argument("--target-repo", required=True)
+    upgrade_finalize.add_argument("--issue-number", required=True, type=int)
+    upgrade_finalize.add_argument(
+        "--outcome",
+        required=True,
+        choices=("success", "failure"),
+    )
+    upgrade_finalize.add_argument("--run-url", required=True)
+    upgrade_finalize.add_argument("--pr-url", default="")
+    upgrade_finalize.add_argument("--failure-summary", default="")
+    upgrade_finalize.set_defaults(handler=_upgrade_issue_finalize)
 
 
 def _add_generation_commands(commands: argparse._SubParsersAction) -> None:

@@ -2,9 +2,32 @@ name: Conda Ecopkgs Upgrade PR
 
 # 给 openEuler/conda-ecopkgs 提交「新增版本支持」PR：按包切独立分支推到 fork，
 # 再用 GitCode API 建 PR；已有同 head 的 PR 时跳过，重跑幂等。
+# 既可手动触发，也可由 upgrade_upstream_versions.yml 通过 workflow_call 调用
+# （items 传入场景二扫描产出的 conda_updates）。
 # 默认项是 L5 清单里版本落后于 conda-forge 的两个包。
 
 on:
+  workflow_call:
+    inputs:
+      items:
+        description: '升级项 JSON 数组（package / version / os_version / arches）'
+        required: true
+        type: string
+      fork_repo:
+        description: '推送用的 GitCode fork（owner/repo）'
+        required: false
+        type: string
+        default: 'm0_46560176/conda-ecopkgs'
+      runner_arch:
+        description: '执行 runner 架构（x64 / arm64）'
+        required: false
+        type: string
+        default: 'x64'
+      dry_run:
+        description: '只生成改动不推送、不建 PR（true/false）'
+        required: false
+        type: string
+        default: 'false'
   workflow_dispatch:
     inputs:
       items:

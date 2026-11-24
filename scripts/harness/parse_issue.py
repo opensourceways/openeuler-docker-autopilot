@@ -39,6 +39,18 @@ _TITLE_RE = re.compile(
     r"(?:-lts)?(?:-sp\d+)?)\s*$",
     re.IGNORECASE,
 )
+_UPGRADE_TITLE_RE = re.compile(
+    r"^\s*【new-version】\s*upgrade\s+(?P<app>\S+)\s+to\s+(?P<version>\S+)\s+"
+    r"on\s+openEuler\s+(?P<os_version>\d{2}\.\d{2}"
+    r"(?:-lts)?(?:-sp\d+)?)\s*$",
+    re.IGNORECASE,
+)
+_FENCED_JSON_RE = re.compile(
+    r"```(?:json)?\s*(?P<payload>\{.*?\})\s*```",
+    re.IGNORECASE | re.DOTALL,
+)
+_APP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 _TAG_VERSION_RE = re.compile(
     r"(?<!\d)(\d+(?:\.\d+)+(?:[A-Za-z][A-Za-z0-9]*)?"
     r"(?:[-+._][A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)*)"
@@ -324,6 +336,73 @@ def parse_issue_request(title: str, body: str) -> dict[str, str]:
         "domain": fields["domain"],
         "os_version": match.group("os_version"),
         "app_version": app_version,
+    }
+
+
+def _upgrade_payload(body: str) -> Mapping[str, object] | None:
+    """尽量从正文提取 JSON 对象；没有或非法时返回 None。"""
+
+    match = _FENCED_JSON_RE.search(body)
+    if match is not None:
+        raw = match.group("payload")
+    else:
+        start = body.find("{")
+        end = body.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        raw = body[start : end + 1]
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, Mapping) else None
+
+
+def parse_upgrade_issue_request(title: str, body: str) -> dict[str, str]:
+    """Parse one scenario-two 【new-version】 Issue.
+
+    Title format:
+        【new-version】upgrade <app> to <version> on openEuler <os_version>
+
+    Only the title is required. The body is optional: it may carry the upstream
+    evidence JSON (``software.repo_url``) or the new-image style
+    ``**Source Repository**`` field, and both are only used as the upstream URL
+    hint. The workflow decides which target repositories hold the app.
+    """
+
+    match = _UPGRADE_TITLE_RE.fullmatch(title)
+    if match is None:
+        raise IssueParseError(
+            "title must match 【new-version】upgrade <app> to <version> "
+            "on openEuler <version>"
+        )
+    app = match.group("app").strip()
+    version = match.group("version").strip()
+    os_version = match.group("os_version").strip()
+    if not _APP_NAME_RE.fullmatch(app):
+        raise IssueParseError(f"invalid app name in title: {app!r}")
+    if not _VERSION_RE.fullmatch(version):
+        raise IssueParseError(f"invalid version in title: {version!r}")
+
+    source_url = ""
+    payload = _upgrade_payload(body)
+    if payload is not None:
+        software = payload.get("software")
+        if isinstance(software, Mapping):
+            url = software.get("repo_url")
+            if isinstance(url, str):
+                source_url = url.strip()
+    if not source_url:
+        fields = parse_issue_body(body)
+        source_url = str(fields.get("source_repo_url") or "").strip()
+    if source_url and urlparse(source_url).scheme != "https":
+        raise IssueParseError("source repository must be an HTTPS URL")
+
+    return {
+        "app": app,
+        "version": version,
+        "os_version": os_version,
+        "source_url": source_url,
     }
 
 

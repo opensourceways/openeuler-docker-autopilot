@@ -110,6 +110,27 @@
 - 不要返回除上述键以外的解释性文字。
 - 除提示给出的 staging 暂存目录与两个落盘文件外，不得修改工作区任何文件。
 
+### 辅助脚本审计（supporting_files）
+
+当提示包含 `Supporting build scripts (mandatory audit)` 时，Dockerfile 引用的
+同目录脚本（例如 `build-QGIS.sh`）也是构建的一部分，必须逐个审计：
+
+```json
+"supporting_files": [
+  {
+    "path": "build-QGIS.sh",
+    "verdict": "updated",
+    "content": "#!/bin/bash\n...完整新文本...",
+    "reason": "新版本会编译测试套件，openEuler 缺 GEOS 3.12，需 -DBUILD_TESTING=OFF"
+  }
+]
+```
+
+- 提示列出的每个文件都必须有一条记录，缺少任何一条都会判为审计未完成；
+- `verdict` 只能是 `unchanged` 或 `updated`；`updated` 时必须返回完整文件文本；
+- 不得返回清单以外的路径；
+- 判断依据是版本差异、上游构建脚本与当前 openEuler 依赖，不能只看 Dockerfile。
+
 ### 修复模式（repair）
 
 当提示包含 `Repair mode` 时，任务不是重新生成升级，而是修复已有升级分支上的失败：
@@ -117,6 +138,8 @@
 - `dockerfile` 仍然必填，内容是修复后的**完整** Dockerfile 文本；
 - 额外允许返回 `test_script`：需要调整功能测试（`tests/test.sh`）时返回修复后的
   完整脚本；不需要改测试时返回 `null`；
+- 提示含 `Supporting build scripts (mandatory audit)` 时，同样要为每个辅助文件
+  返回 `supporting_files` 记录；失败根因在 `build-*.sh` 时必须改脚本，不能只改 Dockerfile；
 - 禁止新建或切换分支、禁止改动与失败无关的文件，只针对失败证据与用户说明做最小修改；
 - 修复同样必须经过 `Container build verification`：在容器里复现失败的那条指令，
   修好并重跑通过后再交卷；只改文本、没跑过的不算修复完成。
