@@ -1,5 +1,5 @@
 <!-- oe-app-note:auto:2026.11.23.00/24.03-lts-sp4 -->
 ## 自动沉淀：2026.11.23.00 / 24.03-lts-sp4
 
-folly 的 BUILD_TESTS/BUILD_BENCHMARKS 是 cmake 默认值即 OFF 的 option，升级时无需显式改动；在 openEuler 24.03-lts-sp4 上源码全量编译约需数十分钟，产物仅 /usr/local/lib/libfolly.a（静态，BUILD_SHARED_LIBS 默认 OFF），下游应通过 find_package(folly CONFIG) 或 PKG_CONFIG_PATH=/usr/local/lib/pkgconfig 的 libfolly.pc 链接。
+folly 的顶层 CMakeLists.txt 用 if (NOT DEFINED PACKAGE_VERSION) 回退到 0.58.0-dev，且不读取 folly/VERSION（该文件内容仅为 ABI 版本号）也不执行 git describe，因此源码构建必须显式传 -DPACKAGE_VERSION=<tag 版本号> 才能让 /usr/local/lib/pkgconfig/libfolly.pc 的 Version 字段与镜像版本一致。全部依赖可从 openEuler 24.03-LTS-SP4 dnf 仓库装齐（boost/gflags/glog/fmt/libevent/openssl/zlib/bzip2/xz/lz4/zstd/snappy/libsodium/libunwind/libdwarf/libaio 等 -devel 包），无需 liburing-devel（仓库 2.4 过旧，缺 ZCRX/io_uring_register_ifq API，folly 会以 FOLLY_HAS_LIBURING=0 编译剔除 io_uring 集成）。16 核下 cmake 配置约 7s、编译几个~十几分钟、libfolly.a 约 382MB。
 <!-- /oe-app-note:auto -->
