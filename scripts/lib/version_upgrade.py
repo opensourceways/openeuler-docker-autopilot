@@ -162,8 +162,14 @@ def apply_upgrade(
     plan: UpgradePlan,
     new_version: str,
     dockerfile_text: str,
+    *,
+    supporting_files: dict[str, str] | None = None,
 ) -> list[Path]:
-    """复制目录、写入 AI 生成的 Dockerfile、更新版本元数据。"""
+    """复制目录、写入 AI 生成的 Dockerfile、更新版本元数据。
+
+    ``supporting_files`` 是审计后需要改写的辅助文件（相对版本目录 -> 新内容），
+    例如 ``build-QGIS.sh``；只在从旧版本目录复制出的新目录里落盘。
+    """
     if new_version == plan.old_version:
         raise UpgradeError(f"{app_dir.name}: 目标版本与当前版本相同（{new_version}）")
 
@@ -196,6 +202,14 @@ def apply_upgrade(
         dockerfile = dst_dir / "Dockerfile"
         dockerfile.write_text(dockerfile_text.rstrip() + "\n", encoding="utf-8")
         changed.append(dockerfile)
+
+        for rel, content in sorted((supporting_files or {}).items()):
+            target = (dst_dir / rel).resolve()
+            if dst_dir.resolve() not in target.parents:
+                raise UpgradeError(f"{app_dir.name}: 辅助文件路径非法 {rel}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            changed.append(target)
 
         # 应用级文件：README / doc/image-info.yml 位于应用根目录，原地更新
         for rel in _ROOT_VERSION_FILES:

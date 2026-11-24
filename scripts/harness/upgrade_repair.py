@@ -56,6 +56,7 @@ from scripts.lib import (  # noqa: E402
     ai_provider,
     app_notes,
     build_runner,
+    supporting_files,
     version_upgrade,
 )
 from scripts.lib.agent_policy import build_policy  # noqa: E402
@@ -199,6 +200,7 @@ def build_repair_prompt(
     notes: app_notes.AppNotes | None = None,
     mode: str = "repair",
     arch: str = "x86_64",
+    supporting: list[supporting_files.SupportingFile] | None = None,
 ) -> str:
     """组装修复/重放提示：角色规则 + 分支现状 + 失败证据 + 人工说明。"""
     mode = (mode or "repair").strip().lower()
@@ -215,7 +217,9 @@ def build_repair_prompt(
         ),
         "test_script_path": f"{task.domain}/{task.app}/tests/test.sh",
         "source_url": task.source_url,
-        "output_fields": ["dockerfile", "test_script"],
+        "output_fields": ["dockerfile", "test_script"]
+        + (["supporting_files"] if supporting else []),
+        "supporting_files": [item.path for item in supporting or []],
     }
     if mode == "replay":
         prompt += (
@@ -261,6 +265,7 @@ def build_repair_prompt(
         )
     else:
         prompt += "\n## Current tests/test.sh on the upgrade branch\n\n（该分支没有 tests/test.sh）\n"
+    prompt += supporting_files.render_prompt(supporting or [])
     prompt += app_notes.render_prompt(notes)
     if mode != "replay":
         reports = evidence.get("reports") or ["（未找到 evidence 报告）"]
@@ -318,8 +323,13 @@ def build_repair_prompt(
         "\n## Final response contract\n\n"
         "最终响应必须恰好是一个 JSON 对象，包含以下键："
         "success(bool)、dockerfile(str，完整 Dockerfile 文本)、"
-        "test_script(str 或 null)、summary(str)、error(null 或 str)。"
-        "不得修改工作区文件；只返回 JSON。\n"
+        "test_script(str 或 null)、summary(str)、error(null 或 str)"
+        + (
+            "、supporting_files(list，逐个辅助文件的审计结论)"
+            if supporting
+            else ""
+        )
+        + "。不得修改工作区文件；只返回 JSON。\n"
     )
     return prompt
 
@@ -361,7 +371,8 @@ def _repair_files(
     session: dict,
     mode: str = "repair",
     arch: str = "x86_64",
-) -> tuple[str, str | None]:
+    supporting: list[supporting_files.SupportingFile] | None = None,
+) -> tuple[str, str | None, dict[str, str]]:
     """让 Agent 在容器里复现并修复失败指令；失败即终止，不静默保留原文件。"""
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
@@ -399,6 +410,7 @@ def _repair_files(
             notes=notes,
             mode=mode,
             arch=arch,
+            supporting=supporting,
         )
         log_stage(stage, f"{task.app}: {mode} agent round {round_no + 1}")
         agent_error: Exception | None = None
@@ -443,13 +455,18 @@ def _repair_files(
                 f"{task.app}: agent 未正常结束，但容器内已落盘 Dockerfile，继续采用",
             )
         findings = version_upgrade.check_dockerfile(candidate, task.version)
+        findings += supporting_files.deterministic_findings(supporting or [])
+        review_findings, updates = supporting_files.validate(
+            supporting or [], payload
+        )
+        findings += review_findings
         script = payload.get("test_script")
         repaired_script: str | None = None
         if isinstance(script, str) and script.strip():
             findings += _validate_test_script(script)
             repaired_script = script
         if not findings:
-            return candidate, repaired_script
+            return candidate, repaired_script, updates
         log_stage(stage, f"{task.app}: findings={findings}")
 
     raise version_upgrade.UpgradeError(
@@ -547,6 +564,14 @@ def run(
         test_path.read_text(encoding="utf-8") if test_path.is_file() else ""
     )
 
+    supporting = supporting_files.collect(dockerfile_path.parent, dockerfile_text)
+    if supporting:
+        log_stage(
+            stage,
+            f"{task.app}: 需要审计 {len(supporting)} 个辅助文件 "
+            f"{[item.path for item in supporting]}",
+        )
+
     evidence = collect_evidence(evidence_dirs)
     log_stage(
         stage,
@@ -569,7 +594,7 @@ def run(
     }
     label = build_runner.activate_docker_shim(DOCKER_SHIM_DIR)
     try:
-        repaired_dockerfile, repaired_test = _repair_files(
+        repaired_dockerfile, repaired_test, repaired_supporting = _repair_files(
             repo_dir=repo_dir,
             task=task,
             dockerfile_text=dockerfile_text,
@@ -579,6 +604,7 @@ def run(
             session=session,
             mode=mode,
             arch=arch,
+            supporting=supporting,
         )
     finally:
         build_runner.docker_rm(str(session["container"]))
@@ -589,6 +615,10 @@ def run(
         repaired_dockerfile
     )
     dockerfile_path.write_text(repaired_dockerfile.rstrip() + "\n", encoding="utf-8")
+    for changed_path in supporting_files.apply_updates(
+        dockerfile_path.parent, repaired_supporting
+    ):
+        log_stage(stage, f"{task.app}: 已更新辅助文件 {changed_path.name}")
     if repaired_test is not None:
         test_path.parent.mkdir(parents=True, exist_ok=True)
         test_path.write_text(repaired_test.rstrip() + "\n", encoding="utf-8")
