@@ -65,13 +65,21 @@ def branch_name(item: dict) -> str:
     return f"auto/upgrade/{item['package']}-{item['version']}-{slug}"
 
 
+def _yaml_version_key(version: str) -> str:
+    """版本号可能被 YAML 解析成数字（如 4.4 -> float），这类键必须加引号。"""
+    parsed = yaml.safe_load(f"key: {version}")
+    if isinstance(parsed, dict) and isinstance(parsed.get("key"), str):
+        return version
+    return f'"{version}"'
+
+
 def upsert_version(
     text: str, *, os_version: str, version: str, arches: list[str]
 ) -> tuple[str, bool]:
     """返回 (新文本, 是否有改动)；段内已有同版本时原样返回。"""
     lines = text.splitlines()
     header = f"{os_version}:"
-    block = [f"{VERSION_INDENT}{version}:"] + [
+    block = [f"{VERSION_INDENT}{_yaml_version_key(version)}:"] + [
         f"{ARCH_INDENT}- {arch}" for arch in arches
     ]
 
@@ -89,7 +97,8 @@ def upsert_version(
             end = index
             break
 
-    if any(line.strip() == f"{version}:" for line in lines[start:end]):
+    existing_keys = {f"{version}:", f'"{version}":', f"'{version}':"}
+    if any(line.strip() in existing_keys for line in lines[start:end]):
         return text, False
 
     insert_at = end

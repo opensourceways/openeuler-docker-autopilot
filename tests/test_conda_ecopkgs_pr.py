@@ -36,6 +36,32 @@ class UpsertVersionTest(unittest.TestCase):
         # 旧段保持原样
         self.assertEqual(parsed["24.03-LTS-SP2"]["1.9.4"], ["aarch64", "x86_64"])
 
+    def test_numeric_looking_version_is_quoted(self) -> None:
+        updated, changed = conda_ecopkgs_pr.upsert_version(
+            SAMPLE,
+            os_version="24.03-LTS-SP4",
+            version="4.4",
+            arches=["aarch64", "x86_64"],
+        )
+        self.assertTrue(changed)
+        self.assertIn('"4.4":', updated)
+        parsed = yaml.safe_load(updated)
+        self.assertIn("4.4", parsed["24.03-LTS-SP4"])
+        self.assertEqual(
+            parsed["24.03-LTS-SP4"]["4.4"], ["aarch64", "x86_64"]
+        )
+
+    def test_quoted_existing_version_is_untouched(self) -> None:
+        text = '24.03-LTS-SP4:\n    "4.4":\n        - aarch64\n'
+        updated, changed = conda_ecopkgs_pr.upsert_version(
+            text,
+            os_version="24.03-LTS-SP4",
+            version="4.4",
+            arches=["aarch64"],
+        )
+        self.assertFalse(changed)
+        self.assertEqual(updated, text)
+
     def test_inserts_before_the_next_section(self) -> None:
         text = (
             "24.03-LTS-SP4:\n"
