@@ -10,8 +10,8 @@
 # 初始内容由 scripts/utils/scrape_upgrade_apps.py 生成（看板 kunpeng 域）。
 apps:
 - name: grpc-java
-  create:
-    app: grpc-java
+  docker:
+    app: grpc-server
     domain: Others
   source_url: https://github.com/grpc/grpc-java
 - name: 3d-dna

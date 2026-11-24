@@ -473,14 +473,22 @@ def _manual_evidence(
 
 
 def _issue_evidence_for(
-    issue_evidence: dict | None, app: str
+    issue_evidence: dict | None, *candidates: str
 ) -> dict | None:
-    """只把触发 Issue 的证据交给它自己的应用，其它条目仍用 manual 证据。"""
+    """只把触发 Issue 的证据交给它自己的应用，其它条目仍用 manual 证据。
+
+    清单里的 ``name`` 与目标仓目录名可能不同（如 ``grpc-java`` →
+    ``grpc-server``），两者任意命中都算同一个应用。
+    """
     if not issue_evidence:
         return None
     name = str(issue_evidence.get("name") or "").strip()
-    if not name or name.lower() == app.lower():
+    if not name:
         return issue_evidence
+    normalized = name.lower()
+    for candidate in candidates:
+        if candidate and normalized == str(candidate).strip().lower():
+            return issue_evidence
     return None
 
 
@@ -655,7 +663,7 @@ def find_updates(
             )
             continue
 
-        evidence = _issue_evidence_for(issue_evidence, app)
+        evidence = _issue_evidence_for(issue_evidence, entry["name"], app)
         if evidence is None:
             evidence = _manual_evidence(
                 name=entry["name"],

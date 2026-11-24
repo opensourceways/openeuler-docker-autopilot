@@ -88,6 +88,29 @@ class FindUpdatesTest(unittest.TestCase):
 
         self.assertEqual(item["evidence"]["source"], "manual")
 
+    def test_manifest_alias_keeps_issue_evidence_for_the_repo_dir(self) -> None:
+        _make_app(self.repo, "Others", "grpc-server", versions=("1.85.1",))
+        apps = [
+            {
+                "name": "grpc-java",
+                "docker": {"app": "grpc-server", "domain": "Others"},
+                "version": "1.85.4",
+                "source_url": "https://github.com/grpc/grpc-java",
+            }
+        ]
+        result = self._scan(
+            apps=apps,
+            app_filter="grpc-java",
+            issue_evidence={"source": "gitcode-issue", "name": "grpc-java"},
+        )
+
+        # 已按目录把 grpc-java 映射到 grpc-server，不再是新镜像
+        self.assertEqual(result["new_images"], [])
+        self.assertEqual(len(result["updates"]), 1)
+        item = result["updates"][0]
+        self.assertEqual(item["app"], "grpc-server")
+        self.assertEqual(item["evidence"]["source"], "gitcode-issue")
+
     def test_missing_version_is_skipped(self) -> None:
         apps = [
             {
