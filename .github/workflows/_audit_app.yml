@@ -115,13 +115,11 @@ jobs:
             -r requirements.txt
 
       - name: Clone target repository
-        env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-        run: |
+        uses: ./.github/actions/clone-retry
+        with:
           # 修复会推分支，必须完整克隆；GitCode 拒收浅克隆推上来的分支。
-          git clone \
-            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
-            source-repo
+          url: "https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.TARGET_REPO }}.git"
+          destination: source-repo
 
       - name: Audit, fix and push branch
         id: fix
@@ -176,6 +174,11 @@ jobs:
           arch: x86_64
           preflight: "true"
 
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
       - name: Download task spec
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -183,12 +186,12 @@ jobs:
           path: ${{ runner.temp }}/audit
 
       - name: Clone repair branch
-        env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-        run: |
-          git clone --depth 1 --branch "${{ needs.fix.outputs.branch }}" \
-            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${{ needs.fix.outputs.push_repo }}.git" \
-            source-repo
+        uses: ./.github/actions/clone-retry
+        with:
+          url: "https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ needs.fix.outputs.push_repo }}.git"
+          destination: source-repo
+          branch: ${{ needs.fix.outputs.branch }}
+          depth: "1"
 
       - name: Validate natively (x86_64)
         continue-on-error: true
@@ -233,6 +236,11 @@ jobs:
           arch: aarch64
           preflight: "true"
 
+      - name: Install dependencies
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+            -r requirements.txt
+
       - name: Download task spec
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -240,12 +248,12 @@ jobs:
           path: ${{ runner.temp }}/audit
 
       - name: Clone repair branch
-        env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-        run: |
-          git clone --depth 1 --branch "${{ needs.fix.outputs.branch }}" \
-            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${{ needs.fix.outputs.push_repo }}.git" \
-            source-repo
+        uses: ./.github/actions/clone-retry
+        with:
+          url: "https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ needs.fix.outputs.push_repo }}.git"
+          destination: source-repo
+          branch: ${{ needs.fix.outputs.branch }}
+          depth: "1"
 
       - name: Validate natively (aarch64)
         continue-on-error: true

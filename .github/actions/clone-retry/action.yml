@@ -1,0 +1,59 @@
+name: Clone with retry
+description: >-
+  Clone a Git repository and retry transient transport failures
+  (curl 18 / early EOF / connection reset) before failing the job.
+
+inputs:
+  url:
+    description: "Clone URL; credentials may be embedded and will be masked"
+    required: true
+  destination:
+    description: "Local directory to clone into"
+    required: true
+  branch:
+    description: "Branch or tag to clone; empty clones the default branch"
+    required: false
+    default: ""
+  depth:
+    description: "Shallow clone depth; empty keeps the full history"
+    required: false
+    default: ""
+  attempts:
+    description: "Total clone attempts before giving up"
+    required: false
+    default: "3"
+
+runs:
+  using: composite
+  steps:
+    - name: Clone
+      shell: bash
+      env:
+        CLONE_URL: ${{ inputs.url }}
+        CLONE_DEST: ${{ inputs.destination }}
+        CLONE_BRANCH: ${{ inputs.branch }}
+        CLONE_DEPTH: ${{ inputs.depth }}
+        CLONE_ATTEMPTS: ${{ inputs.attempts }}
+      run: |
+        args=()
+        if [ -n "${CLONE_BRANCH}" ]; then
+          args+=(--branch "${CLONE_BRANCH}")
+        fi
+        if [ -n "${CLONE_DEPTH}" ]; then
+          args+=(--depth "${CLONE_DEPTH}")
+        fi
+        for attempt in $(seq 1 "${CLONE_ATTEMPTS}"); do
+          # 失败尝试会留下半成品目录，重试前必须清掉，否则 git 直接报
+          # "destination path already exists"。
+          rm -rf -- "${CLONE_DEST}"
+          if git clone "${args[@]}" "${CLONE_URL}" "${CLONE_DEST}"; then
+            exit 0
+          fi
+          if [ "${attempt}" -eq "${CLONE_ATTEMPTS}" ]; then
+            echo "::error::git clone failed after ${CLONE_ATTEMPTS} attempts" >&2
+            exit 1
+          fi
+          delay=$(( attempt * 10 ))
+          echo "::warning::git clone attempt ${attempt}/${CLONE_ATTEMPTS} failed, retrying in ${delay}s" >&2
+          sleep "${delay}"
+        done

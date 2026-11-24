@@ -712,14 +712,14 @@ def _finalize_issue(
             else f"{pipeline_label}未完成，需要人工处理"
             f"（Issue 状态保持「{target_status}」）。"
         )
-        comment = "\n".join(
-            (
-                headline,
-                "",
-                f"- Workflow: {run_url}",
-                f"- Failure summary: {failure_summary or 'see workflow run'}",
-            )
-        )
+        lines = [headline, "", f"- Workflow: {run_url}"]
+        summary = failure_summary.strip()
+        if summary:
+            # 失败摘要可能是多行的日志摘录，单独成段，不要塞进列表项。
+            lines.extend(["", summary])
+        else:
+            lines.append("- Failure summary: see workflow run")
+        comment = "\n".join(lines)
     client.create_issue_comment(
         target_repo=target_repo,
         number=issue_number,

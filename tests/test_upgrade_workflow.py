@@ -96,6 +96,9 @@ def test_finalize_job_writes_back_only_when_dispatched_from_an_issue():
     assert 'GITCODE_TOKEN' in text
     # 任一本轮 job 失败或取消都回写为 failure，Issue 保持打开
     assert 'failure|cancelled' in text
+    # 失败时把各失败 job 的关键日志一并贴进评论
+    assert 'collect_failed_logs.py' in text
+    assert '--failure-summary' in text
 
 
 def test_conda_updates_are_registered_through_the_reusable_workflow():
@@ -220,10 +223,17 @@ def test_prepare_generates_tests_and_applies_the_upgrade():
     prepare = _workflow(APP)['jobs']['prepare']
     text = _squash(prepare['steps'])
     assert 'upgrade_apply.py' in text
-    assert 'git clone' in text
-    # 必须完整克隆：浅克隆推不到 GitCode
+    # 克隆统一走带重试的 action，且必须完整克隆：浅克隆推不到 GitCode
+    assert './.github/actions/clone-retry' in text
     assert '--depth' not in text
     assert set(prepare['outputs']) >= {'branch', 'test_status', 'push_repo'}
+
+
+def test_workflow_clones_retry_transient_network_failures():
+    for path in (UPGRADE, APP, AUDIT):
+        text = path.read_text(encoding='utf-8')
+        assert 'git clone' not in text
+        assert './.github/actions/clone-retry' in text
 
 
 def test_no_legacy_runner_or_legacy_scripts_are_referenced():

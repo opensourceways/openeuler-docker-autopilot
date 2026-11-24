@@ -131,16 +131,19 @@ jobs:
           "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
             -r requirements.txt
 
-      - name: Clone target repositories
-        env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-        run: |
-          git clone --depth 1 \
-            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
-            source-repo
-          git clone --depth 1 \
-            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/openeuler/conda-ecopkgs.git" \
-            conda-repo
+      - name: Clone target repository
+        uses: ./.github/actions/clone-retry
+        with:
+          url: "https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.TARGET_REPO }}.git"
+          destination: source-repo
+          depth: "1"
+
+      - name: Clone conda repository
+        uses: ./.github/actions/clone-retry
+        with:
+          url: "https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/openeuler/conda-ecopkgs.git"
+          destination: conda-repo
+          depth: "1"
 
       - name: Scan app list vs target repos
         id: scan
@@ -412,17 +415,15 @@ jobs:
       - name: Check out workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Write result back to source Issue
+      - name: Compute outcome
+        id: outcome
         env:
-          GITCODE_ISSUE_TOKEN: ${{ secrets.GITCODE_ISSUE_TOKEN || secrets.GITCODE_TOKEN }}
-          SOURCE_ISSUE: ${{ inputs.source_issue }}
           DISCOVER_RESULT: ${{ needs.discover.result }}
           UPGRADE_RESULT: ${{ needs.upgrade.result }}
           CONDA_RESULT: ${{ needs.conda-upgrade.result }}
           CREATE_RESULT: ${{ needs.create-image.result }}
           REPAIR_RESULT: ${{ needs.repair.result }}
           AUDIT_RESULT: ${{ needs.audit.result }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           outcome=success
           for result in \
@@ -436,8 +437,35 @@ jobs:
               failure|cancelled) outcome=failure ;;
             esac
           done
+          echo "outcome=${outcome}" >> "$GITHUB_OUTPUT"
+
+      # 失败时把各失败 job 的关键日志行摘出来，回写评论时一并附上。
+      - name: Collect failed job logs
+        if: ${{ steps.outcome.outputs.outcome == 'failure' }}
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 scripts/utils/collect_failed_logs.py \
+            --output "${RUNNER_TEMP}/failure-log.md"
+
+      - name: Write result back to source Issue
+        env:
+          GITCODE_ISSUE_TOKEN: ${{ secrets.GITCODE_ISSUE_TOKEN || secrets.GITCODE_TOKEN }}
+          SOURCE_ISSUE: ${{ inputs.source_issue }}
+          OUTCOME: ${{ steps.outcome.outputs.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FAILURE_LOG: ${{ runner.temp }}/failure-log.md
+        run: |
+          summary=""
+          if [ -s "${FAILURE_LOG}" ]; then
+            summary="$(cat "${FAILURE_LOG}")"
+          fi
           python3 scripts/harness/flow.py upgrade-issue-finalize \
             --target-repo "${TARGET_REPO}" \
             --issue-number "${SOURCE_ISSUE}" \
-            --outcome "${outcome}" \
-            --run-url "${RUN_URL}"
+            --outcome "${OUTCOME}" \
+            --run-url "${RUN_URL}" \
+            --failure-summary "${summary}"

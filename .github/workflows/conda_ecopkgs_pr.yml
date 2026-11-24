@@ -86,12 +86,10 @@ jobs:
             -r requirements.txt
 
       - name: Clone conda-ecopkgs
-        env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-        run: |
-          git clone \
-            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
-            conda-repo
+        uses: ./.github/actions/clone-retry
+        with:
+          url: "https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.TARGET_REPO }}.git"
+          destination: conda-repo
 
       - name: Open upgrade PRs
         env:
