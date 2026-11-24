@@ -24,11 +24,12 @@ _TEST_STATUS_TEXT = {
 
 
 def build_title(item: dict) -> str:
-    """与场景一 ``[New Image] Add ...`` 对齐的升级 PR 标题。"""
-    return (
-        f"[自动升级] Upgrade {item['app']} to {item['version']} "
-        f"for openEuler {item['os_version']}"
-    )
+    """自动升级 PR 标题：``【自动升级】[kunpeng-install:<mode>] <app> <version>``。
+
+    ``mode`` 优先取 Agent 根据最终 Dockerfile 返回的 ``install_mode``。
+    """
+    mode = upstream_evidence.resolved_install_mode(item)
+    return f"【自动升级】[kunpeng-install:{mode}] {item['app']} {item['version']}"
 
 
 def build_body(item: dict, test_status: str) -> str:

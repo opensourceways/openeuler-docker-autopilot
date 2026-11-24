@@ -98,6 +98,7 @@ class TestIsAutoUpgrade:
         '【自动升级】etcd容器镜像升级至3.6.11版本.',
         '【自动升级】openfoam容器镜像升级至20260907版本.',
         '【自动升级】pkg升级至1.0.0-rc1版本.',  # 预发布与否由此后单独判断
+        '【自动升级】[kunpeng-install:source] grpc 1.85.4',
     ])
     def test_auto_upgrade_titles_are_kept(self, title):
         assert _is_auto_upgrade(title) is True, f"Expected auto-upgrade: {title}"
@@ -123,6 +124,8 @@ class TestSkippedApp:
         ('【自动升级】cloudwego容器镜像升级至0.6.0版本.', 'cloudwego'),
         ('【自动升级】MILVUS容器镜像升级至3.0.2版本.', 'milvus'),  # 大小写不敏感
         ('【自动升级】milvus升级至3.0.2版本.', 'milvus'),  # 无「容器镜像」
+        ('【自动升级】[kunpeng-install:binary] milvus 3.0.2', 'milvus'),
+        ('【自动升级】[kunpeng-install:source] MILVUS 3.0.2', 'milvus'),
     ])
     def test_skipped_apps_are_detected(self, title, app):
         assert _skipped_app(title) == app
@@ -131,6 +134,7 @@ class TestSkippedApp:
         '【自动升级】openfoam容器镜像升级至20260907版本.',
         '【自动升级】nginx升级至1.0.0版本.',
         '【自动升级】rosetta容器镜像升级至1.0.0版本.',  # 不能因子串误伤
+        '【自动升级】[kunpeng-install:source] grpc 1.85.4',
         'docs: update readme',
         '',
     ])

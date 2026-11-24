@@ -93,6 +93,87 @@ def from_issue_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     }
 
 
+_INSTALL_MODES = {"source", "binary"}
+
+
+def install_mode(evidence: Mapping[str, Any] | None) -> str:
+    """从 ``install_candidates`` 推导候选安装方式（仅作兜底）。
+
+    只要候选里出现 ``type=binary``，就按二进制候选处理；否则按源码候选。
+    最终采用哪种方式由 Agent 根据实际 Dockerfile 决定。
+    """
+    candidates = (evidence or {}).get("install_candidates") or []
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            if (
+                isinstance(candidate, Mapping)
+                and str(candidate.get("type") or "").strip().lower()
+                == "binary"
+            ):
+                return "binary"
+    return "source"
+
+
+def normalize_install_mode(value: object) -> str:
+    """把 Agent 返回的安装方式归一化；非法值返回空串。"""
+    mode = str(value or "").strip().lower()
+    return mode if mode in _INSTALL_MODES else ""
+
+
+def resolved_install_mode(item: Mapping[str, Any] | None) -> str:
+    """PR 元数据使用的安装方式：优先 Agent 根据最终 Dockerfile 返回的值。"""
+    item = item or {}
+    mode = normalize_install_mode(item.get("install_mode"))
+    if mode:
+        return mode
+    return install_mode(item.get("evidence"))
+
+
+def render_install_section(evidence: Mapping[str, Any] | None) -> str:
+    """Dockerfile 生成/修复提示：候选安装方式（Agent 最终决定）。
+
+    只给 Dockerfile 使用；测试生成等其它提示仍走 :func:`render_prompt`，不受影响。
+    """
+    evidence = evidence or {}
+    candidates = evidence.get("install_candidates") or []
+    lines = [
+        "",
+        "## Install candidates (reference for the Dockerfile)",
+        "",
+        "- install_candidates 是候选安装方式，仅供参考；"
+        "最终由你根据该版本实际可用的产物与构建结果决定：",
+    ]
+    if isinstance(candidates, list) and candidates:
+        for candidate in candidates:
+            if not isinstance(candidate, Mapping):
+                continue
+            lines.append(
+                f"  - type=`{candidate.get('type')}` "
+                f"url={candidate.get('url')} "
+                f"artifact=`{candidate.get('artifact')}`"
+            )
+    else:
+        lines.append("  - （未提供候选，按上游源码仓库的默认构建方式处理）")
+    lines += [
+        "- 若最终采用 binary：直接下载/解压/安装该制品，**不要从源码编译**；",
+        "- 若最终采用 source：按源码候选或上游源码仓库编译安装。",
+        "- 该选择只约束 Dockerfile；不要为它改动测试脚本、README 或元数据。",
+        '- 在最终 JSON 返回 `install_mode`（`"source"` 或 `"binary"`），'
+        "必须与最终 Dockerfile 的实际做法一致。",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def for_non_dockerfile(evidence: Mapping[str, Any] | None) -> dict[str, Any]:
+    """去掉安装候选的证据副本：安装方式只作用于 Dockerfile。
+
+    测试生成等场景不需要、也不应该被 ``install_candidates`` 影响。
+    """
+    copy = dict(evidence or {})
+    copy.pop("install_candidates", None)
+    return copy
+
+
 def _collector_entries(payload: dict[str, Any]) -> list[Any]:
     for key in _COLLECTOR_KEYS:
         value = payload.get(key)

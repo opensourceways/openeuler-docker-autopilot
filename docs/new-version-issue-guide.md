@@ -119,7 +119,7 @@
 | `upstream_evidence.evidence` | 否 | 含 `check_id`、`source_url`、`ci_workflows` |
 | `upstream_evidence.evidence.ci_workflows[]` | 否 | 每项含 `workflow_path`、`workflow_url`、`workflow_run_url`、`test_depth` |
 | `l3_evidence` | 否 | 有 docker 镜像时优先；含 `check_id`、`artifact`、`source_url` |
-| `install_candidates` | 否 | 若填写，每项含 `type`（`source` / `binary`）、`url`（必须 `https://`）、`artifact` |
+| `install_candidates` | 否 | 若填写，每项含 `type`（`source` / `binary`）、`url`（必须 `https://`）、`artifact`；候选安装方式，最终是否二进制直装由升级 Agent 根据实际 Dockerfile 决定 |
 
 > 正文缺少 `software`、软件名/版本与标题不一致、或上游地址不是 HTTPS 时，Issue 会被置为「已拒绝」并回帖原因。
 

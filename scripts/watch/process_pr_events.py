@@ -67,8 +67,13 @@ _AUTO_UPGRADE_MARKER = '【自动升级】'
 # 明确跳过的软件：这些应用的自动升级 PR 不触发修复
 SKIPPED_APPS = {'milvus', 'pyrosetta', 'cloudwego'}
 
-# 从自动升级标题里取软件名：'【自动升级】milvus容器镜像升级至3.0.2版本.' → 'milvus'
+# 从自动升级标题里取软件名：
+#   '【自动升级】milvus容器镜像升级至3.0.2版本.' → 'milvus'
+#   '【自动升级】[kunpeng-install:source] grpc 1.85.4' → 'grpc'
 _AUTO_UPGRADE_APP_RE = re.compile(r'【自动升级】\s*(.+?)\s*(?:容器镜像)?升级至')
+_AUTO_UPGRADE_INSTALL_APP_RE = re.compile(
+    r'【自动升级】\s*\[kunpeng-install:(?:source|binary)\]\s*(\S+)'
+)
 
 
 def _is_auto_upgrade(title: str) -> bool:
@@ -78,7 +83,10 @@ def _is_auto_upgrade(title: str) -> bool:
 
 def _skipped_app(title: str) -> str:
     """返回标题所属、且在跳过列表里的软件名；未命中返回空串。"""
-    match = _AUTO_UPGRADE_APP_RE.search(title or '')
+    match = (
+        _AUTO_UPGRADE_INSTALL_APP_RE.search(title or '')
+        or _AUTO_UPGRADE_APP_RE.search(title or '')
+    )
     if not match:
         return ''
     app = match.group(1).strip().lower()

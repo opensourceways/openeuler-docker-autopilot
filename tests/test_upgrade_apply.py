@@ -77,6 +77,40 @@ class DockerfilePromptTest(unittest.TestCase):
         self.assertIn("ARM 原生 job 全 success", prompt)
         self.assertIn("dockerfile", prompt)
 
+    def test_prompt_marks_binary_install_and_skips_source_build(self) -> None:
+        app = Path("/tmp/Database/kvrocks")
+        plan = version_upgrade.UpgradePlan(
+            old_version="2.16.0",
+            os_version="24.03-lts-sp4",
+            src_dir=app / "2.16.0" / "24.03-lts-sp4",
+        )
+        prompt = upgrade_apply.build_dockerfile_prompt(
+            app="kvrocks",
+            domain="Database",
+            plan=plan,
+            item={
+                "version": "2.17.0",
+                "source_url": "https://github.com/apache/kvrocks",
+                "evidence": {
+                    **_EVIDENCE,
+                    "install_candidates": [
+                        {
+                            "type": "binary",
+                            "url": "https://example.com/kvrocks-2.17.0.tar.gz",
+                            "artifact": "kvrocks-2.17.0.tar.gz",
+                        }
+                    ],
+                },
+            },
+            old_dockerfile="FROM openeuler/openeuler:24.03-lts-sp4\n",
+        )
+
+        self.assertIn("Install candidates (reference for the Dockerfile)", prompt)
+        self.assertIn("候选安装方式", prompt)
+        self.assertIn("若最终采用 binary", prompt)
+        self.assertIn("install_mode", prompt)
+        self.assertIn("https://example.com/kvrocks-2.17.0.tar.gz", prompt)
+
     def test_prompt_carries_manifest_build_notes(self) -> None:
         app = Path("/tmp/Storage/drbd")
         plan = version_upgrade.UpgradePlan(
@@ -181,7 +215,7 @@ class GenerateDockerfileTest(unittest.TestCase):
                     upgrade_apply.build_runner, "docker_rm_images_by_label"
                 ),
             ):
-                dockerfile, supporting, app_note = (
+                dockerfile, supporting, app_note, install_mode = (
                     upgrade_apply._generate_dockerfile(
                         repo_dir=app.parent.parent,
                         app="kvrocks",
@@ -193,6 +227,7 @@ class GenerateDockerfileTest(unittest.TestCase):
 
         self.assertEqual(supporting, {})
         self.assertEqual(app_note, "构建约 40 分钟；必须保留 boost 依赖。")
+        self.assertEqual(install_mode, "source")
         self.assertEqual(captured["role"], "upgrade_creator")
         self.assertIn("kp.l1.release_artifact", captured["prompt"])
         self.assertIn("Container build verification", captured["prompt"])
@@ -296,7 +331,7 @@ class GenerateDockerfileTest(unittest.TestCase):
                     upgrade_apply.build_runner, "docker_rm_images_by_label"
                 ),
             ):
-                dockerfile, _, app_note = upgrade_apply._generate_dockerfile(
+                dockerfile, _, app_note, _ = upgrade_apply._generate_dockerfile(
                     repo_dir=app.parent.parent,
                     app="kvrocks",
                     domain="Database",
@@ -350,6 +385,58 @@ class EnsureTestScriptTest(unittest.TestCase):
                     plan=plan,
                     item={"version": "2.17.0"},
                 )
+
+
+class UpgradePrTitleTest(unittest.TestCase):
+    def test_title_prefers_the_agent_install_mode(self) -> None:
+        from scripts.harness import upgrade_open_pr
+
+        binary = upgrade_open_pr.build_title(
+            {
+                "app": "grpc",
+                "version": "1.85.4",
+                "install_mode": "binary",
+                "evidence": {"install_candidates": [{"type": "source"}]},
+            }
+        )
+        source = upgrade_open_pr.build_title(
+            {
+                "app": "grpc",
+                "version": "1.85.4",
+                "install_mode": "source",
+                "evidence": {
+                    "install_candidates": [
+                        {"type": "binary", "url": "https://example.com/bin"}
+                    ]
+                },
+            }
+        )
+
+        self.assertEqual(
+            binary, "【自动升级】[kunpeng-install:binary] grpc 1.85.4"
+        )
+        self.assertEqual(
+            source, "【自动升级】[kunpeng-install:source] grpc 1.85.4"
+        )
+
+    def test_title_falls_back_to_candidates_without_agent_mode(self) -> None:
+        from scripts.harness import upgrade_open_pr
+
+        title = upgrade_open_pr.build_title(
+            {
+                "app": "grpc",
+                "version": "1.85.4",
+                "evidence": {
+                    "install_candidates": [
+                        {"type": "binary", "url": "https://example.com/bin"}
+                    ]
+                },
+            }
+        )
+
+        self.assertEqual(
+            title, "【自动升级】[kunpeng-install:binary] grpc 1.85.4"
+        )
 
 
 if __name__ == "__main__":

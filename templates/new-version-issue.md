@@ -47,4 +47,5 @@
 ```
 
 > `l3_evidence` 只在 docker 仓库已有该版本镜像时填写；有镜像时优先参考它。
-> `install_candidates[].type` 只能是 `source` 或 `binary`。
+> `install_candidates` 是候选安装方式：`type=binary` 表示可直接安装二进制，
+> `type=source` 表示按源码构建；最终采用哪种由升级 Agent 根据实际 Dockerfile 决定。

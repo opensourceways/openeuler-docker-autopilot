@@ -228,3 +228,90 @@ class IssueEvidenceTest(unittest.TestCase):
         self.assertIn("1.85.4", markdown)
         self.assertIn("kp.l1.arm_ci", markdown)
         self.assertIn("actions/runs/1", markdown)
+
+
+class InstallModeTest(unittest.TestCase):
+    def test_binary_candidate_wins_over_source(self) -> None:
+        evidence = {
+            "install_candidates": [
+                {"type": "source", "url": "https://example.com/src.tar.gz"},
+                {"type": "binary", "url": "https://example.com/bin.tar.gz"},
+            ]
+        }
+
+        self.assertEqual(upstream_evidence.install_mode(evidence), "binary")
+        self.assertEqual(
+            upstream_evidence.resolved_install_mode({"evidence": evidence}),
+            "binary",
+        )
+        self.assertEqual(
+            upstream_evidence.normalize_install_mode("BINARY"), "binary"
+        )
+        self.assertEqual(
+            upstream_evidence.normalize_install_mode("source/binary"), ""
+        )
+
+    def test_no_candidates_defaults_to_source(self) -> None:
+        self.assertEqual(upstream_evidence.install_mode({}), "source")
+        self.assertEqual(
+            upstream_evidence.resolved_install_mode({"evidence": {}}),
+            "source",
+        )
+        self.assertEqual(
+            upstream_evidence.resolved_install_mode(None), "source"
+        )
+
+    def test_install_section_is_dockerfile_only_guidance(self) -> None:
+        text = upstream_evidence.render_install_section(
+            {
+                "install_candidates": [
+                    {
+                        "type": "binary",
+                        "url": "https://example.com/grpc-1.85.4.tar.gz",
+                        "artifact": "grpc-1.85.4.tar.gz",
+                    }
+                ]
+            }
+        )
+
+        self.assertIn(
+            "Install candidates (reference for the Dockerfile)", text
+        )
+        self.assertIn("候选安装方式", text)
+        self.assertIn("若最终采用 binary", text)
+        self.assertIn("install_mode", text)
+        self.assertIn("https://example.com/grpc-1.85.4.tar.gz", text)
+        self.assertIn("只约束 Dockerfile", text)
+
+    def test_resolved_install_mode_prefers_agent_decision(self) -> None:
+        item = {
+            "install_mode": "source",
+            "evidence": {
+                "install_candidates": [
+                    {"type": "binary", "url": "https://example.com/bin"}
+                ]
+            },
+        }
+
+        self.assertEqual(
+            upstream_evidence.resolved_install_mode(item), "source"
+        )
+        self.assertEqual(
+            upstream_evidence.resolved_install_mode(
+                {"evidence": item["evidence"]}
+            ),
+            "binary",
+        )
+
+    def test_non_dockerfile_copy_drops_install_candidates(self) -> None:
+        evidence = {
+            "version": "1.85.4",
+            "install_candidates": [{"type": "binary", "url": "https://x"}],
+        }
+
+        stripped = upstream_evidence.for_non_dockerfile(evidence)
+
+        self.assertNotIn("install_candidates", stripped)
+        self.assertEqual(stripped["version"], "1.85.4")
+        # 入参不被修改
+        self.assertIn("install_candidates", evidence)

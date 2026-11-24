@@ -413,6 +413,8 @@ plan-repairs/repair 任一验证失败时自动挑出失败应用，在原分支
 ```
 
 - **Dockerfile 生成**（[`upgrade_apply.py`](scripts/harness/upgrade_apply.py)）：把旧版本 Dockerfile、目标版本、上游地址与 Issue 提供的证据包（`support_level`、`check_id`、`test_depth`、`ci_workflows`、`install_candidates` 等）一起注入升级 Agent，参考上游源码重新生成完整 Dockerfile；**不做版本串机械替换**，生成结果缺目标版本号或 `FROM` 即失败。
+- **安装方式**（`install_candidates`）：候选安装方式，供 Dockerfile 生成参考；最终采用 `binary` 还是 `source` 由 Agent 根据该版本实际可用的产物和最终 Dockerfile 决定。选择只作用于 Dockerfile，不改测试脚本与元数据。
+- **PR 元数据**：升级 PR 标题为 `【自动升级】[kunpeng-install:<source|binary>] <app> <version>`，标记取 Agent 根据最终 Dockerfile 返回的 `install_mode`；commit message 为 `feat: upgrade <app> to <version>`，含软件与版本。审计修复 PR 使用同一标题格式。
 - **双架构容器重放**：生成阶段先在 x86_64 容器里把候选 Dockerfile 逐条跑通，随后在 arm64 Runner 上用同一份文件再做一次完整重放（[`upgrade_repair.py --mode replay`](scripts/harness/upgrade_repair.py)）；只修架构相关问题，没有差异时不产生空提交。
 - **确定性落盘**（[`version_upgrade.py`](scripts/lib/version_upgrade.py)）：把该应用最新的 `{old_version}/{os}/` 复制为 `{new_version}/{os}/`，写入 AI 生成的 Dockerfile，更新应用根目录 `README.md` / `doc/image-info.yml` 的版本号，并向 `meta.yml` 追加 `{new_version}-{oe_tag}` 条目。失败时清理半成品目录。
 - **补测试**（复用场景四）：应用没有 `tests/test.sh` 时调用 `testgen_generate.generate_test_script`，把上游证据作为额外上下文；生成失败**不阻断**升级，PR 正文标注「测试脚本待补」。
@@ -464,6 +466,7 @@ clone 目标仓 → 确定性检查 → upgrade_auditor Agent → upgrade_fixer 
 - [`parse_issue.py`](scripts/harness/parse_issue.py) 校验必填字段，并要求 `software.name` / `software.version` 与标题一致；[`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把它归一化为 `source=gitcode-issue` 的证据包，保留原始字段；
 - [`upgrade_scan.py`](scripts/harness/upgrade_scan.py) 只在应用同名时把该证据写入升级矩阵，其它条目仍回落到 `source=manual`；
 - 证据会出现在 PR 正文、Dockerfile 生成提示与测试生成提示里，**只作参考，不参与门禁**；上游版本是否真实可用，由 AI 生成与双架构构建/功能测试兜底验证。
+- `install_candidates` 是候选安装方式，最终由 Agent 按实际 Dockerfile 决定 `install_mode`；升级 PR 标题携带该方式对应的 `[kunpeng-install:<source|binary>]` 标记。
 
 ### 4.6 PR CI 修复组件（手动）
 

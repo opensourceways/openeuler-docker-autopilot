@@ -118,7 +118,7 @@ jobs:
       branch: ${{ steps.apply.outputs.branch || steps.repair.outputs.branch }}
       test_status: ${{ steps.apply.outputs.test_status || steps.repair.outputs.test_status }}
       push_repo: ${{ steps.apply.outputs.push_repo || steps.repair.outputs.push_repo }}
-      item_json: ${{ steps.repair.outputs.item_json }}
+      item_json: ${{ steps.apply.outputs.item_json || steps.repair.outputs.item_json }}
     steps:
       - name: Check out workflow source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

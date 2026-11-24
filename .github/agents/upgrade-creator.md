@@ -66,6 +66,10 @@
 - `release_artifact` 显示有 ARM 产物时，可以优先使用官方产物；只有源码包时，
   继续使用源码构建，并从 `tag_url` / 固定 tag 的源码确认产物名与构建命令。
 - `doc_declared=not_found` 不代表不支持，只说明文档没写；不要据此关闭任何功能。
+- **`install_candidates` 是候选安装方式**：你可以根据该版本实际可用的产物和构建结果
+  选择 binary 或 source；若选 binary 就直接安装制品、不做源码编译，若选 source 就按源码构建。
+  最终必须在 JSON 的 `install_mode` 中声明实际采用的方式，且与最终 Dockerfile 一致。
+  该选择只影响 Dockerfile。
 - 证据永远不阻断生成：即使 3 条都为空，也必须基于旧 Dockerfile 和上游 tag 生成候选。
 
 ## 生成步骤

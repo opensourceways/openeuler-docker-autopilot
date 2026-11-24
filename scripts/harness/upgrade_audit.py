@@ -531,7 +531,9 @@ def ensure_test_script(repo_dir: Path, context: dict) -> list[Path]:
         latest_version=str(context["version"]),
         api_key=api_key,
         executable=Path(executable),
-        extra_context=upstream_evidence.render_prompt(context["evidence"]),
+        extra_context=upstream_evidence.render_prompt(
+            upstream_evidence.for_non_dockerfile(context["evidence"])
+        ),
         timeout=AUDIT_AGENT_TIMEOUT_SECONDS,
     )
     if findings:
@@ -611,6 +613,10 @@ def build_fix_prompt(
         "tag": (context["evidence"] or {}).get("tag"),
         "tag_url": (context["evidence"] or {}).get("tag_url"),
         "commit_sha": (context["evidence"] or {}).get("commit_sha"),
+        "install_candidates": (context["evidence"] or {}).get(
+            "install_candidates"
+        )
+        or [],
         "test_script_paths": [s["path"] for s in context["test_scripts"]],
     }
     parts = [
@@ -618,6 +624,7 @@ def build_fix_prompt(
         "\n\n## Immutable fix contract\n\n"
         + json.dumps(contract, indent=2, ensure_ascii=False),
         "\n\n" + build_policy(),
+        upstream_evidence.render_install_section(context["evidence"]),
         "\n\n## Deterministic findings\n\n"
         + json.dumps(findings, indent=2, ensure_ascii=False),
         "\n\n## AI audit conclusion\n\n"
@@ -649,6 +656,7 @@ def build_fix_prompt(
         "\n\n## Final response contract\n\n"
         "最终响应必须恰好是一个 JSON 对象，包含以下键："
         "success(bool)、dockerfile(str，完整 Dockerfile)、"
+        'install_mode(str，"source" 或 "binary"，必须与最终 Dockerfile 的实际做法一致)、'
         "image_info(str，完整 doc/image-info.yml；不需要修改时原样返回)、"
         "changes(list[str])、summary(str)、"
         "app_note(str 或 null，本次新增的可复用经验)、error(null 或 str)。"
@@ -672,6 +680,10 @@ def validate_fix(context: dict, payload: dict) -> list[str]:
             problems.append(
                 f"Dockerfile 使用的 tag {observed} 与看板 tag {expected_tag} 不一致"
             )
+
+    mode = payload.get("install_mode")
+    if mode is not None and not upstream_evidence.normalize_install_mode(mode):
+        problems.append('install_mode 必须是 "source" 或 "binary"')
 
     image_info = payload.get("image_info")
     if image_info is not None:
@@ -856,11 +868,20 @@ def open_fix_pr(
         log_stage("upgrade-audit", f"{context['app']}: PR already exists {url}")
         return url
 
+    install_mode = upstream_evidence.resolved_install_mode(
+        {
+            "install_mode": fix_payload.get("install_mode"),
+            "evidence": context.get("evidence"),
+        }
+    )
     pr = create_pull_request(
         target_repo,
         head,
         base,
-        f"fix: audit {context['app']} {context['version']}",
+        (
+            f"【自动升级】[kunpeng-install:{install_mode}] "
+            f"{context['app']} {context['version']}"
+        ),
         build_fix_pr_body(context, findings, audit_payload, fix_payload),
         token,
     )

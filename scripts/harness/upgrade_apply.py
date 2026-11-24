@@ -144,7 +144,9 @@ def _ensure_test_script(
         latest_version=str(item["version"]),
         api_key=api_key,
         executable=Path(executable),
-        extra_context=upstream_evidence.render_prompt(item.get("evidence")),
+        extra_context=upstream_evidence.render_prompt(
+            upstream_evidence.for_non_dockerfile(item.get("evidence"))
+        ),
     )
     if findings:
         detail = "; ".join(f"{f['code']}: {f['message']}" for f in findings)
@@ -189,6 +191,7 @@ def build_dockerfile_prompt(
         "tag": evidence.get("tag"),
         "tag_url": evidence.get("tag_url"),
         "commit_sha": evidence.get("commit_sha"),
+        "install_candidates": evidence.get("install_candidates") or [],
         "output_fields": (
             ["dockerfile", "supporting_files"] if supporting else ["dockerfile"]
         ),
@@ -201,6 +204,7 @@ def build_dockerfile_prompt(
         + json.dumps(contract, indent=2, ensure_ascii=False)
         + "\n\n"
         + build_policy()
+        + upstream_evidence.render_install_section(evidence)
         + "\n\n## Current Dockerfile (previous version)\n\n```dockerfile\n"
         + old_dockerfile.rstrip()
         + "\n```\n"
@@ -226,6 +230,7 @@ def build_dockerfile_prompt(
         "\n## Final response contract\n\n"
         "最终响应必须恰好是一个 JSON 对象，包含以下键："
         "success(bool)、dockerfile(str，完整 Dockerfile 文本)、"
+        'install_mode(str，"source" 或 "binary"，必须与最终 Dockerfile 的实际做法一致)、'
         "summary(str)、app_note(str 或 null，本次新增的可复用构建经验)、"
         "error(null 或 str)"
         + (
@@ -376,13 +381,13 @@ def _generate_dockerfile(
     domain: str,
     plan: version_upgrade.UpgradePlan,
     item: dict,
-) -> tuple[str, dict[str, str], str]:
+) -> tuple[str, dict[str, str], str, str]:
     """让 AI 生成新版本 Dockerfile，并在容器里逐条跑通、失败当场修。
 
     与 CI 失败修复链路同构：生成与修复在同一次 Agent 调用里完成，
     产物以「容器里实际跑通的那份」为准；验证阶段只做确定性构建。
     同时审计 Dockerfile 引用的辅助脚本，返回
-    ``(Dockerfile, 需要写回的辅助文件, app_note)``。
+    ``(Dockerfile, 需要写回的辅助文件, app_note, install_mode)``。
     """
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
@@ -509,7 +514,14 @@ def _generate_dockerfile(
             )
             findings += review_findings
             if not findings:
-                return candidate, updates, _app_note(payload)
+                return candidate, updates, _app_note(payload), (
+                    upstream_evidence.resolved_install_mode(
+                        {
+                            "install_mode": payload.get("install_mode"),
+                            "evidence": item.get("evidence"),
+                        }
+                    )
+                )
             log_stage("upgrade-apply", f"{app}: findings={findings}")
     finally:
         build_runner.docker_rm(container)
@@ -550,8 +562,10 @@ def run(
         "upgrade-apply",
         f"{app}: {plan.old_version} -> {new_version} (os={plan.os_version})",
     )
-    dockerfile_text, supporting_updates, app_note = _generate_dockerfile(
-        repo_dir=repo_dir, app=app, domain=domain, plan=plan, item=item
+    dockerfile_text, supporting_updates, app_note, install_mode = (
+        _generate_dockerfile(
+            repo_dir=repo_dir, app=app, domain=domain, plan=plan, item=item
+        )
     )
     if app_notes.save_note_text(app_note_out, app_note) is not None:
         log_stage("upgrade-apply", f"{app}: app note 已暂存 -> {app_note_out}")
@@ -596,9 +610,19 @@ def run(
     task_spec_out.parent.mkdir(parents=True, exist_ok=True)
     payload = json.loads(task.to_json())
     payload["evidence"] = item.get("evidence") or {}
+    payload["install_mode"] = install_mode
     task_spec_out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    _emit_output(branch=branch, test_status=test_status, push_repo=push_repo)
+    _emit_output(
+        branch=branch,
+        test_status=test_status,
+        push_repo=push_repo,
+        item_json=json.dumps(
+            {**item, "install_mode": install_mode},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    )
     log_stage(
         "upgrade-apply",
         f"{app}: done changed={[str(p.relative_to(repo_dir)) for p in changed]} "

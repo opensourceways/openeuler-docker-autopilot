@@ -57,6 +57,7 @@ from scripts.lib import (  # noqa: E402
     app_notes,
     build_runner,
     supporting_files,
+    upstream_evidence,
     version_upgrade,
 )
 from scripts.lib.agent_policy import build_policy  # noqa: E402
@@ -201,6 +202,7 @@ def build_repair_prompt(
     mode: str = "repair",
     arch: str = "x86_64",
     supporting: list[supporting_files.SupportingFile] | None = None,
+    upstream_evidence_payload: dict | None = None,
 ) -> str:
     """组装修复/重放提示：角色规则 + 分支现状 + 失败证据 + 人工说明。"""
     mode = (mode or "repair").strip().lower()
@@ -267,6 +269,10 @@ def build_repair_prompt(
         prompt += "\n## Current tests/test.sh on the upgrade branch\n\n（该分支没有 tests/test.sh）\n"
     prompt += supporting_files.render_prompt(supporting or [])
     prompt += app_notes.render_prompt(notes)
+    if mode != "replay" and upstream_evidence_payload:
+        prompt += upstream_evidence.render_install_section(
+            upstream_evidence_payload
+        )
     if mode != "replay":
         reports = evidence.get("reports") or ["（未找到 evidence 报告）"]
         prompt += (
@@ -323,6 +329,7 @@ def build_repair_prompt(
         "\n## Final response contract\n\n"
         "最终响应必须恰好是一个 JSON 对象，包含以下键："
         "success(bool)、dockerfile(str，完整 Dockerfile 文本)、"
+        'install_mode(str，"source" 或 "binary"，必须与最终 Dockerfile 的实际做法一致)、'
         "test_script(str 或 null)、summary(str)、"
         "app_note(str 或 null，本次新增的可复用经验)、error(null 或 str)"
         + (
@@ -378,7 +385,8 @@ def _repair_files(
     mode: str = "repair",
     arch: str = "x86_64",
     supporting: list[supporting_files.SupportingFile] | None = None,
-) -> tuple[str, str | None, dict[str, str], str]:
+    upstream_evidence_payload: dict | None = None,
+) -> tuple[str, str | None, dict[str, str], str, str]:
     """让 Agent 在容器里复现并修复失败指令；失败即终止，不静默保留原文件。"""
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
@@ -417,6 +425,7 @@ def _repair_files(
             mode=mode,
             arch=arch,
             supporting=supporting,
+            upstream_evidence_payload=upstream_evidence_payload,
         )
         log_stage(stage, f"{task.app}: {mode} agent round {round_no + 1}")
         agent_error: Exception | None = None
@@ -472,7 +481,14 @@ def _repair_files(
             findings += _validate_test_script(script)
             repaired_script = script
         if not findings:
-            return candidate, repaired_script, updates, _app_note(payload)
+            return candidate, repaired_script, updates, _app_note(payload), (
+                upstream_evidence.resolved_install_mode(
+                    {
+                        "install_mode": payload.get("install_mode"),
+                        "evidence": upstream_evidence_payload,
+                    }
+                )
+            )
         log_stage(stage, f"{task.app}: findings={findings}")
 
     raise version_upgrade.UpgradeError(
@@ -601,7 +617,7 @@ def run(
     }
     label = build_runner.activate_docker_shim(DOCKER_SHIM_DIR)
     try:
-        repaired_dockerfile, repaired_test, repaired_supporting, app_note = (
+        repaired_dockerfile, repaired_test, repaired_supporting, app_note, install_mode = (
             _repair_files(
                 repo_dir=repo_dir,
                 task=task,
@@ -613,6 +629,7 @@ def run(
                 mode=mode,
                 arch=arch,
                 supporting=supporting,
+                upstream_evidence_payload=evidence_payload,
             )
         )
     finally:
@@ -668,6 +685,7 @@ def run(
     task_spec_out.parent.mkdir(parents=True, exist_ok=True)
     payload = json.loads(task.to_json())
     payload["evidence"] = evidence_payload
+    payload["install_mode"] = install_mode
     task_spec_out.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -676,7 +694,11 @@ def run(
         branch=branch,
         test_status=_test_status(repo_dir, test_rel),
         push_repo=push_repo,
-        item_json=json.dumps(item, ensure_ascii=False, separators=(",", ":")),
+        item_json=json.dumps(
+            {**item, "install_mode": install_mode},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
     )
     log_stage(stage, f"{task.app}: done mode={mode} arch={arch}")
     return 0
