@@ -25,6 +25,8 @@ class IssueOperationForbiddenError(IssueLifecycleError):
 _SAFE_DYNAMIC_VALUE = re.compile(r"^[A-Za-z0-9._-]+$")
 _NEW_IMAGE_TITLE = "【new-image】"
 _UPGRADE_TITLE = "【new-version】"
+# GitCode 的默认状态名是「待办的」；旧数据 / 自定义流程里也出现过「新建」。
+_CLAIMABLE_ISSUE_STATUSES = frozenset({"新建", "待办的"})
 _UPGRADE_APP_RE = re.compile(
     r"^\s*【new-version】\s*upgrade\s+(?P<app>\S+)",
     re.IGNORECASE,
@@ -103,6 +105,10 @@ def _issue_status(issue: Mapping[str, object]) -> str:
         if title:
             return title
     return str(issue.get("issue_state", "")).strip()
+
+
+def _is_claimable(issue: Mapping[str, object]) -> bool:
+    return _issue_status(issue) in _CLAIMABLE_ISSUE_STATUSES
 
 
 def _issue_url(issue: Mapping[str, object]) -> str:
@@ -407,7 +413,7 @@ def _select_new_issue(
             candidate
             for candidate in issues
             if _title_has_prefix(candidate, title_prefix)
-            and _issue_status(candidate) == "新建"
+            and _is_claimable(candidate)
         ),
         None,
     )
@@ -431,7 +437,7 @@ def _select_queued_upgrade_issue(
             candidate
             for candidate in issues
             if _title_has_prefix(candidate, _UPGRADE_TITLE)
-            and _issue_status(candidate) == "新建"
+            and _is_claimable(candidate)
             and _upgrade_app(candidate) not in accepted_apps
         ),
         None,
@@ -492,10 +498,11 @@ def _claim_new_issue(
         )
     if str(issue.get("state", "")).lower() not in {"open", "opened"}:
         return None
-    if _issue_status(issue) != "新建":
+    if not _is_claimable(issue):
         return None
 
     number = _issue_number(issue)
+    original_status = _issue_status(issue)
     try:
         task = parse_task(issue)
     except ValueError as error:
@@ -522,7 +529,7 @@ def _claim_new_issue(
                 client=client,
                 target_repo=target_repo,
                 issue=issue,
-                issue_status="新建",
+                issue_status=original_status,
                 state="open",
             )
         except Exception as rollback_error:

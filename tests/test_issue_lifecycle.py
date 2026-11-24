@@ -505,6 +505,35 @@ def test_dispatch_failure_returns_claimed_issue_to_new_state():
     assert [name for name, _ in client.calls] == ["get", "update", "update"]
 
 
+def test_dispatch_failure_restores_the_original_issue_status():
+    from scripts.lib.issue_lifecycle import (
+        IssueLifecycleError,
+        claim_new_image_issue,
+    )
+
+    client = TriggerIssueClient(
+        _new_trigger_issue(
+            issue_state="待办的",
+            issue_state_detail={"title": "待办的"},
+        )
+    )
+
+    def fail_dispatch(_):
+        raise RuntimeError("GitHub unavailable")
+
+    with pytest.raises(IssueLifecycleError, match="dispatch"):
+        claim_new_image_issue(
+            client=client,
+            target_repo=TARGET_REPO,
+            issue_number=64,
+            dispatch=fail_dispatch,
+            parse_task=_parse_trigger_task,
+        )
+
+    assert client.issue["issue_state"] == "待办的"
+    assert [name for name, _ in client.calls] == ["get", "update", "update"]
+
+
 @pytest.mark.parametrize(
     ("outcome", "pr_url", "expected_status", "expected_state"),
     [
@@ -905,6 +934,30 @@ def test_upgrade_issue_is_claimed_and_dispatched_with_its_source_issue():
     claim_call = client.calls[1][1]
     assert claim_call["issue_status"] == "已接纳"
     assert claim_call["state"] == "open"
+
+
+def test_upgrade_scan_claims_gitcode_default_todo_status():
+    from scripts.lib.issue_lifecycle import claim_upgrade_issue
+
+    issue = _upgrade_trigger_issue(
+        issue_state="待办的",
+        issue_state_detail={"title": "待办的"},
+    )
+    client = UpgradeScanClient([issue])
+    dispatched = []
+
+    claimed = claim_upgrade_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=None,
+        dispatch=dispatched.append,
+        parse_task=_parse_upgrade_task,
+    )
+
+    assert claimed is not None
+    assert claimed.number == 81
+    assert [item["app"] for item in dispatched] == ["grpc"]
+    assert client.issue["issue_state"] == "已接纳"
 
 
 def test_upgrade_scan_queues_same_app_behind_an_accepted_issue():
