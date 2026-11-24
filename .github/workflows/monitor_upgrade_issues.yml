@@ -1,10 +1,10 @@
 name: Watch GitCode new-version Issues
 
 on:
+  # 主调度：hwyx86 上的 oe-issue-poll.timer 每 5 分钟调用 workflow_dispatch。
+  # GitHub 自带 cron 是 best-effort 队列，只保留每小时一次作为兜底。
   schedule:
-    # 每 5 分钟轮询 GitCode 上的 【new-version】 Issue。
-    # 固定跑在专用 runner 上，避免排在构建任务后面导致轮询卡住。
-    - cron: '*/5 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       issue_number:
