@@ -1,5 +1,7 @@
 # 场景二改回「应用自动升级」实施方案
 
+> **状态更新（正式版本）**：场景二已改为 GitCode `【new-version】` Issue 驱动。目标版本与上游证据由 Issue 正文提供，工作流不再调用 upstream-dashboard，也不再用看板做版本发现；扫描阶段只负责定位两个目标仓目录、判断目标版本是否已存在。本文档保留初版设计记录，当前实现与字段约束以 [README 第 4 节](../../README.md) 和 [new-version-issue-guide.md](../../docs/new-version-issue-guide.md) 为准。
+
 ## Context
 
 当前场景二被 PR CI 失败自动修复占用，应用自动升级由社区 anitya + easysoftware-autoupgrade 承担。目标是让本系统**完全替代**这两个社区服务：每天用 upstream-dashboard 的 `GET /api/v1/version/resolve` 解析各软件最新上游版本，为缺新版本的存量应用生成新版本镜像目录、双架构原生验证、按需补功能测试，一应用一 PR。

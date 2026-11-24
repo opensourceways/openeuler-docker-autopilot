@@ -51,10 +51,14 @@
     "image-info usage 改为 srun --version / scontrol ..."
   ],
   "summary": "一句话说明修复内容",
+  "app_note": "本次修复新增的经验（Markdown，可空）",
   "error": null
 }
 ```
 
 - `dockerfile` 和 `image_info` 都是完整文件文本，不要 Markdown 代码围栏。
 - `image_info` 不需要修改时，原样返回当前文件内容，确保不会产生无意义 diff。
+- `app_note` 只写本次新发现、可复用的信息（失败根因、上游构建步骤变化、已知坑
+  与规避方式）；不要重复已有注意点，没有新经验时返回 `null`，不得包含 YAML
+  front matter。
 - 不要返回 JSON 以外的解释性文字。

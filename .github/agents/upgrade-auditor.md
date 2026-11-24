@@ -78,6 +78,7 @@
     "issues": ["测试质量问题"]
   },
   "summary": "一句话结论",
+  "app_note": "本次审计新增的经验（Markdown，可空）",
   "error": null
 }
 ```
@@ -88,4 +89,6 @@
 - `issues`：只有 major/minor 问题，镜像可用但需要修正或补强。
 - `ok`：没有发现问题，或问题仅为信息性说明。
 - `dockerfile_issues` 为空时输出 `[]`；`test_script.issues` 同理。
+- `app_note` 只写本次新发现、可复用的信息（版本源规律、依赖/构建坑与规避方式）；
+  没有新经验时返回 `null`，不得包含 YAML front matter。
 - 不要返回 JSON 以外的解释性文字，不要使用 Markdown 代码围栏。

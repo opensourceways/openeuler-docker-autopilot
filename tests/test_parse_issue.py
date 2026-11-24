@@ -280,70 +280,150 @@ UPGRADE_ISSUE_TITLE = (
 )
 
 
-def test_parse_upgrade_issue_needs_only_the_title():
-    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, "")
-
-    assert fields == {
-        "app": "grpc",
-        "version": "1.85.4",
-        "os_version": "24.03-lts-sp4",
-        "source_url": "",
+def _upgrade_body(**overrides) -> str:
+    payload = {
+        "schema_version": "1.1",
+        "request_id": "req-grpc-1854",
+        "software": {
+            "name": "grpc",
+            "repo_url": "https://github.com/grpc/grpc",
+            "raw_category": "rpc",
+            "oss_map_id": "oss-grpc",
+        },
+        "version": {
+            "value": "1.85.4",
+            "type": "latest_release",
+            "display": "v1.85.4",
+        },
+        "upstream_evidence": {
+            "support_level": "L1",
+            "computed_by": "kunpeng-evidence",
+            "evaluated_at": "2026-11-20T00:00:00Z",
+            "evidence": {
+                "check_id": "kp.l1.arm_ci",
+                "result": "supported",
+                "artifact": "grpc-arm64",
+                "source_url": "https://ci.example.com/jobs/1",
+                "checked_at": "2026-11-20T00:00:00Z",
+                "test_depth": "smoke",
+                "ci_workflows": [],
+                "assessment_id": "assess-grpc",
+            },
+        },
+        "l3_evidence": None,
+        "install_candidates": [
+            {
+                "type": "source",
+                "url": "https://github.com/grpc/grpc/archive/v1.85.4.tar.gz",
+                "artifact": "grpc-1.85.4.tar.gz",
+                "arch": "any",
+            }
+        ],
     }
+    payload.update(overrides)
+    return json.dumps(payload, ensure_ascii=False)
 
 
-def test_parse_upgrade_issue_takes_the_upstream_url_from_json():
-    body = json.dumps(
-        {"software": {"repo_url": "https://github.com/grpc/grpc"}}
+def test_parse_upgrade_issue_returns_the_full_evidence_payload():
+    fields = parse_upgrade_issue_request(
+        UPGRADE_ISSUE_TITLE, _upgrade_body()
     )
-
-    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
-
-    assert fields["source_url"] == "https://github.com/grpc/grpc"
-
-
-def test_parse_upgrade_issue_takes_the_upstream_url_from_markdown():
-    body = (
-        "**源码仓库（Source Repository）：** "
-        "https://github.com/grpc/grpc\n"
-    )
-
-    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
-
-    assert fields["source_url"] == "https://github.com/grpc/grpc"
-
-
-def test_parse_upgrade_issue_ignores_other_body_fields():
-    body = json.dumps(
-        {
-            "software": {"repo_url": "https://github.com/grpc/grpc"},
-            "upstream_evidence": {"evidence": {"result": "unknown"}},
-            "install_candidates": [{"type": "package"}],
-        }
-    )
-
-    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
 
     assert fields["app"] == "grpc"
+    assert fields["version"] == "1.85.4"
+    assert fields["os_version"] == "24.03-lts-sp4"
     assert fields["source_url"] == "https://github.com/grpc/grpc"
+    assert fields["evidence"]["request_id"] == "req-grpc-1854"
+    assert (
+        fields["evidence"]["upstream_evidence"]["evidence"]["check_id"]
+        == "kp.l1.arm_ci"
+    )
 
 
-def test_parse_upgrade_issue_tolerates_a_non_json_body():
+def test_parse_upgrade_issue_accepts_a_fenced_json_body():
+    body = "升级说明：\n\n```json\n" + _upgrade_body() + "\n```\n"
+
+    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
+
+    assert fields["source_url"] == "https://github.com/grpc/grpc"
+    assert fields["evidence"]["schema_version"] == "1.1"
+
+
+def test_parse_upgrade_issue_requires_the_evidence_body():
+    with pytest.raises(IssueParseError, match="evidence JSON object"):
+        parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, "")
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "schema_version",
+        "request_id",
+        "software",
+        "version",
+        "upstream_evidence",
+        "install_candidates",
+    ),
+)
+def test_parse_upgrade_issue_requires_every_schema_field(field):
+    payload = json.loads(_upgrade_body())
+    payload.pop(field)
+
+    with pytest.raises(IssueParseError, match=f"missing required field: {field}"):
+        parse_upgrade_issue_request(
+            UPGRADE_ISSUE_TITLE, json.dumps(payload, ensure_ascii=False)
+        )
+
+
+def test_parse_upgrade_issue_rejects_a_mismatched_software_name():
+    payload = json.loads(_upgrade_body())
+    payload["software"]["name"] = "slurm"
+
+    with pytest.raises(IssueParseError, match="software.name"):
+        parse_upgrade_issue_request(
+            UPGRADE_ISSUE_TITLE, json.dumps(payload, ensure_ascii=False)
+        )
+
+
+def test_parse_upgrade_issue_rejects_a_mismatched_version():
+    payload = json.loads(_upgrade_body())
+    payload["version"]["value"] = "1.86.0"
+
+    with pytest.raises(IssueParseError, match="version.value"):
+        parse_upgrade_issue_request(
+            UPGRADE_ISSUE_TITLE, json.dumps(payload, ensure_ascii=False)
+        )
+
+
+def test_parse_upgrade_issue_accepts_a_v_prefixed_version_value():
+    payload = json.loads(_upgrade_body())
+    payload["version"]["value"] = "v1.85.4"
+
     fields = parse_upgrade_issue_request(
-        UPGRADE_ISSUE_TITLE,
-        "升级到 1.85.4，请参考上游发布说明。\n",
+        UPGRADE_ISSUE_TITLE, json.dumps(payload, ensure_ascii=False)
     )
 
     assert fields["version"] == "1.85.4"
-    assert fields["source_url"] == ""
 
 
-def test_parse_upgrade_issue_requires_an_https_source_url():
-    body = json.dumps(
-        {"software": {"repo_url": "http://github.com/grpc/grpc"}}
-    )
+def test_parse_upgrade_issue_requires_an_https_repo_url():
+    payload = json.loads(_upgrade_body())
+    payload["software"]["repo_url"] = "http://github.com/grpc/grpc"
 
     with pytest.raises(IssueParseError, match="HTTPS"):
-        parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
+        parse_upgrade_issue_request(
+            UPGRADE_ISSUE_TITLE, json.dumps(payload, ensure_ascii=False)
+        )
+
+
+def test_parse_upgrade_issue_requires_install_candidates():
+    payload = json.loads(_upgrade_body())
+    payload["install_candidates"] = []
+
+    with pytest.raises(IssueParseError, match="install_candidates"):
+        parse_upgrade_issue_request(
+            UPGRADE_ISSUE_TITLE, json.dumps(payload, ensure_ascii=False)
+        )
 
 
 def test_parse_upgrade_issue_rejects_an_unsafe_app_name():

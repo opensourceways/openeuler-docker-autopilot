@@ -323,7 +323,8 @@ def build_repair_prompt(
         "\n## Final response contract\n\n"
         "最终响应必须恰好是一个 JSON 对象，包含以下键："
         "success(bool)、dockerfile(str，完整 Dockerfile 文本)、"
-        "test_script(str 或 null)、summary(str)、error(null 或 str)"
+        "test_script(str 或 null)、summary(str)、"
+        "app_note(str 或 null，本次新增的可复用经验)、error(null 或 str)"
         + (
             "、supporting_files(list，逐个辅助文件的审计结论)"
             if supporting
@@ -332,6 +333,11 @@ def build_repair_prompt(
         + "。不得修改工作区文件；只返回 JSON。\n"
     )
     return prompt
+
+
+def _app_note(payload: dict) -> str:
+    note = payload.get("app_note")
+    return note.strip() if isinstance(note, str) and note.strip() else ""
 
 
 def _validate_test_script(script: str) -> list[str]:
@@ -372,7 +378,7 @@ def _repair_files(
     mode: str = "repair",
     arch: str = "x86_64",
     supporting: list[supporting_files.SupportingFile] | None = None,
-) -> tuple[str, str | None, dict[str, str]]:
+) -> tuple[str, str | None, dict[str, str], str]:
     """让 Agent 在容器里复现并修复失败指令；失败即终止，不静默保留原文件。"""
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
@@ -466,7 +472,7 @@ def _repair_files(
             findings += _validate_test_script(script)
             repaired_script = script
         if not findings:
-            return candidate, repaired_script, updates
+            return candidate, repaired_script, updates, _app_note(payload)
         log_stage(stage, f"{task.app}: findings={findings}")
 
     raise version_upgrade.UpgradeError(
@@ -502,6 +508,7 @@ def run(
     branch_override: str = "",
     mode: str = "repair",
     arch: str = "",
+    app_note_out: Path | None = None,
 ) -> int:
     mode = (mode or "repair").strip().lower()
     if mode not in {"repair", "replay"}:
@@ -594,22 +601,27 @@ def run(
     }
     label = build_runner.activate_docker_shim(DOCKER_SHIM_DIR)
     try:
-        repaired_dockerfile, repaired_test, repaired_supporting = _repair_files(
-            repo_dir=repo_dir,
-            task=task,
-            dockerfile_text=dockerfile_text,
-            test_script_text=test_script_text,
-            evidence=evidence,
-            instructions=instructions,
-            session=session,
-            mode=mode,
-            arch=arch,
-            supporting=supporting,
+        repaired_dockerfile, repaired_test, repaired_supporting, app_note = (
+            _repair_files(
+                repo_dir=repo_dir,
+                task=task,
+                dockerfile_text=dockerfile_text,
+                test_script_text=test_script_text,
+                evidence=evidence,
+                instructions=instructions,
+                session=session,
+                mode=mode,
+                arch=arch,
+                supporting=supporting,
+            )
         )
     finally:
         build_runner.docker_rm(str(session["container"]))
         build_runner.docker_rm_by_label(label)
         build_runner.docker_rm_images_by_label(label)
+
+    if app_notes.save_note_text(app_note_out, app_note) is not None:
+        log_stage(stage, f"{task.app}: app note 已暂存 -> {app_note_out}")
 
     repaired_dockerfile = version_upgrade.ensure_repo_cache_cleaned(
         repaired_dockerfile
@@ -703,6 +715,11 @@ def main() -> int:
             os.environ.get("RUNNER_TEMP", PROJECT_ROOT), "task-spec.json"
         ),
     )
+    parser.add_argument(
+        "--app-note-out",
+        type=Path,
+        help="Agent 总结的 app note 暂存路径（留空则不暂存）",
+    )
     args = parser.parse_args()
     return run(
         task_spec_path=Path(args.task_spec),
@@ -712,6 +729,7 @@ def main() -> int:
         branch_override=args.branch,
         mode=args.mode,
         arch=args.arch,
+        app_note_out=args.app_note_out,
     )
 
 

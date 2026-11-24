@@ -38,7 +38,9 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  # 修复后把 Agent 总结的 app-note 推回本仓并开 notes PR。
+  contents: write
+  pull-requests: write
 
 jobs:
   repair:

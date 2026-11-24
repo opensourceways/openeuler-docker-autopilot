@@ -788,6 +788,7 @@ def _upgrade_body(name: str, version: str) -> str:
     return json.dumps(
         {
             "schema_version": "1.1",
+            "request_id": f"req-{name}-{version}",
             "software": {
                 "name": name,
                 "repo_url": f"https://github.com/{name}/{name}",
@@ -851,10 +852,11 @@ def _upgrade_trigger_issue(**overrides):
 def _parse_upgrade_task(issue):
     from scripts.harness.parse_issue import parse_upgrade_issue_request
     from scripts.lib.issue_lifecycle import UpgradeRequest
+    from scripts.lib.upstream_evidence import from_issue_payload
 
-    return UpgradeRequest(
-        **parse_upgrade_issue_request(issue["title"], issue["body"])
-    )
+    fields = parse_upgrade_issue_request(issue["title"], issue["body"])
+    fields["evidence"] = from_issue_payload(fields["evidence"])
+    return UpgradeRequest(**fields)
 
 
 class UpgradeScanClient(TriggerIssueClient):
@@ -890,22 +892,25 @@ def test_upgrade_issue_is_claimed_and_dispatched_with_its_source_issue():
 
     assert claimed is not None
     assert claimed.number == 81
-    assert claimed.request == UpgradeRequest(
-        app="grpc",
-        version="1.85.4",
-        os_version="24.03-lts-sp4",
-        source_url="https://github.com/grpc/grpc",
-    )
+    assert claimed.request.app == "grpc"
+    assert claimed.request.version == "1.85.4"
+    assert claimed.request.os_version == "24.03-lts-sp4"
+    assert claimed.request.source_url == "https://github.com/grpc/grpc"
+    assert claimed.request.evidence["source"] == "gitcode-issue"
+    assert claimed.request.evidence["request_id"] == "req-grpc-1.85.4"
+    assert claimed.request.evidence["collector"][0]["check_id"] == "kp.l1.arm_ci"
     assert duplicate is None
-    assert dispatched == [
-        {
-            "app": "grpc",
-            "version": "1.85.4",
-            "os_version": "24.03-lts-sp4",
-            "source_url": "https://github.com/grpc/grpc",
-            "source_issue": "81",
-        }
-    ]
+    assert len(dispatched) == 1
+    inputs = dispatched[0]
+    assert inputs["app"] == "grpc"
+    assert inputs["version"] == "1.85.4"
+    assert inputs["os_version"] == "24.03-lts-sp4"
+    assert inputs["source_url"] == "https://github.com/grpc/grpc"
+    assert inputs["source_issue"] == "81"
+    evidence = json.loads(inputs["evidence"])
+    assert evidence["source"] == "gitcode-issue"
+    assert evidence["repo_url"] == "https://github.com/grpc/grpc"
+    assert evidence["install_candidates"][0]["type"] == "source"
     assert [name for name, _ in client.calls[:4]] == [
         "get",
         "update",

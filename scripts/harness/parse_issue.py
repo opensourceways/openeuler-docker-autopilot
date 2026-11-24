@@ -46,7 +46,7 @@ _UPGRADE_TITLE_RE = re.compile(
     re.IGNORECASE,
 )
 _FENCED_JSON_RE = re.compile(
-    r"```(?:json)?\s*(?P<payload>\{.*?\})\s*```",
+    r"```(?:json)?\s*(?P<payload>.*?)\s*```",
     re.IGNORECASE | re.DOTALL,
 )
 _APP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -342,32 +342,121 @@ def parse_issue_request(title: str, body: str) -> dict[str, str]:
 def _upgrade_payload(body: str) -> Mapping[str, object] | None:
     """尽量从正文提取 JSON 对象；没有或非法时返回 None。"""
 
+    candidates: list[str] = []
     match = _FENCED_JSON_RE.search(body)
     if match is not None:
-        raw = match.group("payload")
-    else:
-        start = body.find("{")
-        end = body.rfind("}")
-        if start < 0 or end <= start:
-            return None
-        raw = body[start : end + 1]
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    return payload if isinstance(payload, Mapping) else None
+        candidates.append(match.group("payload"))
+    start = body.find("{")
+    end = body.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(body[start : end + 1])
+    for raw in candidates:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, Mapping):
+            return payload
+    return None
 
 
-def parse_upgrade_issue_request(title: str, body: str) -> dict[str, str]:
+_UPGRADE_SCHEMA_FIELDS = (
+    "schema_version",
+    "request_id",
+    "software",
+    "version",
+    "upstream_evidence",
+    "install_candidates",
+)
+_VERSION_TYPES = {"latest_release", "watched"}
+_EVIDENCE_RESULTS = {"supported", "not_found", "blocked"}
+_CANDIDATE_TYPES = {"source", "binary"}
+
+
+def _mapping(value: object, field: str) -> Mapping:
+    if not isinstance(value, Mapping):
+        raise IssueParseError(f"{field} must be a JSON object")
+    return value
+
+
+def _required_text(mapping: Mapping, key: str, field: str) -> str:
+    value = mapping.get(key)
+    text = str(value).strip() if isinstance(value, (str, int, float)) else ""
+    if not text:
+        raise IssueParseError(f"{field}.{key} is required")
+    return text
+
+
+def _validate_upgrade_payload(payload: Mapping) -> None:
+    """校验 Issue 正文里的完整上游证据 JSON。"""
+
+    for field in _UPGRADE_SCHEMA_FIELDS:
+        if field not in payload:
+            raise IssueParseError(f"missing required field: {field}")
+    _required_text(payload, "schema_version", "body")
+    _required_text(payload, "request_id", "body")
+
+    software = _mapping(payload["software"], "software")
+    _required_text(software, "name", "software")
+    repo_url = _required_text(software, "repo_url", "software")
+    if urlparse(repo_url).scheme != "https":
+        raise IssueParseError("software.repo_url must be an HTTPS URL")
+
+    version = _mapping(payload["version"], "version")
+    _required_text(version, "value", "version")
+    version_type = _required_text(version, "type", "version")
+    if version_type not in _VERSION_TYPES:
+        raise IssueParseError(
+            "version.type must be latest_release or watched"
+        )
+
+    upstream = _mapping(payload["upstream_evidence"], "upstream_evidence")
+    _required_text(upstream, "support_level", "upstream_evidence")
+    _required_text(upstream, "computed_by", "upstream_evidence")
+    _required_text(upstream, "evaluated_at", "upstream_evidence")
+    evidence = _mapping(
+        upstream.get("evidence"), "upstream_evidence.evidence"
+    )
+    _required_text(evidence, "check_id", "upstream_evidence.evidence")
+    result = _required_text(evidence, "result", "upstream_evidence.evidence")
+    if result not in _EVIDENCE_RESULTS:
+        raise IssueParseError(
+            "upstream_evidence.evidence.result must be supported, "
+            "not_found or blocked"
+        )
+
+    l3 = payload.get("l3_evidence")
+    if l3 is not None:
+        _mapping(l3, "l3_evidence")
+
+    candidates = payload["install_candidates"]
+    if not isinstance(candidates, list) or not candidates:
+        raise IssueParseError("install_candidates must be a non-empty list")
+    for index, candidate in enumerate(candidates):
+        field = f"install_candidates[{index}]"
+        item = _mapping(candidate, field)
+        kind = _required_text(item, "type", field)
+        if kind not in _CANDIDATE_TYPES:
+            raise IssueParseError(f"{field}.type must be source or binary")
+        url = _required_text(item, "url", field)
+        if urlparse(url).scheme != "https":
+            raise IssueParseError(f"{field}.url must be an HTTPS URL")
+
+
+def _normalize_version(value: str) -> str:
+    return str(value or "").strip().lstrip("vV").lower()
+
+
+def parse_upgrade_issue_request(title: str, body: str) -> dict[str, object]:
     """Parse one scenario-two 【new-version】 Issue.
 
     Title format:
         【new-version】upgrade <app> to <version> on openEuler <os_version>
 
-    Only the title is required. The body is optional: it may carry the upstream
-    evidence JSON (``software.repo_url``) or the new-image style
-    ``**Source Repository**`` field, and both are only used as the upstream URL
-    hint. The workflow decides which target repositories hold the app.
+    The body must carry the upstream evidence JSON object published by the
+    dashboard. Its ``software.name`` and ``version.value`` must match the
+    title; the full payload is returned under ``evidence`` and passed through
+    to the upgrade workflow.
     """
 
     match = _UPGRADE_TITLE_RE.fullmatch(title)
@@ -384,25 +473,32 @@ def parse_upgrade_issue_request(title: str, body: str) -> dict[str, str]:
     if not _VERSION_RE.fullmatch(version):
         raise IssueParseError(f"invalid version in title: {version!r}")
 
-    source_url = ""
     payload = _upgrade_payload(body)
-    if payload is not None:
-        software = payload.get("software")
-        if isinstance(software, Mapping):
-            url = software.get("repo_url")
-            if isinstance(url, str):
-                source_url = url.strip()
-    if not source_url:
-        fields = parse_issue_body(body)
-        source_url = str(fields.get("source_repo_url") or "").strip()
-    if source_url and urlparse(source_url).scheme != "https":
-        raise IssueParseError("source repository must be an HTTPS URL")
+    if payload is None:
+        raise IssueParseError(
+            "body must contain the upstream evidence JSON object"
+        )
+    _validate_upgrade_payload(payload)
+
+    software = _mapping(payload["software"], "software")
+    issue_version = _mapping(payload["version"], "version")
+    if str(software["name"]).strip().lower() != app.lower():
+        raise IssueParseError(
+            "software.name must match the app in the title"
+        )
+    if _normalize_version(str(issue_version["value"])) != _normalize_version(
+        version
+    ):
+        raise IssueParseError(
+            "version.value must match the version in the title"
+        )
 
     return {
         "app": app,
         "version": version,
         "os_version": os_version,
-        "source_url": source_url,
+        "source_url": str(software["repo_url"]).strip(),
+        "evidence": payload,
     }
 
 

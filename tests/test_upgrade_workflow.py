@@ -34,7 +34,7 @@ def test_manual_dispatch_only_app_and_version():
     inputs = trigger['workflow_dispatch']['inputs']
     assert set(inputs) >= {
         'app', 'version', 'apps_file', 'limit', 'audit_limit', 'runner_labels',
-        'x64_runner_labels', 'arm64_runner_labels', 'max_parallel',
+        'x64_runner_labels', 'arm64_runner_labels', 'max_parallel', 'evidence',
     }
 
 
@@ -50,6 +50,7 @@ def test_discover_uses_manual_versions_and_feeds_the_matrix():
     assert '--format github-output' in scan_text
     assert '--apps-file' in scan_text
     assert '--audit-limit' in scan_text
+    assert '--evidence' in scan_text
     assert 'gitcode.com' in scan_text
     # 自动升级不再查询看板，版本由清单手动提供
     assert 'UPSTREAM_DASHBOARD_BASE' not in UPGRADE.read_text(encoding='utf-8')

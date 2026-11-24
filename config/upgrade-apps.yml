@@ -1,10 +1,11 @@
 # 场景二（应用自动升级）的软件清单，人工维护。
-# name: 看板软件名（传给 /api/v1/version/resolve）
+# name: 软件名（与触发 Issue 的 software.name / 看板软件名对齐）
 # docker: 在 openeuler-docker-images 的 {app, domain} 目录
 # conda:  在 openeuler/conda-ecopkgs 的 {package} 目录
 # create: 两库都没有，先用场景一新建镜像 {app, domain}
 # docker/conda 两个字段都在 = 两个仓都有；只有一个 = 只升级该仓。
 # 可选 version / tag / source_url / build_notes / allow_downgrade
+# 正式入口由 【new-version】Issue 提供版本和上游证据；清单字段用于手动触发与兜底。
 # 由脚本重新生成时按软件名保留。
 # 初始内容由 scripts/utils/scrape_upgrade_apps.py 生成（看板 kunpeng 域）。
 apps:

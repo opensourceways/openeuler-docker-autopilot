@@ -101,11 +101,16 @@
   "success": true,
   "dockerfile": "FROM ...\n...",
   "summary": "一句话说明本次升级改了哪些与版本相关的构建内容",
+  "app_note": "本次升级新增的构建经验（Markdown，可空）",
   "error": null
 }
 ```
 
 - `dockerfile` 是完整文件文本，不要 Markdown 代码围栏，不要省略任何行。
+- `app_note` 是给本应用后续升级使用的经验总结：只写本次新发现、可复用的信息
+  （构建耗时、必要依赖、上游构建步骤变化、已知坑与规避方式）。不要重复已有
+  注意点，不要写本次版本号流水账；没有新经验时返回 `null`。不得包含 YAML
+  front matter。
 - `success` 为 `false` 时，`error` 写明无法生成的原因；此时 `dockerfile` 可为空。
 - 不要返回除上述键以外的解释性文字。
 - 除提示给出的 staging 暂存目录与两个落盘文件外，不得修改工作区任何文件。

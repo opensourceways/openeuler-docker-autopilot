@@ -152,3 +152,80 @@ class RenderTest(unittest.TestCase):
         self.assertIn("kp.l1.release_artifact", text)
         self.assertIn("release 只有源码包，无 arm64 资产", text)
         self.assertIn("https://github.com/nginx/nginx/releases/tag/release-1.31.8", text)
+
+
+_ISSUE_PAYLOAD = {
+    "schema_version": "1.1",
+    "request_id": "req-grpc-1854",
+    "software": {
+        "name": "grpc",
+        "repo_url": "https://github.com/grpc/grpc",
+        "raw_category": "rpc",
+        "oss_map_id": "oss-grpc",
+    },
+    "version": {
+        "value": "1.85.4",
+        "type": "watched",
+        "display": "v1.85.4",
+    },
+    "upstream_evidence": {
+        "support_level": "L1",
+        "computed_by": "kunpeng-evidence",
+        "evaluated_at": "2026-11-20T00:00:00Z",
+        "evidence": {
+            "check_id": "kp.l1.arm_ci",
+            "result": "supported",
+            "artifact": "grpc-arm64",
+            "source_url": "https://ci.example.com/jobs/1",
+            "checked_at": "2026-11-20T00:00:00Z",
+            "test_depth": "smoke",
+            "ci_workflows": [
+                {
+                    "workflow_path": ".github/workflows/ci.yml",
+                    "workflow_url": "https://github.com/grpc/grpc/blob/abc/ci.yml",
+                    "test_depth": "smoke",
+                }
+            ],
+            "assessment_id": "assess-grpc",
+        },
+    },
+    "l3_evidence": {"result": "not_found"},
+    "install_candidates": [
+        {
+            "type": "source",
+            "url": "https://github.com/grpc/grpc/archive/v1.85.4.tar.gz",
+            "artifact": "grpc-1.85.4.tar.gz",
+            "arch": "any",
+        }
+    ],
+}
+
+
+class IssueEvidenceTest(unittest.TestCase):
+    def test_issue_payload_is_normalized_for_prompt_and_pr(self) -> None:
+        evidence = upstream_evidence.from_issue_payload(_ISSUE_PAYLOAD)
+
+        self.assertEqual(evidence["source"], "gitcode-issue")
+        self.assertEqual(evidence["name"], "grpc")
+        self.assertEqual(evidence["repo_url"], "https://github.com/grpc/grpc")
+        self.assertEqual(evidence["version"], "1.85.4")
+        self.assertEqual(evidence["support_level"], "L1")
+        self.assertEqual(evidence["collector"][0]["check_id"], "kp.l1.arm_ci")
+        self.assertEqual(evidence["l3_evidence"], {"result": "not_found"})
+        self.assertEqual(evidence["raw"]["software"]["oss_map_id"], "oss-grpc")
+        self.assertNotIn(
+            "evidence", evidence["raw"]["upstream_evidence"]
+        )
+
+        prompt = upstream_evidence.render_prompt(evidence)
+        self.assertIn("triggering Issue", prompt)
+        self.assertIn("kp.l1.arm_ci", prompt)
+        self.assertIn("test_depth=`smoke`", prompt)
+        self.assertIn("ci.yml", prompt)
+        self.assertIn("安装候选（1 条）", prompt)
+        self.assertIn("v1.85.4.tar.gz", prompt)
+
+        markdown = upstream_evidence.render_markdown(evidence)
+        self.assertIn("## 上游证据（来自触发 Issue）", markdown)
+        self.assertIn("req-grpc-1854", markdown)
+        self.assertIn("kp.l1.arm_ci", markdown)

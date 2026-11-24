@@ -454,6 +454,7 @@ def build_prompt(context: dict, findings: list[dict]) -> str:
         "success(bool)、verdict(ok|issues|critical)、"
         "dockerfile_issues(list)、evidence_alignment(object)、"
         "version_check(object)、test_script(object)、summary(str)、"
+        "app_note(str 或 null，本次新增的可复用经验)、"
         "error(null 或 str)。不得修改工作区文件；只返回 JSON。\n"
     )
     return "".join(parts)
@@ -649,7 +650,8 @@ def build_fix_prompt(
         "最终响应必须恰好是一个 JSON 对象，包含以下键："
         "success(bool)、dockerfile(str，完整 Dockerfile)、"
         "image_info(str，完整 doc/image-info.yml；不需要修改时原样返回)、"
-        "changes(list[str])、summary(str)、error(null 或 str)。"
+        "changes(list[str])、summary(str)、"
+        "app_note(str 或 null，本次新增的可复用经验)、error(null 或 str)。"
         "不得修改工作区文件；只返回 JSON。\n"
     )
     return "".join(parts)
@@ -1109,6 +1111,11 @@ def render_markdown(
     return "\n".join(lines)
 
 
+def _app_note(payload: dict | None) -> str:
+    note = (payload or {}).get("app_note")
+    return note.strip() if isinstance(note, str) and note.strip() else ""
+
+
 def run(
     item: dict,
     *,
@@ -1117,6 +1124,7 @@ def run(
     dry_run: bool,
     deliver: bool = False,
     prepare: bool = False,
+    app_note_out: Path | None = None,
 ) -> int:
     context = collect_context(repo_dir, item)
     findings = deterministic_findings(context)
@@ -1170,6 +1178,13 @@ def run(
         log_stage(
             "upgrade-audit",
             f"{context['app']}: pushed={branch} changed={changed}",
+        )
+
+    note = _app_note(fix_payload) or _app_note(payload)
+    if app_notes.save_note_text(app_note_out, note) is not None:
+        log_stage(
+            "upgrade-audit",
+            f"{context['app']}: app note 已暂存 -> {app_note_out}",
         )
 
     report = render_markdown(
@@ -1241,6 +1256,11 @@ def main() -> int:
         default="",
         help="delivery.json 路径（默认 <out>/delivery.json）",
     )
+    parser.add_argument(
+        "--app-note-out",
+        type=Path,
+        help="Agent 总结的 app note 暂存路径（留空则不暂存）",
+    )
     args = parser.parse_args()
 
     if args.open_pr:
@@ -1262,6 +1282,7 @@ def main() -> int:
         dry_run=args.dry_run,
         deliver=args.deliver,
         prepare=args.prepare,
+        app_note_out=args.app_note_out,
     )
 
 

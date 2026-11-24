@@ -40,12 +40,13 @@ class ClaimedIssue:
 
 @dataclass(frozen=True)
 class UpgradeRequest:
-    """Minimal scenario-two request parsed from one 【new-version】 Issue."""
+    """Scenario-two request parsed from one 【new-version】 Issue."""
 
     app: str
     version: str
     os_version: str
     source_url: str
+    evidence: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -368,14 +369,22 @@ def _upgrade_workflow_inputs(
 ) -> dict[str, str]:
     # source_url may be empty: upgrade_scan.py falls back to config/upgrade-apps.yml.
     # os_version is used by the conda scan, while docker derives it from the
-    # target repository layout.
-    return {
+    # target repository layout. evidence carries the Issue-provided upstream
+    # evidence payload for the scan and the generation prompt.
+    inputs = {
         "app": request.app,
         "version": request.version,
         "os_version": request.os_version,
         "source_url": request.source_url,
         "source_issue": str(issue_number),
     }
+    if request.evidence:
+        inputs["evidence"] = json.dumps(
+            request.evidence,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    return inputs
 
 
 def _title_has_prefix(issue: Mapping[str, object], prefix: str) -> bool:

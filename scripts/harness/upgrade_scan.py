@@ -472,6 +472,18 @@ def _manual_evidence(
     }
 
 
+def _issue_evidence_for(
+    issue_evidence: dict | None, app: str
+) -> dict | None:
+    """只把触发 Issue 的证据交给它自己的应用，其它条目仍用 manual 证据。"""
+    if not issue_evidence:
+        return None
+    name = str(issue_evidence.get("name") or "").strip()
+    if not name or name.lower() == app.lower():
+        return issue_evidence
+    return None
+
+
 def find_updates(
     *,
     repo_dir: Path,
@@ -488,6 +500,7 @@ def find_updates(
     token: str = "",
     conda_repo: Path | None = None,
     forced_os: str = "",
+    issue_evidence: dict | None = None,
 ) -> dict:
     app_filter = app_filter.strip()
     source = apps if apps is not None else load_apps(apps_file)
@@ -642,9 +655,14 @@ def find_updates(
             )
             continue
 
-        evidence = _manual_evidence(
-            name=entry["name"], version=version, tag=tag, source_url=entry_source
-        )
+        evidence = _issue_evidence_for(issue_evidence, app)
+        if evidence is None:
+            evidence = _manual_evidence(
+                name=entry["name"],
+                version=version,
+                tag=tag,
+                source_url=entry_source,
+            )
 
         if _normalize_version(version) in existing_versions(app_dir):
             if audit_limit and len(audits) >= audit_limit:
@@ -821,6 +839,14 @@ def main() -> int:
         default=0,
         help="最多产出几个「已存在版本目录」的 AI 审计（0=不限）",
     )
+    parser.add_argument(
+        "--evidence",
+        default=os.environ.get("UPGRADE_ISSUE_EVIDENCE", ""),
+        help=(
+            "触发 Issue 提供的上游证据 JSON；只作用于同名应用，"
+            "缺失时回落到 manual 证据"
+        ),
+    )
     parser.add_argument("--format", choices=("json", "github-output"), default="json")
     args = parser.parse_args()
 
@@ -832,6 +858,15 @@ def main() -> int:
         raise SystemExit(f"conda repo clone not found: {conda_repo}")
 
     from scripts.lib.ci_gitcode_api import find_any_pr_by_head_branch
+
+    issue_evidence = None
+    if args.evidence.strip():
+        try:
+            issue_evidence = json.loads(args.evidence)
+        except json.JSONDecodeError as error:
+            raise SystemExit(f"--evidence is not valid JSON: {error}") from error
+        if not isinstance(issue_evidence, dict):
+            raise SystemExit("--evidence must be a JSON object")
 
     result = find_updates(
         repo_dir=repo_dir,
@@ -847,6 +882,7 @@ def main() -> int:
         token=os.environ.get("GITCODE_TOKEN", "").strip(),
         conda_repo=conda_repo,
         forced_os=args.os_version,
+        issue_evidence=issue_evidence,
     )
     log_stage(
         "upgrade-scan",

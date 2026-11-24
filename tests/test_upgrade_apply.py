@@ -161,6 +161,7 @@ class GenerateDockerfileTest(unittest.TestCase):
                             "ARG VERSION=2.17.0\n"
                         ),
                         "summary": "bump version and download URL",
+                        "app_note": "构建约 40 分钟；必须保留 boost 依赖。",
                     }
                 )
 
@@ -180,15 +181,18 @@ class GenerateDockerfileTest(unittest.TestCase):
                     upgrade_apply.build_runner, "docker_rm_images_by_label"
                 ),
             ):
-                dockerfile, supporting = upgrade_apply._generate_dockerfile(
-                    repo_dir=app.parent.parent,
-                    app="kvrocks",
-                    domain="Database",
-                    plan=plan,
-                    item=item,
+                dockerfile, supporting, app_note = (
+                    upgrade_apply._generate_dockerfile(
+                        repo_dir=app.parent.parent,
+                        app="kvrocks",
+                        domain="Database",
+                        plan=plan,
+                        item=item,
+                    )
                 )
 
         self.assertEqual(supporting, {})
+        self.assertEqual(app_note, "构建约 40 分钟；必须保留 boost 依赖。")
         self.assertEqual(captured["role"], "upgrade_creator")
         self.assertIn("kp.l1.release_artifact", captured["prompt"])
         self.assertIn("Container build verification", captured["prompt"])
@@ -292,7 +296,7 @@ class GenerateDockerfileTest(unittest.TestCase):
                     upgrade_apply.build_runner, "docker_rm_images_by_label"
                 ),
             ):
-                dockerfile, _ = upgrade_apply._generate_dockerfile(
+                dockerfile, _, app_note = upgrade_apply._generate_dockerfile(
                     repo_dir=app.parent.parent,
                     app="kvrocks",
                     domain="Database",
@@ -301,6 +305,7 @@ class GenerateDockerfileTest(unittest.TestCase):
                 )
 
         self.assertEqual(dockerfile.strip(), fixed.strip())
+        self.assertEqual(app_note, "")
 
 
 class EnsureTestScriptTest(unittest.TestCase):

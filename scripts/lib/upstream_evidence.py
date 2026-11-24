@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlparse
 
 import requests
@@ -59,6 +59,47 @@ def normalize(payload: dict[str, Any] | None) -> dict[str, Any]:
         if key not in _KNOWN_FIELDS and key not in _COLLECTOR_KEYS
     }
     return evidence
+
+
+def from_issue_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    """把 Issue 正文里的完整上游证据 JSON 归一化成内部 evidence。
+
+    保留结构化字段供 Agent / PR 渲染，同时把原始对象放进 ``raw``，接口后续
+    新增字段无需改解析。
+    """
+    payload = payload or {}
+    software = payload.get("software")
+    version = payload.get("version")
+    upstream = payload.get("upstream_evidence")
+    software = software if isinstance(software, Mapping) else {}
+    version = version if isinstance(version, Mapping) else {}
+    upstream = upstream if isinstance(upstream, Mapping) else {}
+    entry = upstream.get("evidence")
+    return {
+        "source": "gitcode-issue",
+        "schema_version": payload.get("schema_version"),
+        "request_id": payload.get("request_id"),
+        "name": software.get("name"),
+        "repo_url": software.get("repo_url"),
+        "version": version.get("value"),
+        "display_version": version.get("display"),
+        "version_type": version.get("type"),
+        "support_level": upstream.get("support_level"),
+        "computed_by": upstream.get("computed_by"),
+        "evaluated_at": upstream.get("evaluated_at"),
+        "collector": [dict(entry)] if isinstance(entry, Mapping) else [],
+        "l3_evidence": payload.get("l3_evidence"),
+        "install_candidates": list(payload.get("install_candidates") or []),
+        "raw": {
+            "software": dict(software),
+            "version": dict(version),
+            "upstream_evidence": {
+                key: value
+                for key, value in upstream.items()
+                if key != "evidence"
+            },
+        },
+    }
 
 
 def _collector_entries(payload: dict[str, Any]) -> list[Any]:
@@ -153,6 +194,8 @@ def probe(payload: dict[str, Any] | None) -> dict[str, Any]:
 def render_markdown(evidence: dict[str, Any] | None) -> str:
     """PR 正文里的「上游证据」段。"""
     evidence = evidence or {}
+    if evidence.get("source") == "gitcode-issue":
+        return _render_issue_markdown(evidence)
     if evidence.get("source") == "manual":
         return _render_manual_markdown(evidence)
     probe_result = evidence.get("probe") or {}
@@ -236,6 +279,8 @@ def _render_manual_prompt(evidence: dict[str, Any]) -> str:
 def render_prompt(evidence: dict[str, Any] | None) -> str:
     """注入生成提示的紧凑版证据（给 AI 参考）。"""
     evidence = evidence or {}
+    if evidence.get("source") == "gitcode-issue":
+        return _render_issue_prompt(evidence)
     if evidence.get("source") == "manual":
         return _render_manual_prompt(evidence)
     probe_result = evidence.get("probe") or {}
@@ -271,6 +316,70 @@ def render_prompt(evidence: dict[str, Any] | None) -> str:
     return "\n".join(parts)
 
 
+def _render_issue_prompt(evidence: dict[str, Any]) -> str:
+    parts = [
+        "## Upstream evidence (from the triggering Issue; reference only)",
+        *_issue_evidence_lines(evidence),
+        "",
+        "### Evidence entries",
+        *(_render_collector(evidence.get("collector") or []) or ["- (empty)"]),
+        *_issue_candidate_lines(evidence),
+        *_issue_l3_lines(evidence),
+        "",
+        "- 证据来自触发 Issue，只作参考；最终以上游源码、安装候选与双架构构建结果为准。",
+    ]
+    return "\n".join(parts)
+
+
+def _render_issue_markdown(evidence: dict[str, Any]) -> str:
+    lines = ["## 上游证据（来自触发 Issue）", ""]
+    lines.extend(_issue_evidence_lines(evidence))
+    lines += ["", "### 采集证据", ""]
+    lines.extend(_render_collector(evidence.get("collector") or []) or ["- 无"])
+    lines.extend(_issue_candidate_lines(evidence))
+    lines.extend(_issue_l3_lines(evidence))
+    lines += ["", "> 证据只作参考，是否可用以双架构原生构建 + 功能测试结果为准。", ""]
+    return "\n".join(lines)
+
+
+def _issue_evidence_lines(evidence: dict[str, Any]) -> list[str]:
+    version_line = f"- 版本：`{evidence.get('version') or 'unknown'}`"
+    if evidence.get("version_type"):
+        version_line += f"（{evidence['version_type']}）"
+    return [
+        f"- 证据来源：触发 Issue（schema_version={evidence.get('schema_version') or 'unknown'}）",
+        f"- request_id：`{evidence.get('request_id') or 'unknown'}`",
+        f"- 上游仓库：{evidence.get('repo_url') or 'unknown'}",
+        version_line,
+        f"- 证据等级：`{evidence.get('support_level') or 'unknown'}`",
+        f"- 采集方：{evidence.get('computed_by') or 'unknown'}",
+        f"- 评估时间：{evidence.get('evaluated_at') or 'unknown'}",
+    ]
+
+
+def _issue_candidate_lines(evidence: dict[str, Any]) -> list[str]:
+    candidates = evidence.get("install_candidates") or []
+    if not candidates:
+        return []
+    lines = ["", f"### 安装候选（{len(candidates)} 条）", ""]
+    for candidate in candidates[:10]:
+        if not isinstance(candidate, Mapping):
+            continue
+        lines.append(
+            f"- `{candidate.get('type')}` {candidate.get('url')} "
+            f"artifact=`{candidate.get('artifact')}` "
+            f"arch=`{candidate.get('arch')}`"
+        )
+    return lines
+
+
+def _issue_l3_lines(evidence: dict[str, Any]) -> list[str]:
+    l3 = evidence.get("l3_evidence")
+    if not l3:
+        return ["", "### L3 openEuler 镜像证据", "", "- 本次未提供"]
+    return ["", "### L3 openEuler 镜像证据", "", "```json", _json_block(l3), "```"]
+
+
 def _render_collector(entries: list[Any]) -> list[str]:
     """把看板证据渲染成可读条目；excerpt 截断，避免撑爆提示。"""
     lines: list[str] = []
@@ -283,8 +392,11 @@ def _render_collector(entries: list[Any]) -> list[str]:
         for key, label in (
             ("support_level", "level"),
             ("artifact", "artifact"),
+            ("test_depth", "test_depth"),
             ("nearest_version", "nearest_version"),
             ("matched_version", "matched_version"),
+            ("checked_at", "checked_at"),
+            ("assessment_id", "assessment"),
         ):
             value = entry.get(key)
             if value:
@@ -296,6 +408,15 @@ def _render_collector(entries: list[Any]) -> list[str]:
         source_url = str(entry.get("source_url") or "").strip()
         if source_url:
             line += f"\n  source: {source_url}"
+        workflows = entry.get("ci_workflows")
+        if isinstance(workflows, list):
+            for workflow in workflows[:5]:
+                if not isinstance(workflow, dict):
+                    continue
+                path = workflow.get("workflow_path") or "unknown"
+                depth = workflow.get("test_depth") or "unknown"
+                url = workflow.get("workflow_url") or ""
+                line += f"\n  ci: `{path}` (test_depth=`{depth}`) {url}".rstrip()
         lines.append(line)
     return lines
 

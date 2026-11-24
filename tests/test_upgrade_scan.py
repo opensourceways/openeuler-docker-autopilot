@@ -63,6 +63,31 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertEqual(item["evidence"]["collector"], [])
         self.assertEqual(item["evidence"]["probe"]["status"], "skipped")
 
+    def test_issue_evidence_is_carried_into_the_upgrade_item(self) -> None:
+        evidence = {
+            "source": "gitcode-issue",
+            "name": "kvrocks",
+            "support_level": "L1",
+            "collector": [
+                {"check_id": "kp.l1.arm_ci", "result": "supported"}
+            ],
+        }
+
+        item = self._scan(issue_evidence=evidence)["updates"][0]
+
+        self.assertEqual(item["evidence"]["source"], "gitcode-issue")
+        self.assertEqual(item["evidence"]["support_level"], "L1")
+        self.assertEqual(
+            item["evidence"]["collector"][0]["check_id"], "kp.l1.arm_ci"
+        )
+
+    def test_issue_evidence_for_another_app_falls_back_to_manual(self) -> None:
+        item = self._scan(
+            issue_evidence={"source": "gitcode-issue", "name": "slurm"}
+        )["updates"][0]
+
+        self.assertEqual(item["evidence"]["source"], "manual")
+
     def test_missing_version_is_skipped(self) -> None:
         apps = [
             {

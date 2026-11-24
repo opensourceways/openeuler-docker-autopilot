@@ -6,6 +6,8 @@ name: Audit and fix one app
 #
 # 交付顺序与升级链路一致：先推修复分支，再跑双架构原生构建 + 功能测试，
 # 两个架构都通过才开 PR，避免把编译错误直接丢给目标仓 CI。
+# 审计/修复 Agent 返回的 app_note 会写回本仓 config/app-notes/<app>.md，并单独
+# 开一个 auto/app-note/<app> 的 notes PR。
 
 on:
   workflow_call:
@@ -60,7 +62,9 @@ on:
         required: false
 
 permissions:
-  contents: read
+  # 审计/修复后向本仓推送 app-note 分支并开 notes PR。
+  contents: write
+  pull-requests: write
 
 env:
   PYTHONUNBUFFERED: "1"
@@ -128,7 +132,8 @@ jobs:
             --item "$ITEM" \
             --repo source-repo \
             --out "${RUNNER_TEMP}/audit" \
-            --prepare
+            --prepare \
+            --app-note-out "${RUNNER_TEMP}/app-note.md"
 
       - name: Upload audit report and task spec
         if: ${{ always() }}
@@ -136,6 +141,21 @@ jobs:
         with:
           name: upgrade-audit-${{ inputs.app }}-${{ github.run_id }}
           path: ${{ runner.temp }}/audit/
+
+      - name: Publish app note
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/publish_app_note.py \
+            --task-spec "${RUNNER_TEMP}/audit/task-spec.json" \
+            --app "${{ inputs.app }}" \
+            --version "${{ inputs.version }}" \
+            --os-version "${{ inputs.os_version }}" \
+            --base "${{ github.event.repository.default_branch || 'main' }}" \
+            --note-file "${RUNNER_TEMP}/app-note.md"
 
   # ── 双架构原生校验：编译 + 功能测试，任一失败都不开 PR ──────────
   validate-x86_64:

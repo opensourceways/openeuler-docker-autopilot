@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.lib import ai_provider
+from scripts.lib import ai_provider, upstream_evidence
 from scripts.lib.agent_runtime import AgentRuntimeError
 from scripts.lib.candidate_bundle import (
     CandidateBundle,
@@ -353,6 +353,7 @@ def _upgrade_issue_watch(args: argparse.Namespace) -> None:
             version=fields["version"],
             os_version=fields["os_version"],
             source_url=fields["source_url"],
+            evidence=upstream_evidence.from_issue_payload(fields["evidence"]),
         )
 
     if args.issue_number is None and args.max_issues < 1:

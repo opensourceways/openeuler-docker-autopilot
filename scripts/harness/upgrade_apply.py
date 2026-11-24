@@ -226,7 +226,8 @@ def build_dockerfile_prompt(
         "\n## Final response contract\n\n"
         "最终响应必须恰好是一个 JSON 对象，包含以下键："
         "success(bool)、dockerfile(str，完整 Dockerfile 文本)、"
-        "summary(str)、error(null 或 str)"
+        "summary(str)、app_note(str 或 null，本次新增的可复用构建经验)、"
+        "error(null 或 str)"
         + (
             "、supporting_files(list，逐个辅助文件的审计结论)"
             if supporting
@@ -363,6 +364,11 @@ def container_verification_section(
     )
 
 
+def _app_note(payload: dict) -> str:
+    note = payload.get("app_note")
+    return note.strip() if isinstance(note, str) and note.strip() else ""
+
+
 def _generate_dockerfile(
     *,
     repo_dir: Path,
@@ -370,12 +376,13 @@ def _generate_dockerfile(
     domain: str,
     plan: version_upgrade.UpgradePlan,
     item: dict,
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str, dict[str, str], str]:
     """让 AI 生成新版本 Dockerfile，并在容器里逐条跑通、失败当场修。
 
     与 CI 失败修复链路同构：生成与修复在同一次 Agent 调用里完成，
     产物以「容器里实际跑通的那份」为准；验证阶段只做确定性构建。
-    同时审计 Dockerfile 引用的辅助脚本，返回 (Dockerfile, 需要写回的辅助文件)。
+    同时审计 Dockerfile 引用的辅助脚本，返回
+    ``(Dockerfile, 需要写回的辅助文件, app_note)``。
     """
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
@@ -502,7 +509,7 @@ def _generate_dockerfile(
             )
             findings += review_findings
             if not findings:
-                return candidate, updates
+                return candidate, updates, _app_note(payload)
             log_stage("upgrade-apply", f"{app}: findings={findings}")
     finally:
         build_runner.docker_rm(container)
@@ -514,7 +521,12 @@ def _generate_dockerfile(
     )
 
 
-def run(item: dict, *, task_spec_out: Path) -> int:
+def run(
+    item: dict,
+    *,
+    task_spec_out: Path,
+    app_note_out: Path | None = None,
+) -> int:
     app = str(item["app"])
     domain = str(item["domain"])
     new_version = str(item["version"])
@@ -538,9 +550,11 @@ def run(item: dict, *, task_spec_out: Path) -> int:
         "upgrade-apply",
         f"{app}: {plan.old_version} -> {new_version} (os={plan.os_version})",
     )
-    dockerfile_text, supporting_updates = _generate_dockerfile(
+    dockerfile_text, supporting_updates, app_note = _generate_dockerfile(
         repo_dir=repo_dir, app=app, domain=domain, plan=plan, item=item
     )
+    if app_notes.save_note_text(app_note_out, app_note) is not None:
+        log_stage("upgrade-apply", f"{app}: app note 已暂存 -> {app_note_out}")
     test_status = _ensure_test_script(
         repo_dir=repo_dir, app=app, domain=domain, plan=plan, item=item
     )
@@ -600,8 +614,17 @@ def main() -> int:
         "--task-spec-out",
         default=os.path.join(os.environ.get("RUNNER_TEMP", PROJECT_ROOT), "task-spec.json"),
     )
+    parser.add_argument(
+        "--app-note-out",
+        type=Path,
+        help="Agent 总结的 app note 暂存路径（留空则不暂存）",
+    )
     args = parser.parse_args()
-    return run(json.loads(args.item), task_spec_out=Path(args.task_spec_out))
+    return run(
+        json.loads(args.item),
+        task_spec_out=Path(args.task_spec_out),
+        app_note_out=args.app_note_out,
+    )
 
 
 if __name__ == "__main__":
