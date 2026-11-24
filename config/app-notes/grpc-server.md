@@ -17,3 +17,18 @@ app: grpc-server
 
 ## 验证
 - `./build/install/examples/bin/hello-world-server` 存在并能启动；tests/test.sh 为准。
+
+<!-- oe-app-note:auto:1.85.4/24.03-lts-sp4 -->
+## 自动沉淀：1.85.4 / 24.03-lts-sp4
+
+## grpc-java 版本线与 grpc/grpc(C++) 脱钩
+- grpc-java（https://github.com/grpc/grpc-java）的 1.85.x 线只有 v1.85.2 之前的 v1.85.0/v1.85.1，之后直接进入 v1.86.0；**不存在 v1.85.2/v1.85.3/v1.85.4**。
+- 若升级任务的新版本 source_url 指向 grpc/grpc(C++)，其 patch 版本（如 1.85.4）在 grpc-java 中并不存在，属于仓库/版本误配；升级 grpc-server 时应以 grpc-java `git ls-remote --tags` 的实际 tag 为准，不要套用 grpc-cpp 版本号。
+
+## 构建方式（沿用）
+- clone grpc-java `v${VERSION}` → 在 `examples` 目录执行 `./gradlew installDist`；产物 `build/install/examples/bin/hello-world-server` 监听 50051。
+- openEuler 用 `java-1.8.0-openjdk` + `git` 即可；Gradle wrapper 首次运行会联网下载发行包。
+
+## 验证
+- tests/test.sh 用 EXPECTED_VERSION 比对 `installDist` 产出的 `grpc-core-*.jar` 版本，并跑 hello-world 回环；因此镜像产出的 jar 版本必须与目标 grpc-java tag 严格一致。
+<!-- /oe-app-note:auto -->
