@@ -1,1718 +1,2213 @@
 # 场景二（应用自动升级）的软件清单，人工维护。
 # name: 看板软件名（传给 /api/v1/version/resolve）
-# app:  目标仓应用目录名；domain: 目标仓一级目录
-# 新增/删除软件直接改本文件，workflow 不再遍历目标仓。
-# 目标仓还没有的软件也登记在这里：由场景二触发场景一新建镜像。
+# docker: 在 openeuler-docker-images 的 {app, domain} 目录
+# conda:  在 openeuler/conda-ecopkgs 的 {package} 目录
+# create: 两库都没有，先用场景一新建镜像 {app, domain}
+# docker/conda 两个字段都在 = 两个仓都有；只有一个 = 只升级该仓。
+# 可选 version / tag / source_url / build_notes / allow_downgrade
+# 由脚本重新生成时按软件名保留。
 # 初始内容由 scripts/utils/scrape_upgrade_apps.py 生成（看板 kunpeng 域）。
 apps:
+- name: grpc-java
+  create:
+    app: grpc-java
+    domain: Others
+  source_url: https://github.com/grpc/grpc-java
+- name: 3d-dna
+  conda:
+    package: 3d-dna
+- name: Abyss
+  conda:
+    package: abyss
+- name: ALLHiC
+  conda:
+    package: allhic
+- name: AlphaFold2
+  conda:
+    package: alphafold
+- name: Ant
+  conda:
+    package: apache-ant
+- name: apptainer
+  conda:
+    package: apptainer
+- name: APR
+  conda:
+    package: apr
+- name: Augustus
+  conda:
+    package: augustus
+- name: bamtools
+  conda:
+    package: bamtools
+- name: BayesTyper
+  conda:
+    package: bayestyper
+- name: bcftools
+  conda:
+    package: bcftools
+- name: bcrypt
+  conda:
+    package: bcrypt
+- name: BEAST
+  conda:
+    package: beast
+- name: bedtools
+  conda:
+    package: bedtools
 - name: benchmark
-  app: benchmark
-  domain: AI
-- name: caffe
-  app: caffe
-  domain: AI
-- name: DiskANN
-  app: diskann
-  domain: AI
-- name: Faiss
-  app: faiss
-  domain: AI
-- name: LangGraph
-  app: langgraph
-  domain: AI
-- name: llama.cpp
-  app: llama.cpp
-  domain: AI
-- name: ONNXRuntime
-  app: onnxruntime
-  domain: AI
-- name: OpenCV
-  app: opencv
-  domain: AI
-- name: PyTorch
-  app: pytorch
-  domain: AI
-- name: sglang
-  app: sglang
-  domain: AI
-- name: TensorRT
-  app: tensorrt
-  domain: AI
-- name: TensorRT-LLM
-  app: tensorrt-llm
-  domain: AI
-- name: torchvision
-  app: torchvision
-  domain: AI
-- name: Towhee
-  app: towhee
-  domain: AI
-- name: TVM
-  app: tvm
-  domain: AI
-- name: vLLM
-  app: vllm
-  domain: AI
-- name: Accumulo
-  app: accumulo
-  domain: Bigdata
-- name: Ambari
-  app: ambari
-  domain: Bigdata
-- name: Atlas
-  app: atlas
-  domain: Bigdata
-- name: auron
-  app: auron
-  domain: Bigdata
-- name: Avro
-  app: avro
-  domain: Bigdata
-- name: Bolt
-  app: bolt
-  domain: Bigdata
-- name: Celeborn
-  app: celeborn
-  domain: Bigdata
-- name: consul
-  app: consul
-  domain: Bigdata
-- name: Daft
-  app: daft
-  domain: Bigdata
-- name: data-juicer
-  app: data-juicer
-  domain: Bigdata
-- name: Doris
-  app: doris
-  domain: Bigdata
-- name: Druid
-  app: druid
-  domain: Bigdata
-- name: ElasticSearch
-  app: elasticsearch
-  domain: Bigdata
-- name: Flink
-  app: flink
-  domain: Bigdata
-- name: Flume
-  app: flume
-  domain: Bigdata
-- name: Gluten
-  app: gluten
-  domain: Bigdata
-- name: Hadoop
-  app: hadoop
-  domain: Bigdata
-- name: HBase
-  app: hbase
-  domain: Bigdata
-- name: Hive
-  app: hive
-  domain: Bigdata
-- name: hudi
-  app: hudi
-  domain: Bigdata
-- name: Iceberg
-  app: iceberg
-  domain: Bigdata
-- name: Impala
-  app: impala
-  domain: Bigdata
-- name: Kafka
-  app: kafka
-  domain: Bigdata
-- name: Kibana
-  app: kibana
-  domain: Bigdata
-- name: Knox
-  app: knox
-  domain: Bigdata
-- name: Kylin
-  app: kylin
-  domain: Bigdata
-- name: Kyuubi
-  app: kyuubi
-  domain: Bigdata
-- name: Lance
-  app: lance
-  domain: Bigdata
-- name: Livy
-  app: livy
-  domain: Bigdata
-- name: logstash
-  app: logstash
-  domain: Bigdata
-- name: Lucene
-  app: lucene
-  domain: Bigdata
-- name: Mesos
-  app: mesos
-  domain: Bigdata
-- name: Oozie
-  app: oozie
-  domain: Bigdata
+  conda:
+    package: benchmark
+- name: bioawk
+  conda:
+    package: bioawk
+- name: batchelor
+  conda:
+    package: bioconductor-batchelor
+- name: biovizbase
+  conda:
+    package: bioconductor-biovizbase
+- name: dnacopy
+  conda:
+    package: bioconductor-dnacopy
+- name: fastseg
+  conda:
+    package: bioconductor-fastseg
+- name: geneselectmmd
+  conda:
+    package: bioconductor-geneselectmmd
+- name: genomation
+  conda:
+    package: bioconductor-genomation
+- name: kebabs
+  conda:
+    package: bioconductor-kebabs
+- name: maigespack
+  conda:
+    package: bioconductor-maigespack
+- name: metapod
+  conda:
+    package: bioconductor-metapod
+- name: methylkit
+  conda:
+    package: bioconductor-methylkit
+- name: monocle
+  conda:
+    package: bioconductor-monocle
+- name: bismark
+  conda:
+    package: bismark
+- name: WAVEWATCH III
+  conda:
+    package: bmi-wavewatch3
+- name: Boost
+  conda:
+    package: boost
+- name: Bowtie2
+  conda:
+    package: bowtie2
+- name: Canu
+  conda:
+    package: canu
+- name: cd-hit
+  conda:
+    package: cd-hit
+- name: centrifuge
+  conda:
+    package: centrifuge
+- name: chromium
+  conda:
+    package: chromium
+- name: ClipKIT
+  conda:
+    package: clipkit
+- name: CMake
+  conda:
+    package: cmake
+- name: CNVnator
+  conda:
+    package: cnvnator
+- name: curl
+  conda:
+    package: curl
+- name: Cutadapt
+  conda:
+    package: cutadapt
+- name: deeptools
+  conda:
+    package: deeptools
+- name: DELFT3D
+  conda:
+    package: delft3d4
+- name: diamond
+  conda:
+    package: diamond
+- name: Django
+  conda:
+    package: django
+- name: ecflow
+  conda:
+    package: ecflow
+- name: EIGENSOFT
+  conda:
+    package: eigensoft
+- name: EMU
+  conda:
+    package: emu
+- name: VEP
+  conda:
+    package: ensembl-vep
+- name: Expat
+  conda:
+    package: expat
+- name: Falcon
+  conda:
+    package: falcon
+- name: fastp
+  conda:
+    package: fastp
+- name: FastTree
+  conda:
+    package: fasttree
+- name: fastx_toolkit
+  conda:
+    package: fastx_toolkit
+- name: fcgi
+  conda:
+    package: fcgi2
+- name: FFTW
+  conda:
+    package: fftw
+- name: FigTRee
+  conda:
+    package: figtree
+- name: FlatBuffers
+  conda:
+    package: flatbuffers
+- name: flye
+  conda:
+    package: flye
+- name: fmt
+  conda:
+    package: fmt
+- name: GDAL
+  conda:
+    package: gdal
+- name: GDB
+  conda:
+    package: gdb
+- name: GEMMA
+  conda:
+    package: gemma
+- name: Geos
+  conda:
+    package: geos
+- name: git
+  conda:
+    package: git
+- name: glean
+  conda:
+    package: glean-gene
+- name: GMP
+  conda:
+    package: gmp
+- name: gnuplot
+  conda:
+    package: gnuplot
+- name: gperftools
+  conda:
+    package: gperftools
+- name: GRAPHMAP
+  conda:
+    package: graphmap
+- name: Graphtyper2
+  conda:
+    package: graphtyper
+- name: GRIDSS
+  conda:
+    package: gridss
+- name: gromacs
+  conda:
+    package: gromacs
+- name: Google Test
+  conda:
+    package: gtest
+- name: Gzip
+  conda:
+    package: gzip
+- name: HISAT2
+  conda:
+    package: hisat2
+- name: HMMER
+  conda:
+    package: hmmer
+- name: hyphy
+  conda:
+    package: hyphy
+- name: idba
+  conda:
+    package: idba
+- name: ISA-L
+  conda:
+    package: isa-l
+- name: kallisto
+  conda:
+    package: kallisto
+- name: kokkos
+  conda:
+    package: kokkos
+- name: kraken2
+  conda:
+    package: kraken2
+- name: lapack
+  conda:
+    package: lapack
+- name: LASTZ
+  conda:
+    package: lastz
+- name: LevelDB
+  conda:
+    package: leveldb
+- name: libavif
+  conda:
+    package: libavif
+- name: libdrm
+  conda:
+    package: libdrm
+- name: Libevent
+  conda:
+    package: libevent
+- name: libjpeg-turbo
+  conda:
+    package: libjpeg-turbo
+- name: Opus
+  conda:
+    package: libopus
+- name: Libxml2
+  conda:
+    package: libxml2
+- name: LZO
+  conda:
+    package: lzo
+- name: MACS3
+  conda:
+    package: macs3
+- name: Manta
+  conda:
+    package: manta
+- name: MCscanX
+  conda:
+    package: mcscanx
+- name: megahit
+  conda:
+    package: megahit
+- name: Meraculous
+  conda:
+    package: meraculous
+- name: metaeuk
+  conda:
+    package: metaeuk
+- name: Metis
+  conda:
+    package: metis
+- name: minimap2
+  conda:
+    package: minimap2
+- name: MinIO
+  conda:
+    package: minio
+- name: MongoDB
+  conda:
+    package: mongodb
+- name: MOPAC
+  conda:
+    package: mopac
+- name: MPB
+  conda:
+    package: mpb
+- name: libmpc
+  conda:
+    package: mpc
+- name: MPFR
+  conda:
+    package: mpfr
+- name: mpi4py
+  conda:
+    package: mpi4py
+- name: mrbayes
+  conda:
+    package: mrbayes
+- name: Mrtrix
+  conda:
+    package: mrtrix3
+- name: multiqc
+  conda:
+    package: multiqc
+- name: mummer
+  conda:
+    package: mummer4
+- name: Muscle
+  conda:
+    package: muscle
+- name: nanopack
+  conda:
+    package: nanopack
+- name: Numpy
+  conda:
+    package: numpy
+- name: Nwchem
+  conda:
+    package: nwchem
+- name: ObsPy
+  conda:
+    package: obspy
+- name: openbabel
+  conda:
+    package: openbabel
+- name: OpenBLAS
+  conda:
+    package: openblas
+- name: OpenH264
+  conda:
+    package: openh264
+- name: ompi
+  conda:
+    package: openmpi
+- name: openssl
+  conda:
+    package: openssl
 - name: ORC
-  app: orc
-  domain: Bigdata
+  conda:
+    package: orc
 - name: pandas
-  app: pandas
-  domain: Bigdata
+  conda:
+    package: pandas
+- name: pcre
+  conda:
+    package: pcre2
+- name: phonopy
+  conda:
+    package: phonopy
+- name: phylophlan
+  conda:
+    package: phylophlan
+- name: picard
+  conda:
+    package: picard
+- name: pigz
+  conda:
+    package: pigz
+- name: pilon
+  conda:
+    package: pilon
+- name: plumed
+  conda:
+    package: plumed
+- name: Primer3
+  conda:
+    package: primer3
+- name: prodigal
+  conda:
+    package: prodigal
+- name: Proj
+  conda:
+    package: proj
+- name: PSI
+  conda:
+    package: psi4
+- name: psipred
+  conda:
+    package: psipred
+- name: psmc
+  conda:
+    package: psmc
+- name: psutil
+  conda:
+    package: psutil
+- name: QuantumEspresso
+  conda:
+    package: qe
+- name: RE2
+  conda:
+    package: re2
+- name: Relion
+  conda:
+    package: relion
+- name: repeatmasker
+  conda:
+    package: repeatmasker
+- name: RepeatModeler
+  conda:
+    package: repeatmodeler
+- name: RepeatScout
+  conda:
+    package: repeatscout
+- name: rMATs
+  conda:
+    package: rmats
+- name: salmon
+  conda:
+    package: salmon
+- name: sambamba
+  conda:
+    package: sambamba
+- name: samblaster
+  conda:
+    package: samblaster
+- name: Samtools
+  conda:
+    package: samtools
+- name: scanpy
+  conda:
+    package: scanpy
+- name: SKLearn
+  conda:
+    package: scikit-learn
+- name: SCons
+  conda:
+    package: scons
+- name: seqkit
+  conda:
+    package: seqkit
+- name: seqwish
+  conda:
+    package: seqwish
+- name: siesta
+  conda:
+    package: siesta
+- name: simde
+  conda:
+    package: simde
+- name: simdjson
+  conda:
+    package: simdjson
+- name: SimpleITK
+  conda:
+    package: simpleitk
+- name: smcpp
+  conda:
+    package: smcpp
+- name: sniffles
+  conda:
+    package: sniffles
+- name: SoftSV
+  conda:
+    package: softsv
+- name: Sphinx
+  conda:
+    package: sphinx
+- name: sqlite
+  conda:
+    package: sqlite
+- name: STAR
+  conda:
+    package: star
+- name: featureCounts
+  conda:
+    package: subread
+- name: SVseq2
+  conda:
+    package: svseq2
+- name: Tesseract
+  conda:
+    package: tesseract
+- name: TinyXML
+  conda:
+    package: tinyxml2
+- name: Tornado
+  conda:
+    package: tornado
+- name: trf
+  conda:
+    package: trf
+- name: trimal
+  conda:
+    package: trimal
+- name: trimmomatic
+  conda:
+    package: trimmomatic
+- name: TypeScript
+  conda:
+    package: typescript
+- name: VaPoR
+  conda:
+    package: vapor
+- name: wgrib2
+  conda:
+    package: wgrib2
+- name: genewise
+  conda:
+    package: wise2
+- name: wtdbg2
+  conda:
+    package: wtdbg
+- name: ZeroMQ
+  conda:
+    package: zeromq
+- name: zlib-ng
+  conda:
+    package: zlib-ng
+- name: caffe
+  docker:
+    app: caffe
+    domain: AI
+- name: DiskANN
+  docker:
+    app: diskann
+    domain: AI
+- name: Faiss
+  docker:
+    app: faiss
+    domain: AI
+- name: LangGraph
+  docker:
+    app: langgraph
+    domain: AI
+- name: llama.cpp
+  docker:
+    app: llama.cpp
+    domain: AI
+- name: ONNXRuntime
+  docker:
+    app: onnxruntime
+    domain: AI
+- name: OpenCV
+  docker:
+    app: opencv
+    domain: AI
+  conda:
+    package: opencv
+- name: PyTorch
+  docker:
+    app: pytorch
+    domain: AI
+- name: sglang
+  docker:
+    app: sglang
+    domain: AI
+- name: TensorRT
+  docker:
+    app: tensorrt
+    domain: AI
+- name: TensorRT-LLM
+  docker:
+    app: tensorrt-llm
+    domain: AI
+- name: torchvision
+  docker:
+    app: torchvision
+    domain: AI
+- name: Towhee
+  docker:
+    app: towhee
+    domain: AI
+- name: TVM
+  docker:
+    app: tvm
+    domain: AI
+- name: vLLM
+  docker:
+    app: vllm
+    domain: AI
+- name: Accumulo
+  docker:
+    app: accumulo
+    domain: Bigdata
+- name: Ambari
+  docker:
+    app: ambari
+    domain: Bigdata
+- name: Atlas
+  docker:
+    app: atlas
+    domain: Bigdata
+- name: auron
+  docker:
+    app: auron
+    domain: Bigdata
+- name: Avro
+  docker:
+    app: avro
+    domain: Bigdata
+- name: Bolt
+  docker:
+    app: bolt
+    domain: Bigdata
+- name: Celeborn
+  docker:
+    app: celeborn
+    domain: Bigdata
+- name: consul
+  docker:
+    app: consul
+    domain: Bigdata
+- name: Daft
+  docker:
+    app: daft
+    domain: Bigdata
+- name: data-juicer
+  docker:
+    app: data-juicer
+    domain: Bigdata
+- name: Doris
+  docker:
+    app: doris
+    domain: Bigdata
+- name: Druid
+  docker:
+    app: druid
+    domain: Bigdata
+- name: ElasticSearch
+  docker:
+    app: elasticsearch
+    domain: Bigdata
+- name: Flink
+  docker:
+    app: flink
+    domain: Bigdata
+- name: Flume
+  docker:
+    app: flume
+    domain: Bigdata
+- name: Gluten
+  docker:
+    app: gluten
+    domain: Bigdata
+- name: Hadoop
+  docker:
+    app: hadoop
+    domain: Bigdata
+- name: HBase
+  docker:
+    app: hbase
+    domain: Bigdata
+- name: Hive
+  docker:
+    app: hive
+    domain: Bigdata
+- name: hudi
+  docker:
+    app: hudi
+    domain: Bigdata
+- name: Iceberg
+  docker:
+    app: iceberg
+    domain: Bigdata
+- name: Impala
+  docker:
+    app: impala
+    domain: Bigdata
+- name: Kafka
+  docker:
+    app: kafka
+    domain: Bigdata
+- name: Kibana
+  docker:
+    app: kibana
+    domain: Bigdata
+- name: Knox
+  docker:
+    app: knox
+    domain: Bigdata
+- name: Kylin
+  docker:
+    app: kylin
+    domain: Bigdata
+- name: Kyuubi
+  docker:
+    app: kyuubi
+    domain: Bigdata
+- name: Lance
+  docker:
+    app: lancedb
+    domain: Bigdata
+- name: Livy
+  docker:
+    app: livy
+    domain: Bigdata
+- name: logstash
+  docker:
+    app: logstash
+    domain: Bigdata
+- name: Lucene
+  docker:
+    app: lucene
+    domain: Bigdata
+- name: Mesos
+  docker:
+    app: mesos
+    domain: Bigdata
+- name: Oozie
+  docker:
+    app: oozie
+    domain: Bigdata
 - name: Parquet
-  app: parquet
-  domain: Bigdata
+  docker:
+    app: parquet
+    domain: Bigdata
   version: 1.18.2
   tag: apache-parquet-1.18.2
   source_url: https://github.com/apache/parquet-java
-  # 1.18.x 与 2.x 是两条上游产品线，目标版本低于目录里最高的 2.12.0 属于正常情况。
   allow_downgrade: true
 - name: Pig
-  app: pig
-  domain: Bigdata
+  docker:
+    app: pig
+    domain: Bigdata
 - name: Presto
-  app: presto
-  domain: Bigdata
+  docker:
+    app: presto
+    domain: Bigdata
 - name: Ranger
-  app: ranger
-  domain: Bigdata
+  docker:
+    app: ranger
+    domain: Bigdata
 - name: Ray
-  app: ray
-  domain: Bigdata
+  docker:
+    app: ray
+    domain: Bigdata
 - name: Spark
-  app: spark
-  domain: Bigdata
+  docker:
+    app: spark
+    domain: Bigdata
 - name: starrocks
-  app: starrocks
-  domain: Bigdata
+  docker:
+    app: starrocks
+    domain: Bigdata
 - name: Storm
-  app: storm
-  domain: Bigdata
+  docker:
+    app: storm
+    domain: Bigdata
 - name: Tez
-  app: tez
-  domain: Bigdata
+  docker:
+    app: tez
+    domain: Bigdata
 - name: Thrift
-  app: thrift
-  domain: Bigdata
+  docker:
+    app: thrift
+    domain: Bigdata
 - name: Calico
-  app: calico
-  domain: Cloud
-- name: chromium
-  app: chromium
-  domain: Cloud
+  docker:
+    app: calico
+    domain: Cloud
 - name: cloudwego
-  app: cloudwego
-  domain: Cloud
+  docker:
+    app: cloudwego
+    domain: Cloud
 - name: Containerd
-  app: containerd
-  domain: Cloud
+  docker:
+    app: containerd
+    domain: Cloud
 - name: CoreDNS
-  app: coredns
-  domain: Cloud
+  docker:
+    app: coredns
+    domain: Cloud
 - name: DeathStarBench
-  app: deathstarbench
-  domain: Cloud
-- name: Django
-  app: django
-  domain: Cloud
+  docker:
+    app: deathstarbench
+    domain: Cloud
 - name: Docker
-  app: docker
-  domain: Cloud
+  docker:
+    app: docker
+    domain: Cloud
 - name: E2B
-  app: e2b
-  domain: Cloud
+  docker:
+    app: e2b
+    domain: Cloud
 - name: Envoy
-  app: envoy
-  domain: Cloud
-- name: fcgi
-  app: fcgi
-  domain: Cloud
+  docker:
+    app: envoy
+    domain: Cloud
 - name: Flannel
-  app: flannel
-  domain: Cloud
+  docker:
+    app: flannel
+    domain: Cloud
 - name: fluid
-  app: fluid
-  domain: Cloud
+  docker:
+    app: fluid
+    domain: Cloud
 - name: Grafana
-  app: grafana
-  domain: Cloud
+  docker:
+    app: grafana
+    domain: Cloud
 - name: Istio
-  app: istio
-  domain: Cloud
+  docker:
+    app: istio
+    domain: Cloud
 - name: kata-containers
-  app: kata-containers
-  domain: Cloud
+  docker:
+    app: kata-containers
+    domain: Cloud
 - name: Kong
-  app: kong
-  domain: Cloud
+  docker:
+    app: kong
+    domain: Cloud
 - name: kubeflow
-  app: kubeflow
-  domain: Cloud
+  docker:
+    app: kubeflow
+    domain: Cloud
 - name: kuberay
-  app: kuberay
-  domain: Cloud
+  docker:
+    app: kuberay
+    domain: Cloud
 - name: Kubernetes
-  app: kubernetes
-  domain: Cloud
+  docker:
+    app: kubernetes
+    domain: Cloud
 - name: libvirt
-  app: libvirt
-  domain: Cloud
+  docker:
+    app: libvirt
+    domain: Cloud
 - name: Nginx
-  app: nginx
-  domain: Cloud
+  docker:
+    app: nginx
+    domain: Cloud
 - name: O3DE
-  app: o3de
-  domain: Cloud
+  docker:
+    app: o3de
+    domain: Cloud
   version: 2610.0
   tag: 2610.0
   source_url: https://github.com/o3de/o3de
 - name: OpenCloudOS
-  app: opencloudos
-  domain: Cloud
+  docker:
+    app: opencloudos
+    domain: Cloud
 - name: openvelinux
-  app: openvelinux
-  domain: Cloud
+  docker:
+    app: openvelinux
+    domain: Cloud
 - name: Open vSwitch
-  app: openvswitch
-  domain: Cloud
+  docker:
+    app: openvswitch
+    domain: Cloud
 - name: Ovirt
-  app: ovirt-engine
-  domain: Cloud
+  docker:
+    app: ovirt-engine
+    domain: Cloud
 - name: Prometheus
-  app: prometheus
-  domain: Cloud
+  docker:
+    app: prometheus
+    domain: Cloud
 - name: qemu
-  app: qemu
-  domain: Cloud
+  docker:
+    app: qemu
+    domain: Cloud
 - name: RabbitMQ
-  app: rabbitmq
-  domain: Cloud
+  docker:
+    app: rabbitmq
+    domain: Cloud
+  conda:
+    package: rabbitmq-server
 - name: rdma-core
-  app: rdma-core
-  domain: Cloud
-  version: "66.0"
+  docker:
+    app: rdma-core
+    domain: Cloud
+  conda:
+    package: rdma-core
+  version: '66.0'
   tag: v66.0
   source_url: https://github.com/linux-rdma/rdma-core
 - name: Squid
-  app: squid
-  domain: Cloud
+  docker:
+    app: squid
+    domain: Cloud
 - name: sriov-network-operator
-  app: sriov-network-operator
-  domain: Cloud
+  docker:
+    app: sriov-network-operator
+    domain: Cloud
 - name: Stratovirt
-  app: stratovirt
-  domain: Cloud
+  docker:
+    app: stratovirt
+    domain: Cloud
 - name: Strongswan
-  app: strongswan
-  domain: Cloud
+  docker:
+    app: strongswan
+    domain: Cloud
 - name: Telegraf
-  app: telegraf
-  domain: Cloud
+  docker:
+    app: telegraf
+    domain: Cloud
 - name: Zookeeper
-  app: zookeeper
-  domain: Cloud
+  docker:
+    app: zookeeper
+    domain: Cloud
 - name: Cassandra
-  app: cassandra
-  domain: Database
+  docker:
+    app: cassandra
+    domain: Database
 - name: ClickHouse
-  app: clickhouse
-  domain: Database
+  docker:
+    app: clickhouse
+    domain: Database
 - name: etcd
-  app: etcd
-  domain: Database
+  docker:
+    app: etcd
+    domain: Database
   version: 3.7.4
   tag: v3.7.4
   source_url: https://github.com/etcd-io/etcd
 - name: InfluxDB
-  app: influxdb
-  domain: Database
+  docker:
+    app: influxdb
+    domain: Database
   version: 3.12.3
   tag: v3.12.3
   source_url: https://github.com/influxdata/influxdb
-- name: LevelDB
-  app: leveldb
-  domain: Database
 - name: MariaDB
-  app: mariadb
-  domain: Database
+  docker:
+    app: mariadb
+    domain: Database
 - name: Memcached
-  app: memcached
-  domain: Database
+  docker:
+    app: memcached
+    domain: Database
 - name: Milvus
-  app: milvus
-  domain: Database
-- name: MongoDB
-  app: mongodb
-  domain: Database
+  docker:
+    app: milvus
+    domain: Database
 - name: MySQL
-  app: mysql
-  domain: Database
+  docker:
+    app: mysql
+    domain: Database
 - name: Neo4j
-  app: neo4j
-  domain: Database
+  docker:
+    app: neo4j
+    domain: Database
 - name: OceanBase
-  app: oceanbase
-  domain: Database
+  docker:
+    app: oceanbase
+    domain: Database
 - name: OrientDB
-  app: orientdb
-  domain: Database
+  docker:
+    app: orientdb
+    domain: Database
 - name: Percona
-  app: percona
-  domain: Database
+  docker:
+    app: percona
+    domain: Database
 - name: Phoenix
-  app: phoenix
-  domain: Database
+  docker:
+    app: phoenix
+    domain: Database
 - name: postgres
-  app: postgres
-  domain: Database
+  docker:
+    app: postgres
+    domain: Database
 - name: Redis
-  app: redis
-  domain: Database
+  docker:
+    app: redis
+    domain: Database
 - name: RocksDB
-  app: rocksdb
-  domain: Database
-- name: sqlite
-  app: sqlite
-  domain: Database
+  docker:
+    app: rocksdb
+    domain: Database
+  conda:
+    package: rocksdb
 - name: TDengine
-  app: tdengine
-  domain: Database
+  docker:
+    app: tdengine
+    domain: Database
 - name: Tengine
-  app: tengine
-  domain: Database
+  docker:
+    app: tengine
+    domain: Database
 - name: TiDB
-  app: tidb
-  domain: Database
-- name: 3d-dna
-  app: 3d-dna
-  domain: HPC
+  docker:
+    app: tidb
+    domain: Database
 - name: 3DSlicer
-  app: 3dslicer
-  domain: HPC
+  docker:
+    app: 3dslicer
+    domain: HPC
 - name: Abinit
-  app: abinit
-  domain: HPC
-- name: Abyss
-  app: abyss
-  domain: HPC
-- name: ALLHiC
-  app: allhic
-  domain: HPC
-- name: AlphaFold2
-  app: alphafold2
-  domain: HPC
+  docker:
+    app: abinit
+    domain: HPC
+  conda:
+    package: abinit
 - name: Amber tools
-  app: ambertools
-  domain: HPC
-- name: Augustus
-  app: augustus
-  domain: HPC
+  docker:
+    app: ambertools
+    domain: HPC
+  conda:
+    package: ambertools
 - name: AutoDock vina
-  app: autodock-vina
-  domain: HPC
-- name: bamtools
-  app: bamtools
-  domain: HPC
-- name: batchelor
-  app: batchelor
-  domain: HPC
-- name: BayesTyper
-  app: bayestyper
-  domain: HPC
-- name: bcftools
-  app: bcftools
-  domain: HPC
-- name: BEAST
-  app: beast
-  domain: HPC
-- name: bedtools
-  app: bedtools
-  domain: HPC
-- name: bioawk
-  app: bioawk
-  domain: HPC
-- name: biovizbase
-  app: biovizbase
-  domain: HPC
-- name: bismark
-  app: bismark
-  domain: HPC
+  docker:
+    app: autodock
+    domain: HPC
+  conda:
+    package: vina
 - name: Blat
-  app: blat
-  domain: HPC
-- name: Bowtie2
-  app: bowtie2
-  domain: HPC
+  docker:
+    app: blat
+    domain: HPC
 - name: BUSCO
-  app: busco
-  domain: HPC
+  docker:
+    app: busco
+    domain: HPC
 - name: BWA
-  app: bwa
-  domain: HPC
+  docker:
+    app: bwa
+    domain: HPC
+  conda:
+    package: bwa
 - name: Cactus
-  app: cactus
-  domain: HPC
-- name: Canu
-  app: canu
-  domain: HPC
-- name: cd-hit
-  app: cd-hit
-  domain: HPC
-- name: centrifuge
-  app: centrifuge
-  domain: HPC
+  docker:
+    app: cactus
+    domain: HPC
 - name: CESM
-  app: cesm
-  domain: HPC
+  docker:
+    app: cesm
+    domain: HPC
 - name: Chaste
-  app: chaste
-  domain: HPC
+  docker:
+    app: chaste
+    domain: HPC
 - name: Chroma
-  app: chroma
-  domain: HPC
+  docker:
+    app: chroma
+    domain: HPC
 - name: circos
-  app: circos
-  domain: HPC
-- name: ClipKIT
-  app: clipkit
-  domain: HPC
+  docker:
+    app: circos
+    domain: HPC
 - name: CMAQ
-  app: cmaq
-  domain: HPC
-- name: CNVnator
-  app: cnvnator
-  domain: HPC
+  docker:
+    app: cmaq
+    domain: HPC
 - name: Code-Saturne
-  app: code-saturne
-  domain: HPC
+  docker:
+    app: code-saturne
+    domain: HPC
 - name: Code-Aster
-  app: code_aster
-  domain: HPC
+  docker:
+    app: code_aster
+    domain: HPC
 - name: COPASI
-  app: copasi
-  domain: HPC
+  docker:
+    app: copasi
+    domain: HPC
 - name: CP2K
-  app: cp2k
-  domain: HPC
+  docker:
+    app: cp2k
+    domain: HPC
 - name: CPMD
-  app: cpmd
-  domain: HPC
+  docker:
+    app: cpmd
+    domain: HPC
 - name: CPS
-  app: cps_public
-  domain: HPC
+  docker:
+    app: cps_public
+    domain: HPC
 - name: Cubep3m
-  app: cubep3m
-  domain: HPC
+  docker:
+    app: cubep3m
+    domain: HPC
 - name: Cufflinks
-  app: cufflinks
-  domain: HPC
-- name: Cutadapt
-  app: cutadapt
-  domain: HPC
+  docker:
+    app: cufflinks
+    domain: HPC
 - name: Deal.II
-  app: deal.ii
-  domain: HPC
+  docker:
+    app: dealii
+    domain: HPC
 - name: DeePMD-kit
-  app: deepmd-kit
-  domain: HPC
+  docker:
+    app: deepmd-kit
+    domain: HPC
 - name: DeepSeek-LLM
-  app: deepseek
-  domain: HPC
-- name: deeptools
-  app: deeptools
-  domain: HPC
-- name: DELFT3D
-  app: delft3d4
-  domain: HPC
-  version_source: github-tags
-  tag_prefix: Delft3D4_
-- name: diamond
-  app: diamond
-  domain: HPC
+  docker:
+    app: deepseek
+    domain: HPC
 - name: DL_POLY
-  app: dl-poly
-  domain: HPC
-- name: dnacopy
-  app: dnacopy
-  domain: HPC
+  docker:
+    app: dl-poly
+    domain: HPC
 - name: eccodes
-  app: eccodes
-  domain: HPC
-- name: ecflow
-  app: ecflow
-  domain: HPC
-- name: EIGENSOFT
-  app: eigensoft
-  domain: HPC
+  docker:
+    app: eccodes
+    domain: HPC
+  conda:
+    package: eccodes
 - name: Elmer
-  app: elmer
-  domain: HPC
+  docker:
+    app: elmer
+    domain: HPC
 - name: eman2
-  app: eman
-  domain: HPC
+  docker:
+    app: eman
+    domain: HPC
 - name: ESPResSOmd
-  app: espressomd
-  domain: HPC
-- name: Falcon
-  app: falcon
-  domain: HPC
+  docker:
+    app: espressomd
+    domain: HPC
 - name: FASTA
-  app: fasta
-  domain: HPC
-- name: fastp
-  app: fastp
-  domain: HPC
-- name: fastseg
-  app: fastseg
-  domain: HPC
-- name: FastTree
-  app: fasttree
-  domain: HPC
-- name: fastx_toolkit
-  app: fastx-toolkit
-  domain: HPC
+  docker:
+    app: fasta
+    domain: HPC
 - name: FDS
-  app: fds
-  domain: HPC
-- name: featureCounts
-  app: featurecounts
-  domain: HPC
-- name: FigTRee
-  app: figtree
-  domain: HPC
-- name: flye
-  app: flye
-  domain: HPC
+  docker:
+    app: fds
+    domain: HPC
 - name: Foldseek
-  app: foldseek
-  domain: HPC
+  docker:
+    app: foldseek
+    domain: HPC
 - name: folly
-  app: folly
-  domain: HPC
+  docker:
+    app: folly
+    domain: HPC
+  conda:
+    package: folly
 - name: FSL
-  app: fsl
-  domain: HPC
+  docker:
+    app: fsl
+    domain: HPC
+  conda:
+    package: fslpy
   version: 6.0.7.23
   tag: 6.0.7.23
   source_url: https://git.fmrib.ox.ac.uk/fsl/fsl
 - name: FVCOM
-  app: fvcom
-  domain: HPC
+  docker:
+    app: fvcom
+    domain: HPC
 - name: GADGET-2
-  app: gadget2
-  domain: HPC
+  docker:
+    app: gadget2
+    domain: HPC
 - name: GATK
-  app: gatk
-  domain: HPC
+  docker:
+    app: gatk
+    domain: HPC
+  conda:
+    package: gatk
 - name: geant4
-  app: geant4
-  domain: HPC
-- name: GEMMA
-  app: gemma
-  domain: HPC
-- name: geneselectmmd
-  app: geneselectmmd
-  domain: HPC
-- name: genewise
-  app: genewise
-  domain: HPC
-- name: genomation
-  app: genomation
-  domain: HPC
-- name: glean
-  app: glean
-  domain: HPC
-- name: gnuplot
-  app: gnuplot
-  domain: HPC
-- name: GRAPHMAP
-  app: graphmap
-  domain: HPC
-- name: Graphtyper2
-  app: graphtyper2
-  domain: HPC
+  docker:
+    app: geant4
+    domain: HPC
 - name: grib_api
-  app: grib_api
-  domain: HPC
-- name: GRIDSS
-  app: gridss
-  domain: HPC
-- name: gromacs
-  app: gromacs
-  domain: HPC
+  docker:
+    app: grib_api
+    domain: HPC
 - name: gsl
-  app: gsl
-  domain: HPC
+  docker:
+    app: gsl
+    domain: HPC
 - name: gulp
-  app: gulp
-  domain: HPC
+  docker:
+    app: gulp
+    domain: HPC
+  conda:
+    package: gulp
 - name: Hefei-NAMD
-  app: hefei-namd
-  domain: HPC
+  docker:
+    app: hefei-namd
+    domain: HPC
 - name: HH-suite
-  app: hh-suite
-  domain: HPC
-- name: HISAT2
-  app: hisat2
-  domain: HPC
-- name: HMMER
-  app: hmmer
-  domain: HPC
+  docker:
+    app: hh-suite
+    domain: HPC
 - name: HYCOM
-  app: hycom
-  domain: HPC
-- name: hyphy
-  app: hyphy
-  domain: HPC
-- name: idba
-  app: idba
-  domain: HPC
+  docker:
+    app: hycom
+    domain: HPC
 - name: interproscan
-  app: interproscan
-  domain: HPC
+  docker:
+    app: interproscan
+    domain: HPC
 - name: Jax
-  app: jax
-  domain: HPC
+  docker:
+    app: jax
+    domain: HPC
 - name: jellyfish
-  app: jellyfish
-  domain: HPC
+  docker:
+    app: jellyfish
+    domain: HPC
 - name: jvarkit
-  app: jvarkit
-  domain: HPC
+  docker:
+    app: jvarkit
+    domain: HPC
+  conda:
+    package: jvarkit
 - name: kalign
-  app: kalign
-  domain: HPC
-- name: kallisto
-  app: kallisto
-  domain: HPC
+  docker:
+    app: kalign
+    domain: HPC
 - name: kallisto+bustools_python
-  app: kb_python
-  domain: HPC
-- name: kebabs
-  app: kebabs
-  domain: HPC
+  docker:
+    app: kb_python
+    domain: HPC
 - name: kobas
-  app: kobas
-  domain: HPC
-- name: kraken2
-  app: kraken2
-  domain: HPC
+  docker:
+    app: kobas
+    domain: HPC
 - name: Lammps
-  app: lammps
-  domain: HPC
-- name: LASTZ
-  app: lastz
-  domain: HPC
+  docker:
+    app: lammps
+    domain: HPC
 - name: Lumpy
-  app: lumpy
-  domain: HPC
-- name: MACS3
-  app: macs3
-  domain: HPC
-- name: maigespack
-  app: maigespack
-  domain: HPC
-- name: Manta
-  app: manta
-  domain: HPC
-- name: MCscanX
-  app: mcscanx
-  domain: HPC
+  docker:
+    app: lumpy
+    domain: HPC
 - name: MEEP
-  app: meep
-  domain: HPC
-- name: megahit
-  app: megahit
-  domain: HPC
-- name: Meraculous
-  app: meraculous
-  domain: HPC
+  docker:
+    app: meep
+    domain: HPC
 - name: meryl
-  app: meryl
-  domain: HPC
-- name: metaeuk
-  app: metaeuk
-  domain: HPC
-- name: metapod
-  app: metapod
-  domain: HPC
-- name: methylkit
-  app: methylkit
-  domain: HPC
+  docker:
+    app: meryl
+    domain: HPC
 - name: mfem
-  app: mfem
-  domain: HPC
+  docker:
+    app: mfem
+    domain: HPC
+  conda:
+    package: mfem
 - name: MILC
-  app: milc
-  domain: HPC
+  docker:
+    app: milc
+    domain: HPC
 - name: miniGhost
-  app: minighost
-  domain: HPC
-- name: minimap2
-  app: minimap2
-  domain: HPC
+  docker:
+    app: minighost
+    domain: HPC
 - name: MNE-python
-  app: mne
-  domain: HPC
-- name: monocle
-  app: monocle
-  domain: HPC
+  docker:
+    app: mne
+    domain: HPC
 - name: Moose Framework
-  app: moose
-  domain: HPC
-- name: MOPAC
-  app: mopac
-  domain: HPC
-- name: MPB
-  app: mpb
-  domain: HPC
-- name: mrbayes
-  app: mrbayes
-  domain: HPC
-- name: Mrtrix
-  app: mrtrix
-  domain: HPC
-- name: multiqc
-  app: multiqc
-  domain: HPC
-- name: mummer
-  app: mummer
-  domain: HPC
-- name: Muscle
-  app: muscle
-  domain: HPC
+  docker:
+    app: moose
+    domain: HPC
 - name: NAMD
-  app: namd
-  domain: HPC
+  docker:
+    app: namd
+    domain: HPC
 - name: NCEPLIBS
-  app: nceplibs
-  domain: HPC
+  docker:
+    app: nceplibs
+    domain: HPC
 - name: NCL
-  app: ncl
-  domain: HPC
+  docker:
+    app: ncl
+    domain: HPC
 - name: NCO
-  app: nco
-  domain: HPC
+  docker:
+    app: nco
+    domain: HPC
+  conda:
+    package: nco
 - name: ncview
-  app: ncview
-  domain: HPC
+  docker:
+    app: ncview
+    domain: HPC
 - name: NEMO
-  app: nemo
-  domain: HPC
+  docker:
+    app: nemo
+    domain: HPC
   version: 6.8.5
   tag: 6.8.5
   source_url: https://github.com/linuxmint/nemo
 - name: NOVOPlasty
-  app: novoplasty
-  domain: HPC
-- name: Nwchem
-  app: nwchem
-  domain: HPC
-- name: openbabel
-  app: openbabel
-  domain: HPC
+  docker:
+    app: novoplasty
+    domain: HPC
 - name: OpenFOAM
-  app: openfoam
-  domain: HPC
+  docker:
+    app: openfoam
+    domain: HPC
 - name: OpenLB
-  app: openlb
-  domain: HPC
+  docker:
+    app: openlb
+    domain: HPC
+  conda:
+    package: openlb
 - name: OpenMolcas
-  app: openmolcas
-  domain: HPC
+  docker:
+    app: openmolcas
+    domain: HPC
 - name: PALABOS
-  app: palabos
-  domain: HPC
+  docker:
+    app: palabos
+    domain: HPC
 - name: paraFEM
-  app: parafem
-  domain: HPC
+  docker:
+    app: parafem
+    domain: HPC
 - name: petsc
-  app: petsc
-  domain: HPC
+  docker:
+    app: petsc
+    domain: HPC
 - name: phono3py
-  app: phono3py
-  domain: HPC
-- name: phonopy
-  app: phonopy
-  domain: HPC
-- name: phylophlan
-  app: phylophlan
-  domain: HPC
-- name: picard
-  app: picard
-  domain: HPC
-- name: pilon
-  app: pilon
-  domain: HPC
-- name: Primer3
-  app: primer3
-  domain: HPC
-- name: prodigal
-  app: prodigal
-  domain: HPC
+  docker:
+    app: phono3py
+    domain: HPC
 - name: ProteinMPNN
-  app: proteinmpnn
-  domain: HPC
+  docker:
+    app: proteinmpnn
+    domain: HPC
 - name: prottest
-  app: prottest3
-  domain: HPC
-- name: PSI
-  app: psi
-  domain: HPC
-- name: psipred
-  app: psipred
-  domain: HPC
-- name: psmc
-  app: psmc
-  domain: HPC
+  docker:
+    app: prottest3
+    domain: HPC
 - name: pwdft
-  app: pwdft
-  domain: HPC
+  docker:
+    app: pwdft
+    domain: HPC
 - name: PyRosetta
-  app: pyrosetta
-  domain: HPC
+  docker:
+    app: pyrosetta
+    domain: HPC
 - name: pysam
-  app: pysam
-  domain: HPC
+  docker:
+    app: pysam
+    domain: HPC
+  conda:
+    package: pysam
 - name: qgis
-  app: qgis
-  domain: HPC
-  version: "4.4"
+  docker:
+    app: qgis
+    domain: HPC
+  conda:
+    package: qgis
+  version: '4.4'
   tag: ltr-4_4
   source_url: https://github.com/qgis/QGIS
 - name: QMCPACK
-  app: qmcpack
-  domain: HPC
+  docker:
+    app: qmcpack
+    domain: HPC
 - name: Quantum Package
-  app: qp2
-  domain: HPC
-- name: QuantumEspresso
-  app: quantumespresso
-  domain: HPC
+  docker:
+    app: qp2
+    domain: HPC
 - name: RDKit
-  app: rdkit
-  domain: HPC
-- name: Relion
-  app: relion
-  domain: HPC
-- name: repeatmasker
-  app: repeatmasker
-  domain: HPC
-- name: RepeatModeler
-  app: repeatmodeler
-  domain: HPC
-- name: RepeatScout
-  app: repeatscout
-  domain: HPC
+  docker:
+    app: rdkit
+    domain: HPC
 - name: Rfdiffusion
-  app: rfdiffusion
-  domain: HPC
+  docker:
+    app: rfdiffusion
+    domain: HPC
 - name: RHMC
-  app: rhmc
-  domain: HPC
-- name: rMATs
-  app: rmats
-  domain: HPC
+  docker:
+    app: rhmc
+    domain: HPC
 - name: ROMS
-  app: roms
-  domain: HPC
+  docker:
+    app: roms
+    domain: HPC
 - name: ROOT
-  app: root
-  domain: HPC
+  docker:
+    app: root
+    domain: HPC
 - name: RSEM
-  app: rsem
-  domain: HPC
-- name: salmon
-  app: salmon
-  domain: HPC
-- name: sambamba
-  app: sambamba
-  domain: HPC
-- name: samblaster
-  app: samblaster
-  domain: HPC
-- name: Samtools
-  app: samtools
-  domain: HPC
-- name: scanpy
-  app: scanpy
-  domain: HPC
+  docker:
+    app: rsem
+    domain: HPC
+  conda:
+    package: rsem
 - name: SeisSol
-  app: seissol
-  domain: HPC
-- name: seqkit
-  app: seqkit
-  domain: HPC
-- name: seqwish
-  app: seqwish
-  domain: HPC
+  docker:
+    app: seissol
+    domain: HPC
 - name: Seurat
-  app: seurat
-  domain: HPC
-- name: siesta
-  app: siesta
-  domain: HPC
-- name: SimpleITK
-  app: simpleitk
-  domain: HPC
-- name: smcpp
-  app: smcpp
-  domain: HPC
-- name: sniffles
-  app: sniffles
-  domain: HPC
-- name: SoftSV
-  app: softsv
-  domain: HPC
+  docker:
+    app: seurat
+    domain: HPC
 - name: SPACK
-  app: spack
-  domain: HPC
+  docker:
+    app: spack
+    domain: HPC
 - name: specfem3d
-  app: specfem3d
-  domain: HPC
+  docker:
+    app: specfem3d
+    domain: HPC
 - name: specfem3d_globe
-  app: specfem3d_globe
-  domain: HPC
-- name: STAR
-  app: star
-  domain: HPC
+  docker:
+    app: specfem3d_globe
+    domain: HPC
 - name: SU2
-  app: su2
-  domain: HPC
+  docker:
+    app: su2
+    domain: HPC
+  conda:
+    package: su2
 - name: SURVIVOR
-  app: survivor
-  domain: HPC
-- name: SVseq2
-  app: svseq2
-  domain: HPC
+  docker:
+    app: survivor
+    domain: HPC
+  conda:
+    package: survivor
 - name: swan
-  app: swan
-  domain: HPC
+  docker:
+    app: swan
+    domain: HPC
+  conda:
+    package: swan
 - name: SWMM
-  app: swmm
-  domain: HPC
+  docker:
+    app: swmm
+    domain: HPC
 - name: Tinker
-  app: tinker
-  domain: HPC
+  docker:
+    app: tinker
+    domain: HPC
+  conda:
+    package: tinker
 - name: Tophat2
-  app: tophat
-  domain: HPC
-- name: trf
-  app: trf
-  domain: HPC
-- name: trimal
-  app: trimal
-  domain: HPC
-- name: trimmomatic
-  app: trimmomatic
-  domain: HPC
+  docker:
+    app: tophat
+    domain: HPC
 - name: Trinity
-  app: trinity
-  domain: HPC
-- name: VaPoR
-  app: vapor
-  domain: HPC
-- name: VASP
-  app: vasp
-  domain: HPC
-  version: 6.6.1
-  tag: 6.6.1
-  source_url: https://www.vasp.at
+  docker:
+    app: trinity
+    domain: HPC
+  conda:
+    package: trinity
 - name: vaspkit
-  app: vaspkit
-  domain: HPC
+  docker:
+    app: vaspkit
+    domain: HPC
 - name: Velvet
-  app: velvet
-  domain: HPC
-- name: VEP
-  app: vep
-  domain: HPC
+  docker:
+    app: velvet
+    domain: HPC
 - name: wannier tools
-  app: wannier_tools
-  domain: HPC
+  docker:
+    app: wannier_tools
+    domain: HPC
 - name: WAVEWATCH
-  app: wavewatch
-  domain: HPC
-- name: WAVEWATCH III
-  app: wavewatch-iii
-  domain: HPC
-- name: wgrib2
-  app: wgrib2
-  domain: HPC
+  docker:
+    app: wavewatch
+    domain: HPC
 - name: WPS
-  app: wps
-  domain: HPC
+  docker:
+    app: wps
+    domain: HPC
 - name: WRF
-  app: wrf
-  domain: HPC
-- name: wtdbg2
-  app: wtdbg2
-  domain: HPC
+  docker:
+    app: wrf
+    domain: HPC
 - name: Yambo
-  app: yambo
-  domain: HPC
+  docker:
+    app: yambo
+    domain: HPC
+  conda:
+    package: yambo
 - name: Zstd
-  app: zstd
-  domain: HPC
+  docker:
+    app: zstd
+    domain: HPC
+  conda:
+    package: zstd
 - name: ActiveMQ
-  app: activemq
-  domain: Others
+  docker:
+    app: activemq
+    domain: Others
 - name: AMG
-  app: amg
-  domain: Others
+  docker:
+    app: amg
+    domain: Others
 - name: Ansible
-  app: ansible
-  domain: Others
-- name: Ant
-  app: ant
-  domain: Others
-- name: apptainer
-  app: apptainer
-  domain: Others
-- name: APR
-  app: apr
-  domain: Others
+  docker:
+    app: ansible
+    domain: Others
+  conda:
+    package: ansible
 - name: APR-util
-  app: apr-util
-  domain: Others
+  docker:
+    app: apr-util
+    domain: Others
 - name: Bcache
-  app: bcache
-  domain: Others
-- name: bcrypt
-  app: bcrypt
-  domain: Others
+  docker:
+    app: bcache
+    domain: Others
 - name: Binder
-  app: binder
-  domain: Others
-- name: Boost
-  app: boost
-  domain: Others
+  docker:
+    app: binder
+    domain: Others
 - name: brpc
-  app: brpc
-  domain: Others
+  docker:
+    app: brpc
+    domain: Others
 - name: busybox
-  app: busybox
-  domain: Others
+  docker:
+    app: busybox
+    domain: Others
 - name: canal
-  app: canal
-  domain: Others
+  docker:
+    app: canal
+    domain: Others
 - name: catj
-  app: catj
-  domain: Others
+  docker:
+    app: catj
+    domain: Others
 - name: cJSON
-  app: cjson
-  domain: Others
-- name: CMake
-  app: cmake
-  domain: Others
-- name: curl
-  app: curl
-  domain: Others
+  docker:
+    app: cjson
+    domain: Others
 - name: DHCP
-  app: dhcp
-  domain: Others
+  docker:
+    app: dhcp
+    domain: Others
 - name: DNSmasq
-  app: dnsmasq
-  domain: Others
+  docker:
+    app: dnsmasq
+    domain: Others
 - name: .NET Core
-  app: dotnet-aspnet
-  domain: Others
+  docker:
+    app: dotnet-aspnet
+    domain: Others
 - name: DPDK
-  app: dpdk
-  domain: Others
+  docker:
+    app: dpdk
+    domain: Others
 - name: Dubbo
-  app: dubbo
-  domain: Others
+  docker:
+    app: dubbo
+    domain: Others
 - name: edk2
-  app: edk2
-  domain: Others
+  docker:
+    app: edk2
+    domain: Others
 - name: Eigen
-  app: eigen-git-mirror
-  domain: Others
-- name: EMU
-  app: emu
-  domain: Others
+  docker:
+    app: eigen-git-mirror
+    domain: Others
+  conda:
+    package: eigen
 - name: Erlang
-  app: erlang
-  domain: Others
-- name: Expat
-  app: expat
-  domain: Others
+  docker:
+    app: erlang
+    domain: Others
+  conda:
+    package: erlang
 - name: FastJSON
-  app: fastjson
-  domain: Others
+  docker:
+    app: fastjson
+    domain: Others
 - name: fbthrift
-  app: fbthrift
-  domain: Others
+  docker:
+    app: fbthrift
+    domain: Others
 - name: ffmpeg
-  app: ffmpeg
-  domain: Others
-- name: FFTW
-  app: fftw
-  domain: Others
+  docker:
+    app: ffmpeg
+    domain: Others
+  conda:
+    package: ffmpeg
 - name: Filebeat
-  app: filebeat
-  domain: Others
+  docker:
+    app: filebeat
+    domain: Others
 - name: Fio
-  app: fio
-  domain: Others
-- name: FlatBuffers
-  app: flatbuffers
-  domain: Others
-- name: fmt
-  app: fmt
-  domain: Others
+  docker:
+    app: fio
+    domain: Others
 - name: gcc
-  app: gcc
-  domain: Others
-- name: GDAL
-  app: gdal
-  domain: Others
-- name: GDB
-  app: gdb
-  domain: Others
-- name: Geos
-  app: geos
-  domain: Others
-- name: git
-  app: git
-  domain: Others
+  docker:
+    app: gcc
+    domain: Others
 - name: Glassfish
-  app: glassfish
-  domain: Others
+  docker:
+    app: glassfish
+    domain: Others
 - name: Glibc
-  app: glibc
-  domain: Others
-- name: GMP
-  app: gmp
-  domain: Others
+  docker:
+    app: glibc
+    domain: Others
 - name: Golang
-  app: go
-  domain: Others
-- name: Google Test
-  app: google-test
-  domain: Others
-- name: gperftools
-  app: gperftools
-  domain: Others
+  docker:
+    app: go
+    domain: Others
+  conda:
+    package: go
 - name: Gradle
-  app: gradle
-  domain: Others
-  version: "9.9.2"
+  docker:
+    app: gradle
+    domain: Others
+  conda:
+    package: gradle
+  version: 9.9.2
   tag: v9.9.2
   source_url: https://github.com/gradle/gradle
 - name: grads
-  app: grads
-  domain: Others
-- name: grpc-java
-  app: grpc-java
-  domain: Others
+  docker:
+    app: grads
+    domain: Others
 - name: grpc
-  app: grpc-server
-  domain: Others
+  docker:
+    app: grpc-server
+    domain: Others
+  conda:
+    package: libgrpc
 - name: Guacamole
-  app: guacd
-  domain: Others
-- name: Gzip
-  app: gzip
-  domain: Others
+  docker:
+    app: guacd
+    domain: Others
 - name: HAProxy
-  app: haproxy
-  domain: Others
+  docker:
+    app: haproxy
+    domain: Others
 - name: harbor
-  app: harbor
-  domain: Others
+  docker:
+    app: harbor
+    domain: Others
 - name: Hiredis
-  app: hiredis
-  domain: Others
+  docker:
+    app: hiredis
+    domain: Others
   version: 1.5.1
   tag: v1.5.1
   source_url: https://github.com/redis/hiredis
 - name: hnswlib
-  app: hnswlib
-  domain: Others
+  docker:
+    app: hnswlib
+    domain: Others
+  conda:
+    package: hnswlib
 - name: horovod
-  app: horovod
-  domain: Others
+  docker:
+    app: horovod
+    domain: Others
 - name: Apache HTTP Server
-  app: httpd
-  domain: Others
+  docker:
+    app: httpd
+    domain: Others
 - name: Hyperscan
-  app: hyperscan
-  domain: Others
+  docker:
+    app: hyperscan
+    domain: Others
 - name: iperf
-  app: iperf
-  domain: Others
+  docker:
+    app: iperf
+    domain: Others
 - name: irvsp
-  app: irvsp
-  domain: Others
-- name: ISA-L
-  app: isa-l
-  domain: Others
+  docker:
+    app: irvsp
+    domain: Others
 - name: jemalloc
-  app: jemalloc
-  domain: Others
+  docker:
+    app: jemalloc
+    domain: Others
+  conda:
+    package: jemalloc
 - name: Jenkins
-  app: jenkins
-  domain: Others
+  docker:
+    app: jenkins
+    domain: Others
 - name: Jetty
-  app: jetty
-  domain: Others
+  docker:
+    app: jetty
+    domain: Others
 - name: JUnit
-  app: junit5
-  domain: Others
+  docker:
+    app: junit5
+    domain: Others
+  conda:
+    package: junit5
 - name: Keepalived
-  app: keepalived
-  domain: Others
-- name: kokkos
-  app: kokkos
-  domain: Others
-- name: lapack
-  app: lapack
-  domain: Others
-- name: libavif
-  app: libavif
-  domain: Others
+  docker:
+    app: keepalived
+    domain: Others
 - name: libconfig
-  app: libconfig
-  domain: Others
-- name: libdrm
-  app: libdrm
-  domain: Others
-- name: Libevent
-  app: libevent
-  domain: Others
-- name: libjpeg-turbo
-  app: libjpeg-turbo
-  domain: Others
-- name: libmpc
-  app: libmpc
-  domain: Others
+  docker:
+    app: libconfig
+    domain: Others
+  conda:
+    package: libconfig
 - name: libwebp
-  app: libwebp
-  domain: Others
-- name: Libxml2
-  app: libxml2
-  domain: Others
+  docker:
+    app: libwebp
+    domain: Others
 - name: libyuv-android
-  app: libyuv-android
-  domain: Others
+  docker:
+    app: libyuv-android
+    domain: Others
 - name: LLVM
-  app: llvm
-  domain: Others
+  docker:
+    app: llvm
+    domain: Others
+  conda:
+    package: clang
 - name: log4cpp
-  app: log4cpp
-  domain: Others
+  docker:
+    app: log4cpp
+    domain: Others
+  conda:
+    package: log4cpp
 - name: lua
-  app: lua
-  domain: Others
+  docker:
+    app: lua
+    domain: Others
+  conda:
+    package: lua
 - name: LZ4
-  app: lz4
-  domain: Others
-- name: LZO
-  app: lzo
-  domain: Others
+  docker:
+    app: lz4
+    domain: Others
+  conda:
+    package: lz4
 - name: Maven
-  app: maven
-  domain: Others
+  docker:
+    app: maven
+    domain: Others
+  conda:
+    package: maven
   version: 3.10.2
   tag: maven-3.10.2
   source_url: https://github.com/apache/maven
 - name: Memtester
-  app: memtester
-  domain: Others
+  docker:
+    app: memtester
+    domain: Others
 - name: Mesa
-  app: mesa
-  domain: Others
-- name: Metis
-  app: metis
-  domain: Others
+  docker:
+    app: mesa
+    domain: Others
 - name: Mongoose
-  app: mongoose
-  domain: Others
+  docker:
+    app: mongoose
+    domain: Others
 - name: monolith
-  app: monolith
-  domain: Others
-- name: MPFR
-  app: mpfr
-  domain: Others
-- name: mpi4py
-  app: mpi4py
-  domain: Others
+  docker:
+    app: monolith
+    domain: Others
 - name: Multiwfn
-  app: multiwfn
-  domain: Others
+  docker:
+    app: multiwfn
+    domain: Others
 - name: musl
-  app: musl
-  domain: Others
+  docker:
+    app: musl
+    domain: Others
 - name: Nagios
-  app: nagios
-  domain: Others
+  docker:
+    app: nagios
+    domain: Others
 - name: nDPI
-  app: ndpi
-  domain: Others
+  docker:
+    app: ndpi
+    domain: Others
 - name: Netdata
-  app: netdata
-  domain: Others
+  docker:
+    app: netdata
+    domain: Others
 - name: Netperf
-  app: netperf
-  domain: Others
+  docker:
+    app: netperf
+    domain: Others
 - name: Netty
-  app: netty
-  domain: Others
+  docker:
+    app: netty
+    domain: Others
 - name: Next.js
-  app: next
-  domain: Others
+  docker:
+    app: next
+    domain: Others
 - name: Node.js
-  app: node
-  domain: Others
+  docker:
+    app: node
+    domain: Others
+  conda:
+    package: nodejs
 - name: npm
-  app: npm
-  domain: Others
-- name: Numpy
-  app: numpy
-  domain: Others
-- name: ObsPy
-  app: obspy
-  domain: Others
-- name: ompi
-  app: ompi
-  domain: Others
+  docker:
+    app: npm
+    domain: Others
 - name: onednn
-  app: onednn
-  domain: Others
-- name: OpenBLAS
-  app: openblas
-  domain: Others
-- name: OpenH264
-  app: openh264
-  domain: Others
+  docker:
+    app: onednn
+    domain: Others
+  conda:
+    package: onednn
 - name: jdk
-  app: openjdk
-  domain: Others
+  docker:
+    app: openjdk
+    domain: Others
   version: 28+25
   tag: jdk-28+25
   source_url: https://github.com/openjdk/jdk
-- name: openssl
-  app: openssl
-  domain: Others
-- name: Opus
-  app: opus
-  domain: Others
 - name: PaceMaker
-  app: pacemaker
-  domain: Others
+  docker:
+    app: pacemaker
+    domain: Others
 - name: PaddlePaddle
-  app: paddlepaddle
-  domain: Others
-- name: pcre
-  app: pcre
-  domain: Others
+  docker:
+    app: paddlepaddle
+    domain: Others
 - name: Perl
-  app: perl
-  domain: Others
+  docker:
+    app: perl
+    domain: Others
+  conda:
+    package: perl
 - name: pfordelta
-  app: pfordelta
-  domain: Others
+  docker:
+    app: pfordelta
+    domain: Others
 - name: PHP
-  app: php
-  domain: Others
+  docker:
+    app: php
+    domain: Others
+  conda:
+    package: php
   version: 8.6.0
   tag: php-8.6.0
   source_url: https://github.com/php/php-src
-- name: pigz
-  app: pigz
-  domain: Others
 - name: Plink
-  app: plink
-  domain: Others
-- name: plumed
-  app: plumed
-  domain: Others
-- name: Proj
-  app: proj
-  domain: Others
+  docker:
+    app: plink
+    domain: Others
+  conda:
+    package: plink2
 - name: Protobuf
-  app: protobuf
-  domain: Others
-- name: psutil
-  app: psutil
-  domain: Others
+  docker:
+    app: protobuf
+    domain: Others
+  conda:
+    package: protobuf
 - name: Python
-  app: python
-  domain: Others
+  docker:
+    app: python
+    domain: Others
+  conda:
+    package: python
 - name: QDK
-  app: qdk
-  domain: Others
+  docker:
+    app: qdk
+    domain: Others
 - name: Quartz
-  app: quartz
-  domain: Others
+  docker:
+    app: quartz
+    domain: Others
 - name: R
-  app: r
-  domain: Others
+  docker:
+    app: r
+    domain: Others
+  conda:
+    package: r-base
 - name: RabitQ
-  app: rabitq-library
-  domain: Others
+  docker:
+    app: rabitq-library
+    domain: Others
 - name: rapidjson
-  app: rapidjson
-  domain: Others
-- name: RE2
-  app: re2
-  domain: Others
+  docker:
+    app: rapidjson
+    domain: Others
+  conda:
+    package: rapidjson
 - name: React
-  app: react
-  domain: Others
+  docker:
+    app: react
+    domain: Others
 - name: Rinetd
-  app: rinetd
-  domain: Others
+  docker:
+    app: rinetd
+    domain: Others
 - name: Rsyslog
-  app: rsyslog
-  domain: Others
+  docker:
+    app: rsyslog
+    domain: Others
 - name: Ruby
-  app: ruby
-  domain: Others
+  docker:
+    app: ruby
+    domain: Others
+  conda:
+    package: ruby
 - name: rust
-  app: rust
-  domain: Others
+  docker:
+    app: rust
+    domain: Others
 - name: Scala
-  app: scala
-  domain: Others
+  docker:
+    app: scala
+    domain: Others
+  conda:
+    package: scala3
 - name: SCALAPACK
-  app: scalapack
-  domain: Others
+  docker:
+    app: scalapack
+    domain: Others
 - name: ScaNN
-  app: scann
-  domain: Others
+  docker:
+    app: scann
+    domain: Others
   version: 87e25a5ba04d2c4cf0108f0cec96d648fe2b945a
   tag: 87e25a5ba04d2c4cf0108f0cec96d648fe2b945a
   source_url: https://github.com/google-research/google-research
-- name: SCons
-  app: scons
-  domain: Others
 - name: Shiny
-  app: shiny
-  domain: Others
+  docker:
+    app: shiny
+    domain: Others
+  conda:
+    package: r-shiny
   version: 1.15.0
   tag: v1.15.0
   source_url: https://github.com/rstudio/shiny
 - name: siege
-  app: siege
-  domain: Others
-- name: simde
-  app: simde
-  domain: Others
-- name: simdjson
-  app: simdjson
-  domain: Others
-- name: SKLearn
-  app: sklearn
-  domain: Others
+  docker:
+    app: siege
+    domain: Others
 - name: slurm
-  app: slurm
-  domain: Others
+  docker:
+    app: slurm
+    domain: Others
 - name: Snappy
-  app: snappy
-  domain: Others
+  docker:
+    app: snappy
+    domain: Others
+  conda:
+    package: snappy
 - name: Snort
-  app: snort3
-  domain: Others
+  docker:
+    app: snort3
+    domain: Others
 - name: Solr
-  app: solr
-  domain: Others
+  docker:
+    app: solr
+    domain: Others
 - name: sonic-cpp
-  app: sonic-cpp
-  domain: Others
+  docker:
+    app: sonic-cpp
+    domain: Others
 - name: SPDK
-  app: spdk
-  domain: Others
-- name: Sphinx
-  app: sphinx
-  domain: Others
+  docker:
+    app: spdk
+    domain: Others
 - name: Spring Boot
-  app: spring-boot
-  domain: Others
+  docker:
+    app: spring-boot
+    domain: Others
   version: 4.2.0
   tag: v4.2.0
   source_url: https://github.com/spring-projects/spring-boot
 - name: Spring Cloud
-  app: spring-cloud
-  domain: Others
+  docker:
+    app: spring-cloud
+    domain: Others
 - name: Spring Framework
-  app: spring-framework
-  domain: Others
+  docker:
+    app: spring-framework
+    domain: Others
   version: 7.1.0
   tag: v7.1.0
   source_url: https://github.com/spring-projects/spring-framework
 - name: sundials
-  app: sundials
-  domain: Others
+  docker:
+    app: sundials
+    domain: Others
+  conda:
+    package: sundials
 - name: Suricata
-  app: suricata
-  domain: Others
+  docker:
+    app: suricata
+    domain: Others
 - name: Swagger UI
-  app: swagger-ui
-  domain: Others
+  docker:
+    app: swagger-ui
+    domain: Others
   version: 5.35.1
   tag: v5.35.1
   source_url: https://github.com/swagger-api/swagger-ui
 - name: sysbench
-  app: sysbench
-  domain: Others
+  docker:
+    app: sysbench
+    domain: Others
 - name: taskflow
-  app: taskflow
-  domain: Others
+  docker:
+    app: taskflow
+    domain: Others
+  conda:
+    package: taskflow
 - name: TensorFlow
-  app: tensorflow
-  domain: Others
-- name: Tesseract
-  app: tesseract
-  domain: Others
-- name: TinyXML
-  app: tinyxml
-  domain: Others
+  docker:
+    app: tensorflow
+    domain: Others
 - name: Tomcat
-  app: tomcat
-  domain: Others
+  docker:
+    app: tomcat
+    domain: Others
 - name: Tongsuo
-  app: tongsuo
-  domain: Others
-- name: Tornado
-  app: tornado
-  domain: Others
+  docker:
+    app: tongsuo
+    domain: Others
 - name: ATS
-  app: traffic-server
-  domain: Others
+  docker:
+    app: traffic-server
+    domain: Others
 - name: Triton
-  app: triton
-  domain: Others
-- name: TypeScript
-  app: typescript
-  domain: Others
+  docker:
+    app: triton
+    domain: Others
 - name: udunits
-  app: udunits
-  domain: Others
+  docker:
+    app: udunits-2
+    domain: Others
 - name: UnixBench
-  app: unixbench
-  domain: Others
+  docker:
+    app: unixbench
+    domain: Others
 - name: uWSGI
-  app: uwsgi
-  domain: Others
+  docker:
+    app: uwsgi
+    domain: Others
 - name: Varnish
-  app: varnish
-  domain: Others
+  docker:
+    app: varnish
+    domain: Others
 - name: Vue
-  app: vue
-  domain: Others
+  docker:
+    app: vue
+    domain: Others
+  conda:
+    package: vue
 - name: vvenc
-  app: vvenc
-  domain: Others
+  docker:
+    app: vvenc
+    domain: Others
 - name: Wannier90
-  app: wannier90
-  domain: Others
+  docker:
+    app: wannier90
+    domain: Others
+  conda:
+    package: wannier90
 - name: Want
-  app: want
-  domain: Others
+  docker:
+    app: want
+    domain: Others
 - name: WebBench
-  app: webbench
-  domain: Others
+  docker:
+    app: webbench
+    domain: Others
 - name: WGCNA
-  app: wgcna
-  domain: Others
+  docker:
+    app: wgcna
+    domain: Others
 - name: JBOSS
-  app: wildfly
-  domain: Others
+  docker:
+    app: wildfly
+    domain: Others
 - name: wireshark
-  app: wireshark
-  domain: Others
+  docker:
+    app: wireshark
+    domain: Others
 - name: Wrk
-  app: wrk
-  domain: Others
+  docker:
+    app: wrk
+    domain: Others
 - name: X264
-  app: x264
-  domain: Others
+  docker:
+    app: x264
+    domain: Others
+  conda:
+    package: x264
 - name: X265
-  app: x265
-  domain: Others
-- name: ZeroMQ
-  app: zeromq
-  domain: Others
+  docker:
+    app: x265
+    domain: Others
+  conda:
+    package: x265
 - name: Zlib
-  app: zlib
-  domain: Others
-  version: "1.4"
+  docker:
+    app: zlib
+    domain: Others
+  conda:
+    package: zlib
+  version: '1.4'
   tag: v1.4
   source_url: https://github.com/madler/zlib
-- name: zlib-ng
-  app: zlib-ng
-  domain: Others
 - name: 3FS
-  app: 3fs
-  domain: Storage
+  docker:
+    app: 3fs
+    domain: Storage
 - name: Alluxio
-  app: alluxio
-  domain: Storage
+  docker:
+    app: alluxio
+    domain: Storage
 - name: Arrow
-  app: arrow
-  domain: Storage
+  docker:
+    app: arrow
+    domain: Storage
 - name: Ceph
-  app: ceph
-  domain: Storage
+  docker:
+    app: ceph
+    domain: Storage
 - name: cubefs
-  app: cubefs
-  domain: Storage
+  docker:
+    app: cubefs
+    domain: Storage
+- name: CURVE
+  docker:
+    app: curve
+    domain: Storage
+- name: DAOS
+  docker:
+    app: daos
+    domain: Storage
+- name: DRBD
+  docker:
+    app: drbd
+    domain: Storage
+- name: Drill
+  docker:
+    app: drill
+    domain: Storage
+- name: FastDFS
+  docker:
+    app: fastdfs
+    domain: Storage
 - name: fuse
-  app: fuse
-  domain: Storage
+  docker:
+    app: fuse
+    domain: Storage
+  conda:
+    package: libfuse
   version: 3.16.2
   tag: fuse-3.16.2
   source_url: https://github.com/libfuse/libfuse
-- name: CURVE
-  app: curve
-  domain: Storage
-- name: DAOS
-  app: daos
-  domain: Storage
-- name: DRBD
-  app: drbd
-  domain: Storage
-- name: Drill
-  app: drill
-  domain: Storage
-- name: FastDFS
-  app: fastdfs
-  domain: Storage
 - name: GlusterFS
-  app: glusterfs
-  domain: Storage
+  docker:
+    app: glusterfs
+    domain: Storage
 - name: JuiceFS
-  app: juicefs
-  domain: Storage
+  docker:
+    app: juicefs
+    domain: Storage
 - name: Kudu
-  app: kudu
-  domain: Storage
+  docker:
+    app: kudu
+    domain: Storage
 - name: LizardFS
-  app: lizardfs
-  domain: Storage
+  docker:
+    app: lizardfs
+    domain: Storage
 - name: Lustre
-  app: lustre
-  domain: Storage
+  docker:
+    app: lustre
+    domain: Storage
   version: 2.17.62
   tag: v2_17_62
   source_url: https://github.com/lustre/lustre-release
-- name: MinIO
-  app: minio
-  domain: Storage
 - name: Mooncake
-  app: mooncake
-  domain: Storage
+  docker:
+    app: mooncake
+    domain: Storage
 - name: MooseFS
-  app: moosefs
-  domain: Storage
+  docker:
+    app: moosefs
+    domain: Storage
 - name: reedsolomon
-  app: reedsolomon
-  domain: Storage
+  docker:
+    app: reedsolomon
+    domain: Storage
 - name: SeaweedFS
-  app: seaweedfs
-  domain: Storage
+  docker:
+    app: seaweedfs
+    domain: Storage
 - name: Sheepdog
-  app: sheepdog
-  domain: Storage
+  docker:
+    app: sheepdog
+    domain: Storage

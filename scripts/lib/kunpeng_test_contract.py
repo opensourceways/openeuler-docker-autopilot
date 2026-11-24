@@ -60,6 +60,23 @@ _DOCKER_RE = re.compile(
 _MKTEMP_RE = re.compile(r"\bmktemp\b")
 _TRAP_RE = re.compile(r"\btrap\b")
 
+# 一个用例必须能失败：至少出现比较、grep/diff、case 或命令退出码判断。
+# 只有 echo "PASS: ..." 的"测试"什么也证明不了，必须拦下。
+_ASSERTION_RE = re.compile(
+    r"(?m)(?:\[\[?[^\n]*\]\]?"
+    r"|\btest\s+-?[A-Za-z0-9_$]"
+    r"|\b(?:grep|egrep|fgrep|diff|cmp)\b"
+    r"|\bcase\s+[^\n]+\s+in\b"
+    r"|\bif\s+"
+    r"|\|\|)"
+)
+# 只把 EXPECTED_VERSION 当必填守卫不算断言；它必须真的和软件输出比较。
+_VERSION_GUARD_SUB_RE = re.compile(r"\$\{EXPECTED_VERSION:[^}]*\}")
+_VERSION_COMPARISON_RE = re.compile(
+    r"(?:==|!=|=~|-eq|-ne|-lt|-gt|-le|-ge|\bgrep\b|\bcase\b"
+    r"|\[\[?[^\n]*\]\]?|\btest\s)"
+)
+
 
 class KunpengContractError(ValueError):
     """Raised when a generated test script violates the KunpengTest rules."""
@@ -85,14 +102,47 @@ def _finding(code: str, message: str) -> dict[str, str]:
     }
 
 
-def _lint_syntax(path: Path) -> str | None:
-    """Return Bash's complaint about the script, or None when it parses."""
+_BASH_LINTER: str | None = None
+_BASH_LINTER_CHECKED = False
+
+
+def _bash_linter() -> str | None:
+    """返回可用的 bash；WSL 等"存在但跑不动"的 bash 直接视为不可用。"""
+    global _BASH_LINTER, _BASH_LINTER_CHECKED
+    if _BASH_LINTER_CHECKED:
+        return _BASH_LINTER
+    _BASH_LINTER_CHECKED = True
     bash = shutil.which("bash")
     if bash is None:
         return None
     try:
+        probe = subprocess.run(
+            [bash, "-n", "-s"],
+            input="if [ 1 = 1 ]; then :; fi\n",
+            capture_output=True,
+            text=True,
+            timeout=_LINT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if probe.returncode != 0:
+        return None
+    _BASH_LINTER = bash
+    return bash
+
+
+def _lint_syntax(path: Path) -> str | None:
+    """Return Bash's complaint about the script, or None when it parses."""
+    bash = _bash_linter()
+    if bash is None:
+        return None
+    try:
+        # 走 stdin 而不是文件路径：Windows 上的 WSL bash 读不到 D:\... 路径，
+        # 会误报 exit code 127。
         completed = subprocess.run(
-            [bash, "-n", str(path)],
+            [bash, "-n", "-s"],
+            input=path.read_text(encoding="utf-8", errors="replace"),
             capture_output=True,
             text=True,
             timeout=_LINT_TIMEOUT_SECONDS,
@@ -102,8 +152,42 @@ def _lint_syntax(path: Path) -> str | None:
         return None
     if completed.returncode == 0:
         return None
+    if completed.returncode == 127:
+        # `bash` was found but could not be started (e.g. a WSL shim on
+        # Windows); that says nothing about the script's syntax.
+        return None
     detail = " ".join((completed.stderr or completed.stdout or "").split())
     return detail[:300] or f"exit code {completed.returncode}"
+
+
+def _case_bodies(text: str) -> dict[str, str]:
+    """按函数定义切出每个 test_* 的函数体（到下一个函数或 ^} 为止）。"""
+    matches = list(_FUNC_DEF_RE.finditer(text))
+    bodies: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        name = match.group(1)
+        if not _VALID_TEST_FUNC_RE.match(name):
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        body = text[match.end():end]
+        close = re.search(r"^\}", body, re.MULTILINE)
+        if close:
+            body = body[: close.start()]
+        bodies[name] = body
+    return bodies
+
+
+def _asserts_expected_version(lines: list[str]) -> bool:
+    """EXPECTED_VERSION 是否参与比较，而不只是必填守卫/赋值。"""
+    for line in lines:
+        if "EXPECTED_VERSION" not in line:
+            continue
+        stripped = _VERSION_GUARD_SUB_RE.sub("", line)
+        if "EXPECTED_VERSION" not in stripped:
+            continue
+        if _VERSION_COMPARISON_RE.search(stripped):
+            return True
+    return False
 
 
 def check_test_script(path: Path) -> list[dict[str, str]]:
@@ -195,6 +279,26 @@ def check_test_script(path: Path) -> list[dict[str, str]]:
                 "or a -z/-n check",
             )
         )
+    if _EXPECTED_VERSION_RE.search(text) and not _asserts_expected_version(lines):
+        findings.append(
+            _finding(
+                "kunpeng.expected_version_not_asserted",
+                "EXPECTED_VERSION is only guarded, never compared with the "
+                "actual software output: the test must assert the exact "
+                "version, e.g. [ \"${out}\" = \"${EXPECTED_VERSION}\" ]",
+            )
+        )
+
+    for name, body in _case_bodies(text).items():
+        if not _ASSERTION_RE.search(body):
+            findings.append(
+                _finding(
+                    "kunpeng.no_assertion",
+                    f"{name}: no assertion that can fail (comparison, "
+                    "grep/diff, case or command exit status); a case that "
+                    "only echoes PASS does not prove functionality",
+                )
+            )
 
     if not _PASS_LINE_RE.search(text):
         findings.append(

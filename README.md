@@ -225,7 +225,8 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 
 | Job 类别 | 默认标签 | 覆盖方式 |
 |---------|---------|---------|
-| `discover` / `summary`（轻量） | `["self-hosted","Linux","X64","oe-image-x86"]` | 输入 `runner_labels`，Variable `UPGRADE_RUNNER_LABELS` |
+| `discover`（轻量） | `["self-hosted","Linux","X64","oe-upgrade-x64"]` | 输入 `runner_labels`，Variable `UPGRADE_RUNNER_LABELS` |
+| `summary`（轻量） | `["self-hosted","Linux","X64","oe-image-x86"]` | 输入 `runner_labels`，Variable `UPGRADE_RUNNER_LABELS` |
 | `validate-x86_64` | `["self-hosted","Linux","X64","oe-image-x86"]` | `_upgrade_app.yml` 的输入 `x64_runner_labels` |
 | `validate-aarch64`（**必须 arm64**） | `["self-hosted","Linux","ARM64","oe-image-arm64"]` | `_upgrade_app.yml` 的输入 `arm64_runner_labels` |
 | CI 修复组件（`_ci_repair.yml`） | 轻量 `oe-image-x86`；amd64 `oe-fix-amd64`；arm64 `oe-fix-arm64` | 输入 `x64_runner_labels` / `amd64_runner_labels` / `arm64_runner_labels`，Variables `CI_FIX_*_RUNNER_LABELS` |
@@ -260,7 +261,7 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 |------|------|--------|
 | `MAX_PARALLEL_IMAGES` | 场景三 Matrix 并行的镜像数上限 | `4` |
 | `MAX_PARALLEL_UPGRADES` | 场景二同一轮并发升级的应用数上限 | `2` |
-| `UPGRADE_RUNNER_LABELS` | 场景二发现 / 汇总 Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
+| `UPGRADE_RUNNER_LABELS` | 场景二发现 / 汇总 Job 的 runner 标签，JSON 数组 | 未设置时 discover 回退 `oe-upgrade-x64`、summary 回退 `oe-image-x86` |
 | `GITCODE_BOT_USERNAME` | 交付阶段用于推送分支的 GitCode 账号名 | _(无)_ |
 | `AI_RUNNER` | 所有场景的 AI 后端：`opencode` / `claude-code-account` | `opencode` |
 | `AI_MODEL` | 所有场景统一的模型名（`provider/model`） | `gateway/deepseek-v4-pro` |
@@ -270,7 +271,7 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `PR_COMMENT_ON_FAILURE` | CI 修复组件连续失败时是否回帖源 PR（回帖是 outward-facing 动作，故默认不回；覆盖位置：arm64 复验三轮失败、同一 PR 跑满 6 个 run 停手） | _(空)_ |
 | `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二升级 commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
 | `OPENAI_BASE_URL` | 所有场景统一的模型 API 地址（OpenAI 兼容） | `https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1` |
-| `UPGRADE_RUNNER_LABELS` | 场景二发现 / 汇总 Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
+| `UPGRADE_RUNNER_LABELS` | 场景二发现 / 汇总 Job 的 runner 标签，JSON 数组 | 未设置时 discover 回退 `oe-upgrade-x64`、summary 回退 `oe-image-x86` |
 | `UPGRADE_REPAIR_INSTRUCTIONS` | 验证失败后自动 repair 的默认说明（留空则 AI 按失败证据自行修复） | _(空)_ |
 | `AUTO_REPAIR_UPGRADES` | 设为 `false` 关闭验证失败后的自动 repair | `true` |
 | `CI_FIX_X64_RUNNER_LABELS` | CI 修复组件轻量 Job（prepare / 分析 / code-fix / 监控）的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
@@ -296,7 +297,7 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 
 部署完成后，从 Actions 页面手动运行 **Create New Images**，`operation` 选 `pipeline_smoke`：它跑完整编排链路，但不调用 AI、不做任何 GitCode 写操作，用于确认 Runner、工具链与编排本身健康。
 
-场景二的入口是 **App Version Upgrade**：现在只保留 `workflow_dispatch`，每日定时在测试期关闭。用 `app` 指定单个应用（可同时给 `version` / `source_url` 直接指定目标版本与上游仓库）验证 discover 输出、双架构验证与 PR 正文；不传 `app` 即按清单全量扫描。`limit` 控制单轮最多升级几个应用。流程口径是：清单手动提供 version / source_url → 对比目标仓已有目录 → 驱动镜像构建与测试生成，最终是否通过由双架构构建与功能测试决定。
+场景二的入口是 **App Version Upgrade**：现在只保留 `workflow_dispatch`，每日定时在测试期关闭。用 `app` 指定单个应用（可同时给 `version` / `source_url` 直接指定目标版本与上游仓库）验证 discover 输出、双架构验证与 PR 正文；不传 `app` 即按清单全量扫描。`limit` 控制单轮最多升级几个应用。并发组按 `app` 隔离（`app-version-upgrade-<app>`，app 为空时按 ref）：逐 app 派发时不同应用并行、同一应用串行，避免固定并发组下排队 run 互相顶掉丢请求。流程口径是：清单手动提供 version / source_url → 对比目标仓已有目录 → 驱动镜像构建与测试生成，最终是否通过由双架构构建与功能测试决定。
 
 CI 修复组件（**Fix PR CI failures**）只保留手动 / 显式调用：`workflow_dispatch` 指定 `source_repo` / `pr_number` / `source_platform` 触发一次完整修复链（会真实写 fix 分支与 Fix PR），可用 `x64_runner_labels` / `amd64_runner_labels` / `arm64_runner_labels` 临时指定机器。**Watch CI failed PRs** 也只保留手动触发，不再有 cron。
 

@@ -41,7 +41,8 @@ def test_manual_dispatch_only_app_and_version():
 def test_discover_uses_manual_versions_and_feeds_the_matrix():
     jobs = _workflow(UPGRADE)['jobs']
     assert list(jobs) == [
-        'discover', 'upgrade', 'plan-repairs', 'repair', 'audit', 'summary'
+        'discover', 'upgrade', 'conda-upgrade', 'create-image', 'plan-repairs',
+        'repair', 'audit', 'summary', 'finalize-issue',
     ]
 
     scan_text = _squash(jobs['discover']['steps'])
@@ -76,6 +77,66 @@ def test_discover_uses_manual_versions_and_feeds_the_matrix():
         "${{ matrix.item.build_timeout_minutes || '180' }}"
     assert audit['with']['prepare_timeout_minutes'] == \
         "${{ matrix.item.prepare_timeout_minutes || '240' }}"
+
+
+def test_finalize_job_writes_back_only_when_dispatched_from_an_issue():
+    data = _workflow(UPGRADE)
+    inputs = _trigger(data)['workflow_dispatch']['inputs']
+    assert 'source_issue' in inputs
+    assert inputs['source_issue']['required'] is False
+
+    job = data['jobs']['finalize-issue']
+    finalize_if = _squash(job['if'])
+    assert 'always()' in finalize_if
+    assert "inputs.source_issue != ''" in finalize_if
+    text = _squash(job['steps'])
+    assert 'upgrade-issue-finalize' in text
+    assert '--issue-number' in text
+    assert 'GITCODE_TOKEN' in text
+    # 任一本轮 job 失败或取消都回写为 failure，Issue 保持打开
+    assert 'failure|cancelled' in text
+
+
+def test_conda_updates_are_registered_through_the_reusable_workflow():
+    data = _workflow(UPGRADE)
+    discover = data['jobs']['discover']
+    assert 'conda_updates' in discover['outputs']
+    scan_text = _squash(discover['steps'])
+    assert 'conda-ecopkgs' in scan_text
+    assert '--conda-repo' in scan_text
+    assert '--os-version' in scan_text
+    inputs = _trigger(data)['workflow_dispatch']['inputs']
+    assert 'os_version' in inputs
+
+    job = data['jobs']['conda-upgrade']
+    assert job['needs'] == 'discover'
+    assert job['uses'] == './.github/workflows/conda_ecopkgs_pr.yml'
+    assert 'conda_updates' in _squash(job['if'])
+    assert job['with']['items'] == '${{ needs.discover.outputs.conda_updates }}'
+    assert job['with']['runner_arch'] == 'x64'
+
+    conda = _workflow(ROOT / '.github' / 'workflows' / 'conda_ecopkgs_pr.yml')
+    trigger = _trigger(conda)
+    assert 'workflow_call' in trigger
+    assert trigger['workflow_call']['inputs']['items']['required'] is True
+    assert trigger['workflow_call']['inputs']['runner_arch']['default'] == 'x64'
+
+
+def test_missing_apps_dispatch_create_new_images():
+    data = _workflow(UPGRADE)
+    discover = data['jobs']['discover']
+    assert 'new_images' in discover['outputs']
+
+    job = data['jobs']['create-image']
+    assert job['needs'] == 'discover'
+    assert 'new_images' in _squash(job['if'])
+    assert job['strategy']['matrix']['item'] == \
+        '${{ fromJSON(needs.discover.outputs.new_images) }}'
+    text = _squash(job['steps'])
+    assert 'gh workflow run create_new_images.yml' in text
+    assert 'operation=scenario_one' in text
+    assert 'permissions' in data
+    assert data['permissions']['actions'] == 'write'
 
 
 def test_each_app_runs_prepare_dual_arch_validation_then_pr():
@@ -170,8 +231,8 @@ def test_validation_failure_triggers_one_automatic_repair_round():
     assert "needs.upgrade.result == 'failure'" in _squash(plan['if'])
     assert set(plan['outputs']) >= {'count', 'matrix'}
     assert 'upgrade_plan_repairs.py' in _squash(plan['steps'])
-    # 读 jobs API 需要 actions: read
-    assert 'actions: read' in UPGRADE.read_text(encoding='utf-8')
+    # 读 jobs API 需要 actions 权限；create-image 还需要 write 才能派发场景一
+    assert 'actions: write' in UPGRADE.read_text(encoding='utf-8')
 
     repair = jobs['repair']
     assert repair['needs'] == ['upgrade', 'plan-repairs']

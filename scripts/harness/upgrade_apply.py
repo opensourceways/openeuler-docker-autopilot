@@ -105,19 +105,35 @@ def _ensure_test_script(
     plan: version_upgrade.UpgradePlan,
     item: dict,
 ) -> str:
-    """缺测试就生成；返回 added / existing / pending。"""
-    from scripts.harness import testgen_scan
+    """确保测试脚本存在且通过静态契约；返回 added / existing。
+
+    升级不允许在没有测试脚本的情况下继续：缺脚本就生成，生成失败或现有脚本
+    不满足 KunpengTest 契约都直接失败，不推分支、不浪费双架构构建。
+    """
     from scripts.harness.testgen_generate import generate_test_script
+    from scripts.lib.kunpeng_test_contract import check_test_script
 
     app_dir = repo_dir / domain / app
-    if testgen_scan.has_any_test_script(app_dir):
+    existing = _existing_test_script(app_dir)
+    if existing is not None:
+        findings = check_test_script(existing)
+        if findings:
+            detail = "; ".join(
+                f"{finding['code']}: {finding['message']}" for finding in findings
+            )
+            raise version_upgrade.UpgradeError(
+                f"{app}: 现有测试脚本 "
+                f"{existing.relative_to(repo_dir).as_posix()} 未通过静态契约：{detail}"
+            )
         return "existing"
 
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
     if not api_key or not executable:
-        log_stage("upgrade-apply", f"{app}: 缺少 AI 凭证/opencode，跳过补测试")
-        return "pending"
+        raise version_upgrade.UpgradeError(
+            f"{app}: 缺 tests/test.sh，且没有 AI 凭证/opencode 可生成；"
+            "升级要求测试脚本必须存在并通过契约"
+        )
 
     findings = generate_test_script(
         repo_dir=repo_dir,
@@ -132,9 +148,17 @@ def _ensure_test_script(
     )
     if findings:
         detail = "; ".join(f"{f['code']}: {f['message']}" for f in findings)
-        log_stage("upgrade-apply", f"{app}: 测试脚本生成未通过（非阻断）: {detail}")
-        return "pending"
+        raise version_upgrade.UpgradeError(f"{app}: 测试脚本生成未通过：{detail}")
     return "added"
+
+
+def _existing_test_script(app_dir: Path) -> Path | None:
+    """按 CI 的三个搜索位置找现有 test.sh。"""
+    for candidate in (app_dir / "tests" / "test.sh", app_dir / "test.sh"):
+        if candidate.is_file():
+            return candidate
+    matches = sorted(app_dir.glob("*/*/test.sh"))
+    return matches[0] if matches else None
 
 
 def build_dockerfile_prompt(

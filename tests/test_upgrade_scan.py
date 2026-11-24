@@ -264,14 +264,30 @@ class FindUpdatesTest(unittest.TestCase):
         )
         self.assertEqual(result["updates"][0]["evidence"]["tag"], "v2.18.0")
 
-    def test_forced_version_requires_source_url(self) -> None:
-        with self.assertRaises(SystemExit):
-            upgrade_scan.find_updates(
-                repo_dir=self.repo,
-                app_filter="kvrocks",
-                forced_version="2.18.0",
-                apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
-            )
+    def test_forced_version_without_source_url_is_skipped(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            app_filter="kvrocks",
+            forced_version="2.18.0",
+            apps=[{"name": "kvrocks", "app": "kvrocks", "domain": "Database"}],
+        )
+        self.assertEqual(result["updates"], [])
+        self.assertIn("source_url", result["skipped"][0]["reason"])
+
+    def test_source_url_falls_back_to_doc_image_info(self) -> None:
+        doc = self.repo / "Database" / "kvrocks" / "doc"
+        doc.mkdir()
+        (doc / "image-info.yml").write_text(
+            "homepage: https://github.com/apache/kvrocks\n",
+            encoding="utf-8",
+        )
+
+        result = self._scan(apps=[_entry("2.17.0", source_url="")])
+
+        self.assertEqual(
+            result["updates"][0]["source_url"],
+            "https://github.com/apache/kvrocks",
+        )
 
     def test_unlisted_app_in_repo_can_be_upgraded_with_forced_version(self) -> None:
         _make_app(self.repo, "AI", "open-webui", versions=("0.1.108",))
@@ -316,6 +332,234 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertEqual(len(result["updates"]), 1)
 
 
+class CondaScanTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.repo = root / "target-repo"
+        self.repo.mkdir()
+        _make_app(self.repo, "AI", "benchmark", versions=("1.9.2",))
+        self.conda = root / "conda-repo"
+        package = self.conda / "packages" / "benchmark"
+        package.mkdir(parents=True)
+        (package / "supported-versions.yml").write_text(
+            "24.03-LTS:\n"
+            "    1.9.2:\n"
+            "        - x86_64\n"
+            "        - aarch64\n"
+            "24.03-LTS-SP4:\n"
+            "    1.10.0:\n"
+            "        - noarch\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    @staticmethod
+    def _entry(**overrides) -> dict:
+        entry = {
+            "name": "benchmark",
+            "docker": {"app": "benchmark", "domain": "AI"},
+            "conda": {"package": "benchmark"},
+        }
+        entry.update(overrides)
+        return entry
+
+    def test_both_targets_produce_a_docker_update_and_a_conda_update(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            forced_version="1.11.0",
+            source_url="https://github.com/google/benchmark",
+            apps=[self._entry()],
+            conda_repo=self.conda,
+        )
+
+        self.assertEqual([item["app"] for item in result["updates"]], ["benchmark"])
+        self.assertEqual(
+            result["conda_updates"],
+            [
+                {
+                    "name": "benchmark",
+                    "package": "benchmark",
+                    "version": "1.11.0",
+                    "os_version": "24.03-LTS-SP4",
+                    "arches": ["noarch"],
+                }
+            ],
+        )
+
+    def test_registered_conda_version_is_skipped(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            forced_version="1.10.0",
+            forced_os="24.03-lts-sp4",
+            source_url="https://github.com/google/benchmark",
+            apps=[self._entry()],
+            conda_repo=self.conda,
+        )
+
+        self.assertEqual(result["conda_updates"], [])
+        conda_skips = [
+            item for item in result["skipped"] if item.get("target") == "conda"
+        ]
+        self.assertEqual(len(conda_skips), 1)
+        self.assertIn("已登记", conda_skips[0]["reason"])
+
+    def test_forced_os_matches_existing_section_case_insensitively(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            forced_version="1.11.0",
+            forced_os="24.03-lts",
+            source_url="https://github.com/google/benchmark",
+            apps=[self._entry()],
+            conda_repo=self.conda,
+        )
+
+        self.assertEqual(
+            result["conda_updates"][0]["os_version"], "24.03-LTS"
+        )
+        self.assertEqual(
+            result["conda_updates"][0]["arches"], ["x86_64", "aarch64"]
+        )
+
+    def test_new_os_section_is_canonicalized(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            forced_version="1.11.0",
+            forced_os="24.03-lts-sp5",
+            source_url="https://github.com/google/benchmark",
+            apps=[self._entry()],
+            conda_repo=self.conda,
+        )
+
+        self.assertEqual(
+            result["conda_updates"][0]["os_version"], "24.03-LTS-SP5"
+        )
+
+    def test_conda_only_app_is_scanned_without_docker(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            forced_version="1.11.0",
+            apps=[{"name": "benchmark", "conda": {"package": "benchmark"}}],
+            conda_repo=self.conda,
+        )
+
+        self.assertEqual(result["updates"], [])
+        self.assertEqual(len(result["conda_updates"]), 1)
+
+    def test_missing_conda_version_is_skipped(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            apps=[{"name": "benchmark", "conda": {"package": "benchmark"}}],
+            conda_repo=self.conda,
+        )
+
+        self.assertEqual(result["conda_updates"], [])
+        self.assertIn("未提供 version", result["skipped"][0]["reason"])
+
+
+    def test_single_app_filter_fills_a_missing_conda_target(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            app_filter="benchmark",
+            forced_version="1.11.0",
+            source_url="https://github.com/google/benchmark",
+            apps=[{"name": "benchmark", "docker": {"app": "benchmark", "domain": "AI"}}],
+            conda_repo=self.conda,
+        )
+
+        self.assertEqual(len(result["updates"]), 1)
+        self.assertEqual(len(result["conda_updates"]), 1)
+
+    def test_single_app_filter_fills_a_missing_docker_target(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            app_filter="benchmark",
+            forced_version="1.11.0",
+            source_url="https://github.com/google/benchmark",
+            apps=[{"name": "benchmark", "conda": {"package": "benchmark"}}],
+            conda_repo=self.conda,
+        )
+
+        self.assertEqual(len(result["updates"]), 1)
+        self.assertEqual(len(result["conda_updates"]), 1)
+
+
+class NewImageTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.apps = [
+            {
+                "name": "grpc-java",
+                "create": {"app": "grpc-java", "domain": "Others"},
+                "source_url": "https://github.com/grpc/grpc-java",
+            }
+        ]
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_create_target_becomes_a_new_image_item(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            app_filter="grpc-java",
+            forced_version="1.85.4",
+            forced_os="24.03-lts-sp4",
+            apps=self.apps,
+        )
+
+        self.assertEqual(result["updates"], [])
+        self.assertEqual(
+            result["new_images"],
+            [
+                {
+                    "name": "grpc-java",
+                    "app": "grpc-java",
+                    "domain": "Others",
+                    "version": "1.85.4",
+                    "os_version": "24.03-lts-sp4",
+                    "source_url": "https://github.com/grpc/grpc-java",
+                }
+            ],
+        )
+
+    def test_create_target_needs_an_os_version(self) -> None:
+        result = upgrade_scan.find_updates(
+            repo_dir=self.repo,
+            app_filter="grpc-java",
+            forced_version="1.85.4",
+            apps=self.apps,
+        )
+
+        self.assertEqual(result["new_images"], [])
+        self.assertIn("--os-version", result["skipped"][0]["reason"])
+
+    def test_load_apps_accepts_a_create_only_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "apps.yml"
+            path.write_text(
+                "apps:\n"
+                "- name: grpc-java\n"
+                "  create:\n"
+                "    app: grpc-java\n"
+                "    domain: Others\n"
+                "  source_url: https://github.com/grpc/grpc-java\n",
+                encoding="utf-8",
+            )
+            apps = upgrade_scan.load_apps(path)
+
+        self.assertEqual(
+            apps[0],
+            {
+                "name": "grpc-java",
+                "create": {"app": "grpc-java", "domain": "Others"},
+                "source_url": "https://github.com/grpc/grpc-java",
+            },
+        )
+
+
 class LoadAppsTest(unittest.TestCase):
     def test_parses_yaml_and_defaults_name_to_app(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -330,8 +574,52 @@ class LoadAppsTest(unittest.TestCase):
                 encoding="utf-8",
             )
             apps = upgrade_scan.load_apps(path)
-        self.assertEqual(apps[0], {"name": "ClickHouse", "app": "clickhouse", "domain": "Database"})
-        self.assertEqual(apps[1], {"name": "nginx", "app": "nginx", "domain": "Cloud"})
+        self.assertEqual(
+            apps[0],
+            {
+                "name": "ClickHouse",
+                "docker": {"app": "clickhouse", "domain": "Database"},
+            },
+        )
+        self.assertEqual(
+            apps[1],
+            {"name": "nginx", "docker": {"app": "nginx", "domain": "Cloud"}},
+        )
+
+    def test_new_schema_records_both_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "apps.yml"
+            path.write_text(
+                "apps:\n"
+                "- name: benchmark\n"
+                "  docker:\n"
+                "    app: benchmark\n"
+                "    domain: AI\n"
+                "  conda:\n"
+                "    package: benchmark\n",
+                encoding="utf-8",
+            )
+            apps = upgrade_scan.load_apps(path)
+        self.assertEqual(
+            apps[0],
+            {
+                "name": "benchmark",
+                "docker": {"app": "benchmark", "domain": "AI"},
+                "conda": {"package": "benchmark"},
+            },
+        )
+
+    def test_conda_only_entry_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "apps.yml"
+            path.write_text(
+                "apps:\n- name: abyss\n  conda:\n    package: abyss\n",
+                encoding="utf-8",
+            )
+            apps = upgrade_scan.load_apps(path)
+        self.assertEqual(
+            apps[0], {"name": "abyss", "conda": {"package": "abyss"}}
+        )
 
     def test_manual_version_fields_are_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -353,8 +641,7 @@ class LoadAppsTest(unittest.TestCase):
             apps[0],
             {
                 "name": "Ceph",
-                "app": "ceph",
-                "domain": "Storage",
+                "docker": {"app": "ceph", "domain": "Storage"},
                 "version": "22.0.0",
                 "tag": "v22.0.0",
                 "source_url": "https://github.com/ceph/ceph",

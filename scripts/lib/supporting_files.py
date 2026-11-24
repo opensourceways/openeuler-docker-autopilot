@@ -140,9 +140,12 @@ def _bash_syntax_findings(path: str, content: str) -> list[str]:
     except OSError:
         # 当前环境没有可用的 bash；语法检查交给构建期。
         return []
-    if completed.returncode == 0:
+    if completed.returncode in (0, 127):
         return []
     detail = (completed.stderr or completed.stdout or "").strip()
+    if not detail:
+        # bash 存在但跑不动（如 Windows 上的 WSL shim）：无从判断语法。
+        return []
     return [f"{path}: 不是合法 Bash：{detail[:300]}"]
 
 

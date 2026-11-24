@@ -2,17 +2,21 @@ name: App Version Upgrade
 
 # 场景二：应用自动升级（替代社区 easysoftware-autoupgrade）。
 #
-#   按 config/upgrade-apps.yml 清单读取人工提供的 version / source_url（可选 tag），
-#   与目标仓已有版本目录对比 → 缺新版本的应用执行「补功能测试 + AI 生成
-#   Dockerfile + 双架构原生验证 + 跨仓 PR」；目标版本目录已存在的应用**不跳过**，
-#   交给 audit 做 AI 审计（Dockerfile 问题 / 镜像版本 / 测试脚本），再由修复
-#   Agent 更新 Dockerfile 与 doc/image-info.yml，推分支开 PR。
+#   版本号以 Issue / 手动输入的 version 为准；config/upgrade-apps.yml 只负责
+#   app → 仓库映射，缺失时才用手动兜底字段（version / source_url / 可选 tag）。
+#   同时对比两个目标仓：
+#     - openeuler/openeuler-docker-images：缺新版本 → 补测试 + AI 生成
+#       Dockerfile + 双架构原生验证 + 跨仓 PR；版本目录已存在 → audit 修复；
+#     - openeuler/conda-ecopkgs：supported-versions.yml 未登记 → 追加版本并开 PR。
+#   清单里同一个软件两个仓都有时两边都会升级；只有一边存在时只升级那一边。
 #
-# 版本由清单手动维护，自动升级**不查询 upstream-dashboard**；清单项缺 version /
-# source_url 时跳过并记录原因。证据只记录本次手动输入（source=manual）。
+# 自动升级**不查询 upstream-dashboard**；Issue 驱动时版本来自 Issue，手动触发时
+# 必须显式给 version（或由清单兜底）。两者都缺时跳过并记录原因。证据只记录本次
+# 输入（source=manual）。
 #
-# 触发：当前只保留 workflow_dispatch（每日定时在测试期关闭）。
-# 手动入口：app 指定单个应用；version 手动指定目标版本。
+# 触发：workflow_dispatch（手动 / Issue 驱动）。Issue 只要求标题，正文可选；
+# upgrade-issue-watch 会传入 app / version / os_version / source_issue。手动入口
+# 用 app 指定单个应用、version 指定目标版本。
 #
 # 自动 repair：本轮任一应用的双架构验证失败时，plan-repairs 从 jobs 列表里挑出
 # 验证失败的 app，自动调用 _upgrade_app.yml 的 repair 模式修复已有分支并重新
@@ -35,6 +39,14 @@ on:
         type: string
       source_url:
         description: '手动指定版本的上游仓库 HTTPS 地址（配合 version；用于 task spec）'
+        required: false
+        type: string
+      source_issue:
+        description: '来源 GitCode Issue 编号（由 upgrade-issue-watch 自动填写；手动触发留空）'
+        required: false
+        type: string
+      os_version:
+        description: '目标 openEuler 版本（Issue 触发时用于 conda 登记；留空则用各包最新段）'
         required: false
         type: string
       apps_file:
@@ -69,8 +81,9 @@ on:
         type: string
 
 permissions:
-  # plan-repairs 需要读取本次运行的 jobs，判断哪些应用在验证阶段失败。
-  actions: read
+  # plan-repairs 需要读取本次运行的 jobs，判断哪些应用在验证阶段失败；
+  # create-image 需要用 gh workflow run 触发场景一。
+  actions: write
   contents: read
 
 env:
@@ -79,7 +92,9 @@ env:
   TARGET_BRANCH: master
 
 concurrency:
-  group: app-version-upgrade-${{ github.ref }}
+  # 按 app 隔离：看板逐 app 派发时不同应用可并行，同一应用串行避免双开；
+  # 批量扫描（app 为空）仍按 ref 串行。固定 group 会导致排队 run 互相顶掉丢请求。
+  group: app-version-upgrade-${{ inputs.app || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -89,11 +104,13 @@ jobs:
     name: Discover upgradable apps
     runs-on: >-
       ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
-          '["self-hosted","Linux","X64","oe-image-x86"]') }}
+          '["self-hosted","Linux","X64","oe-upgrade-x64"]') }}
     timeout-minutes: 60
     outputs:
       updates: ${{ steps.scan.outputs.updates }}
       audits: ${{ steps.scan.outputs.audits }}
+      conda_updates: ${{ steps.scan.outputs.conda_updates }}
+      new_images: ${{ steps.scan.outputs.new_images }}
       skipped: ${{ steps.scan.outputs.skipped }}
     steps:
       - name: Check out workflow source
@@ -107,28 +124,35 @@ jobs:
           "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
             -r requirements.txt
 
-      - name: Clone target repository
+      - name: Clone target repositories
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
           git clone --depth 1 \
             "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${TARGET_REPO}.git" \
             source-repo
+          git clone --depth 1 \
+            "https://oauth2:${GITCODE_TOKEN}@gitcode.com/openeuler/conda-ecopkgs.git" \
+            conda-repo
 
-      - name: Scan app list vs target repo
+      - name: Scan app list vs target repos
         id: scan
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
           SOURCE_REPO_DIR: ${{ github.workspace }}/source-repo
+          CONDA_REPO_DIR: ${{ github.workspace }}/conda-repo
           APP: ${{ inputs.app }}
           VERSION: ${{ inputs.version }}
           TAG: ${{ inputs.tag }}
           SOURCE_URL: ${{ inputs.source_url }}
+          OS_VERSION: ${{ inputs.os_version }}
           APPS_FILE: ${{ inputs.apps_file }}
           LIMIT: ${{ inputs.limit || '0' }}
           AUDIT_LIMIT: ${{ inputs.audit_limit || '0' }}
         run: |
-          ARGS=(--repo "$SOURCE_REPO_DIR" --format github-output --limit "${LIMIT:-0}" --audit-limit "${AUDIT_LIMIT:-0}")
+          ARGS=(--repo "$SOURCE_REPO_DIR" --conda-repo "$CONDA_REPO_DIR"
+                --format github-output --limit "${LIMIT:-0}"
+                --audit-limit "${AUDIT_LIMIT:-0}")
           if [ -n "$APP" ]; then
             ARGS+=(--app "$APP")
           fi
@@ -140,6 +164,9 @@ jobs:
           fi
           if [ -n "$SOURCE_URL" ]; then
             ARGS+=(--source-url "$SOURCE_URL")
+          fi
+          if [ -n "$OS_VERSION" ]; then
+            ARGS+=(--os-version "$OS_VERSION")
           fi
           if [ -n "$APPS_FILE" ]; then
             ARGS+=(--apps-file "$APPS_FILE")
@@ -174,6 +201,55 @@ jobs:
             '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]' }}
       build_timeout_minutes: ${{ matrix.item.build_timeout_minutes || '180' }}
       prepare_timeout_minutes: ${{ matrix.item.prepare_timeout_minutes || '240' }}
+
+  # ── conda：把新版本登记到 conda-ecopkgs（一包一 PR）───────────────
+  conda-upgrade:
+    name: Register conda packages
+    needs: discover
+    if: >-
+      needs.discover.outputs.conda_updates != '[]' &&
+      needs.discover.outputs.conda_updates != ''
+    uses: ./.github/workflows/conda_ecopkgs_pr.yml
+    secrets: inherit
+    with:
+      items: ${{ needs.discover.outputs.conda_updates }}
+      runner_arch: x64
+
+  # ── 新建：两库都没有的软件，调用场景一先建镜像 ───────────────────
+  create-image:
+    name: "Create ${{ matrix.item.app }} image"
+    needs: discover
+    if: >-
+      needs.discover.outputs.new_images != '[]' &&
+      needs.discover.outputs.new_images != ''
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel || vars.MAX_PARALLEL_UPGRADES || '4') }}
+      matrix:
+        item: ${{ fromJSON(needs.discover.outputs.new_images) }}
+    runs-on: >-
+      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-image-x86"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Dispatch Create New Images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP: ${{ matrix.item.app }}
+          VERSION: ${{ matrix.item.version }}
+          OS_VERSION: ${{ matrix.item.os_version }}
+          DOMAIN: ${{ matrix.item.domain }}
+          SOURCE_URL: ${{ matrix.item.source_url }}
+        run: |
+          gh workflow run create_new_images.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref "${GITHUB_REF_NAME}" \
+            -f operation=scenario_one \
+            -f app="${APP}" \
+            -f version="${VERSION}" \
+            -f os_version="${OS_VERSION}" \
+            -f domain="${DOMAIN}" \
+            -f source_url="${SOURCE_URL}"
 
   # ── 自动修复：只挑验证失败的应用，在原分支上修一轮 ─────────────────
   plan-repairs:
@@ -269,7 +345,7 @@ jobs:
   # ── 汇总：本轮跳过原因（含 blocked_reason / 已有 PR / 审计上限）─────
   summary:
     name: Summarize round
-    needs: [discover, upgrade, plan-repairs, repair, audit]
+    needs: [discover, upgrade, conda-upgrade, create-image, plan-repairs, repair, audit]
     if: ${{ always() }}
     runs-on: >-
       ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
@@ -278,16 +354,73 @@ jobs:
       - name: Write summary
         env:
           SKIPPED: ${{ needs.discover.outputs.skipped }}
+          CONDA_UPDATES: ${{ needs.discover.outputs.conda_updates }}
+          NEW_IMAGES: ${{ needs.discover.outputs.new_images }}
         run: |
           {
             echo "## 应用自动升级"
             echo ""
             echo "- 升级任务结果：\`${{ needs.upgrade.result || 'skipped' }}\`"
+            echo "- conda 登记结果：\`${{ needs.conda-upgrade.result || 'skipped' }}\`"
+            echo "- 新建镜像结果：\`${{ needs.create-image.result || 'skipped' }}\`"
             echo "- 自动修复任务结果：\`${{ needs.repair.result || 'skipped' }}\`"
             echo "- 审计/修复任务结果：\`${{ needs.audit.result || 'skipped' }}\`"
+            echo "- 待新建镜像："
+            echo ""
+            echo '```json'
+            echo "${NEW_IMAGES:-[]}"
+            echo '```'
+            echo "- conda 待登记："
+            echo ""
+            echo '```json'
+            echo "${CONDA_UPDATES:-[]}"
+            echo '```'
             echo "- 跳过明细："
             echo ""
             echo '```json'
             echo "${SKIPPED:-[]}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 回写：把本轮结果写回来源 GitCode Issue（仅 Issue 触发时）────────
+  finalize-issue:
+    name: Finalize source Issue
+    needs: [discover, upgrade, conda-upgrade, create-image, plan-repairs, repair, audit]
+    if: ${{ always() && inputs.source_issue != '' }}
+    runs-on: >-
+      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-image-x86"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Write result back to source Issue
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          SOURCE_ISSUE: ${{ inputs.source_issue }}
+          DISCOVER_RESULT: ${{ needs.discover.result }}
+          UPGRADE_RESULT: ${{ needs.upgrade.result }}
+          CONDA_RESULT: ${{ needs.conda-upgrade.result }}
+          CREATE_RESULT: ${{ needs.create-image.result }}
+          REPAIR_RESULT: ${{ needs.repair.result }}
+          AUDIT_RESULT: ${{ needs.audit.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          outcome=success
+          for result in \
+            "${DISCOVER_RESULT}" \
+            "${UPGRADE_RESULT}" \
+            "${CONDA_RESULT}" \
+            "${CREATE_RESULT}" \
+            "${REPAIR_RESULT}" \
+            "${AUDIT_RESULT}"; do
+            case "${result}" in
+              failure|cancelled) outcome=failure ;;
+            esac
+          done
+          python3 scripts/harness/flow.py upgrade-issue-finalize \
+            --target-repo "${TARGET_REPO}" \
+            --issue-number "${SOURCE_ISSUE}" \
+            --outcome "${outcome}" \
+            --run-url "${RUN_URL}"

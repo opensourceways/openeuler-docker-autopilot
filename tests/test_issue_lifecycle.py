@@ -777,3 +777,261 @@ def test_github_workflow_dispatch_uses_token_only_in_environment():
     assert "github-secret" not in command
     assert kwargs["env"]["GH_TOKEN"] == "github-secret"
     assert kwargs["check"] is True
+
+
+UPGRADE_ISSUE_TITLE = (
+    "【new-version】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4"
+)
+
+
+def _upgrade_body(name: str, version: str) -> str:
+    return json.dumps(
+        {
+            "schema_version": "1.1",
+            "software": {
+                "name": name,
+                "repo_url": f"https://github.com/{name}/{name}",
+                "raw_category": "rpc",
+                "oss_map_id": f"oss-{name}",
+            },
+            "version": {
+                "value": version,
+                "type": "watched",
+                "display": version,
+            },
+            "upstream_evidence": {
+                "support_level": "L1",
+                "computed_by": "kunpeng-evidence",
+                "evaluated_at": "2026-11-20T00:00:00Z",
+                "evidence": {
+                    "check_id": "kp.l1.arm_ci",
+                    "result": "supported",
+                    "artifact": f"{name}-arm64",
+                    "source_url": "https://ci.example.com/jobs/1",
+                    "checked_at": "2026-11-20T00:00:00Z",
+                    "test_depth": "smoke",
+                    "ci_workflows": [],
+                    "assessment_id": f"assess-{name}",
+                },
+            },
+            "l3_evidence": None,
+            "install_candidates": [
+                {
+                    "type": "source",
+                    "url": (
+                        f"https://github.com/{name}/{name}/archive/refs/"
+                        f"tags/v{version}.tar.gz"
+                    ),
+                    "artifact": f"{name}-{version}.tar.gz",
+                    "arch": "any",
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+UPGRADE_ISSUE_BODY = _upgrade_body("grpc", "1.85.4")
+
+
+def _upgrade_trigger_issue(**overrides):
+    issue = {
+        "number": 81,
+        "html_url": "https://gitcode.com/example/issues/81",
+        "title": UPGRADE_ISSUE_TITLE,
+        "body": UPGRADE_ISSUE_BODY,
+        "state": "open",
+        "issue_state": "新建",
+        "issue_state_detail": {"title": "新建"},
+    }
+    issue.update(overrides)
+    return issue
+
+
+def _parse_upgrade_task(issue):
+    from scripts.harness.parse_issue import parse_upgrade_issue_request
+    from scripts.lib.issue_lifecycle import UpgradeRequest
+
+    return UpgradeRequest(
+        **parse_upgrade_issue_request(issue["title"], issue["body"])
+    )
+
+
+class UpgradeScanClient(TriggerIssueClient):
+    def __init__(self, issues):
+        super().__init__(issues[0])
+        self.issues = [dict(issue) for issue in issues]
+
+    def list_issues(self, **kwargs):
+        self.calls.append(("list", kwargs))
+        return [dict(issue) for issue in self.issues]
+
+
+def test_upgrade_issue_is_claimed_and_dispatched_with_its_source_issue():
+    from scripts.lib.issue_lifecycle import UpgradeRequest, claim_upgrade_issue
+
+    client = TriggerIssueClient(_upgrade_trigger_issue())
+    dispatched = []
+
+    claimed = claim_upgrade_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=81,
+        dispatch=dispatched.append,
+        parse_task=_parse_upgrade_task,
+    )
+    duplicate = claim_upgrade_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=81,
+        dispatch=dispatched.append,
+        parse_task=_parse_upgrade_task,
+    )
+
+    assert claimed is not None
+    assert claimed.number == 81
+    assert claimed.request == UpgradeRequest(
+        app="grpc",
+        version="1.85.4",
+        os_version="24.03-lts-sp4",
+        source_url="https://github.com/grpc/grpc",
+    )
+    assert duplicate is None
+    assert dispatched == [
+        {
+            "app": "grpc",
+            "version": "1.85.4",
+            "os_version": "24.03-lts-sp4",
+            "source_url": "https://github.com/grpc/grpc",
+            "source_issue": "81",
+        }
+    ]
+    assert [name for name, _ in client.calls[:4]] == [
+        "get",
+        "update",
+        "comment",
+        "get",
+    ]
+    claim_call = client.calls[1][1]
+    assert claim_call["issue_status"] == "已接纳"
+    assert claim_call["state"] == "open"
+
+
+def test_upgrade_scan_queues_same_app_behind_an_accepted_issue():
+    from scripts.lib.issue_lifecycle import claim_upgrade_issue
+
+    accepted = _upgrade_trigger_issue(
+        number=70,
+        issue_state="已接纳",
+        issue_state_detail={"title": "已接纳"},
+    )
+    queued = _upgrade_trigger_issue(number=71)
+    other_app = _upgrade_trigger_issue(
+        number=72,
+        title=(
+            "【new-version】upgrade slurm to 26.05.6 "
+            "on openEuler 24.03-lts-sp4"
+        ),
+        body=_upgrade_body("slurm", "26.05.6"),
+    )
+    client = UpgradeScanClient([accepted, queued, other_app])
+    dispatched = []
+
+    claimed = claim_upgrade_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=None,
+        dispatch=dispatched.append,
+        parse_task=_parse_upgrade_task,
+    )
+
+    assert claimed is not None
+    assert claimed.number == 72
+    assert [item["app"] for item in dispatched] == ["slurm"]
+    assert client.calls[0] == (
+        "list",
+        {
+            "target_repo": TARGET_REPO,
+            "state": "open",
+            "search": "【new-version】",
+        },
+    )
+
+
+def test_upgrade_scan_leaves_every_request_queued_while_its_app_is_busy():
+    from scripts.lib.issue_lifecycle import claim_upgrade_issue
+
+    accepted = _upgrade_trigger_issue(
+        number=70,
+        issue_state="已接纳",
+        issue_state_detail={"title": "已接纳"},
+    )
+    queued = _upgrade_trigger_issue(number=71)
+    client = UpgradeScanClient([accepted, queued])
+    dispatched = []
+
+    assert (
+        claim_upgrade_issue(
+            client=client,
+            target_repo=TARGET_REPO,
+            issue_number=None,
+            dispatch=dispatched.append,
+            parse_task=_parse_upgrade_task,
+        )
+        is None
+    )
+    assert dispatched == []
+
+
+@pytest.mark.parametrize(
+    ("outcome", "pr_url", "expected_status", "expected_state"),
+    [
+        ("success", "", "已完成", "closed"),
+        (
+            "success",
+            "https://gitcode.com/openeuler/openeuler-docker-images/pull/4100",
+            "已完成",
+            "closed",
+        ),
+        ("failure", "", "已挂起", "open"),
+    ],
+)
+def test_upgrade_issue_is_finalized_from_scenario_two_result(
+    outcome, pr_url, expected_status, expected_state
+):
+    from scripts.lib.issue_lifecycle import finalize_upgrade_issue
+
+    client = TriggerIssueClient(
+        _upgrade_trigger_issue(
+            issue_state="已接纳",
+            issue_state_detail={"title": "已接纳"},
+        )
+    )
+
+    finalize_upgrade_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=81,
+        outcome=outcome,
+        run_url="https://github.com/Meihan-chen/repo/actions/runs/456",
+        pr_url=pr_url,
+        failure_summary="discover failed",
+    )
+
+    assert [name for name, _ in client.calls] == ["get", "comment", "update"]
+    comment = client.calls[1][1]["body"]
+    assert "actions/runs/456" in comment
+    if outcome == "success":
+        assert "自动升级流水线" in comment
+        if pr_url:
+            assert pr_url in comment
+            assert "Issue 已完成" in comment
+        else:
+            assert "Issue 已关闭" in comment
+            assert "Pull request" not in comment
+    else:
+        assert "自动升级流水线未完成" in comment
+        assert "discover failed" in comment
+    update = client.calls[2][1]
+    assert update["issue_status"] == expected_status
+    assert update["state"] == expected_state
