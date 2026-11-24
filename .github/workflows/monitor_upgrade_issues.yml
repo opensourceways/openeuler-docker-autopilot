@@ -1,6 +1,10 @@
 name: Watch GitCode new-version Issues
 
 on:
+  schedule:
+    # 每 5 分钟轮询 GitCode 上的 【new-version】 Issue。
+    # 固定跑在专用 runner 上，避免排在构建任务后面导致轮询卡住。
+    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       issue_number:
@@ -24,7 +28,11 @@ concurrency:
 jobs:
   watch:
     name: Claim upgrade requests
-    runs-on: [self-hosted, Linux, X64, oe-image-x86]
+    # 专用轮询 runner：与镜像构建机隔离，5 分钟轮询不会被长任务卡住。
+    # 需要换机器时设置 Variable ISSUE_POLL_RUNNER_LABELS（JSON 数组）。
+    runs-on: >-
+      ${{ fromJSON(vars.ISSUE_POLL_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-issue-poll"]') }}
     timeout-minutes: 10
     steps:
       - name: Check out workflow source

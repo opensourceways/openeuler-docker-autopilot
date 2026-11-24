@@ -219,7 +219,7 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 
 Runner 需预装 **Docker 与 buildx**。能力由 Job 启动时的 `scripts/runner_preflight.py` 自检把关——**缺失即失败，不做临时安装**。同一 Runner 上会有并发 Job，镜像 tag 与容器名均携带唯一标识，避免互相覆盖。
 
-Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
+Issue 监控工作流每 5 分钟轮询一次，默认跑在专用 `oe-issue-poll` Runner 上（与镜像构建机隔离，不会被长任务卡住）；需要换机器时设置 Variable `ISSUE_POLL_RUNNER_LABELS`。
 
 场景二的发现 / 交付 Job 只需要 Python、git 与网络；双架构验证 Job 额外需要 Docker（由 preflight 把关）。AI Agent 统一使用锁定工具链中的 opencode，**Runner 无需安装 Node.js**；只有把 `AI_RUNNER` 切到 `claude-code` / `claude-code-account` 时才需要 Node 与 Claude Code CLI。
 
@@ -282,6 +282,7 @@ Issue 监控工作流使用 `oe-image-x86` 自托管 Runner。
 | `CI_FIX_BUILD_CACHE_DIR` | arm64 复验的持久 BuildKit 层缓存目录（自托管机器上的路径，跨 run 复用；留空则退化为不缓存的 `docker build`） | `<runner.workspace>/ci-fix-buildkit-cache` |
 | `CI_FIX_BUILDKIT_BUILDER` | 缓存用的 buildx builder 名（不存在则自动创建 docker-container builder） | `oe-ci-fix` |
 | `TESTGEN_RUNNER_LABELS` | 场景四 generate Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
+| `ISSUE_POLL_RUNNER_LABELS` | Issue 轮询 Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-issue-poll"]` |
 
 场景四复用场景一的 Agent 栈（`gateway/deepseek-v4-pro` + 网关 provider 注入），跨仓 PR 与场景二共用 `GITCODE_FORK_REPO`。看板爬取已下线，不再有跨轮 done / exhausted 状态。
 
