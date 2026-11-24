@@ -20,8 +20,5 @@ app: openjdk
 <!-- oe-app-note:auto:28.25/24.03-lts-sp4 -->
 ## 自动沉淀：28.25 / 24.03-lts-sp4
 
-## 版本写法
-- 看板按 RPM scheme 会把 `28+25` 规范化为 `28.25`（点号），实际仍对应 OpenJDK 28 EA build 25；下载 URL 必须拆成主版本与 build 两段，拆分符要与 `VERSION` 变量实际分隔符一致：`+` 用 `${VERSION%%+*}`/`${VERSION#*+}`，`.` 用 `${VERSION%%.*}`/`${VERSION#*.}`。
-- 产物直链（`early_access/jdk28/25/GPL/openjdk-28-ea+25_linux-{aarch64,x64}_bin.tar.gz`）仍返回 200，但 `download.java.net/java/early_access/jdk28/` 目录列表现在 404（`download.java.net/` 根已重定向到 oracle.com），不要依赖目录列表来探活。
-- `TARGETARCH`/`BUILDARCH` 是 BuildKit 自动 ARG；`docker build` 日志里显示的 RUN 行会把 ARG 值（如 `arm64`）烤进显示文本，这只是显示层的替换，运行时 shell 里的 `if ... BUILDARCH="aarch64"` 重赋值仍会生效（实测 echo 输出 `RESOLVED_BUILDARCH=aarch64`，而日志头显示 `arm64`），下载因此拿到正确架构产物。
+openjdk 版本目录名用 '.' 分隔（如 28.25），而 java --version 运行时报告 '28-ea+25-xxxx' 解析为 '28+25'；test.sh 比较前须把 EXPECTED_VERSION 的 '.' 替换为 '+'，否则版本校验在两架构都会失败。
 <!-- /oe-app-note:auto -->
