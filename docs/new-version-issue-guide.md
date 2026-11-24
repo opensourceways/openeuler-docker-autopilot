@@ -67,47 +67,38 @@
 
 ```json
 {
-  "schema_version": "1.1",
-  "request_id": "req-grpc-1.85.4",
   "software": {
     "name": "grpc",
     "repo_url": "https://github.com/grpc/grpc",
-    "raw_category": "rpc",
-    "oss_map_id": "oss-grpc"
+    "version": "1.85.4",  #看板爬取的原生版本
   },
-  "version": {
-    "value": "1.85.4",
-    "type": "latest_release",
-    "display": "v1.85.4"
-  },
+#底下的字段都可以为空
   "upstream_evidence": {
     "support_level": "L1",
-    "computed_by": "kunpeng-evidence",
-    "evaluated_at": "2026-11-20T00:00:00Z",
     "evidence": {
       "check_id": "kp.l1.arm_ci",
-      "result": "supported",
-      "artifact": "grpc-arm64",
       "source_url": "https://ci.example.com/jobs/1",
-      "checked_at": "2026-11-20T00:00:00Z",
-      "test_depth": "smoke",
       "ci_workflows": [
         {
           "workflow_path": ".github/workflows/ci.yml",
           "workflow_url": "https://github.com/grpc/grpc/blob/<sha>/.github/workflows/ci.yml",
+          "workflow_run_url":"actions运行时的链接"
           "test_depth": "smoke"
         }
       ],
-      "assessment_id": "assess-grpc"
     }
   },
-  "l3_evidence": null,
+  "l3_evidence": {
+                  "check_id": "kp.l3.openeuler_image",
+                  "artifact": "7.23-oe2403sp4",
+                  "source_url": "https://gitcode.com/openeuler/openeuler-docker-images/tree/master/Others/mongoose",
+   }#有docker镜像优先
+
   "install_candidates": [
     {
-      "type": "source",
+      "type": "source/binary",
       "url": "https://github.com/grpc/grpc/archive/v1.85.4.tar.gz",
-      "artifact": "grpc-1.85.4.tar.gz",
-      "arch": "any"
+      "artifact":"制品名"
     }
   ]
 }
