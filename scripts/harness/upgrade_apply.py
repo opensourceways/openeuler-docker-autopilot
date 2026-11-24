@@ -174,6 +174,7 @@ def build_dockerfile_prompt(
     session: dict | None = None,
     notes: app_notes.AppNotes | None = None,
     supporting: list[supporting_files.SupportingFile] | None = None,
+    arch: str = "x86_64",
 ) -> str:
     """组装升级 Dockerfile 生成提示：角色规则 + 任务契约 + 旧文件 + 证据包。"""
     prompt = Path(agent_prompt_file("upgrade-creator")).read_text(encoding="utf-8")
@@ -218,6 +219,7 @@ def build_dockerfile_prompt(
             container=str(session["container"]),
             output_dockerfile=Path(session["output_dockerfile"]),
             build_log=Path(session["build_log"]),
+            arch=arch,
         )
     if findings:
         prompt += (
@@ -381,6 +383,7 @@ def _generate_dockerfile(
     domain: str,
     plan: version_upgrade.UpgradePlan,
     item: dict,
+    arch: str = "x86_64",
 ) -> tuple[str, dict[str, str], str, str]:
     """让 AI 生成新版本 Dockerfile，并在容器里逐条跑通、失败当场修。
 
@@ -448,6 +451,7 @@ def _generate_dockerfile(
                 },
                 notes=notes,
                 supporting=supporting,
+                arch=arch,
             )
             log_stage(
                 "upgrade-apply",
@@ -564,7 +568,12 @@ def run(
     )
     dockerfile_text, supporting_updates, app_note, install_mode = (
         _generate_dockerfile(
-            repo_dir=repo_dir, app=app, domain=domain, plan=plan, item=item
+            repo_dir=repo_dir,
+            app=app,
+            domain=domain,
+            plan=plan,
+            item=item,
+            arch=_env("OE_RUNNER_ARCH", "x86_64"),
         )
     )
     if app_notes.save_note_text(app_note_out, app_note) is not None:

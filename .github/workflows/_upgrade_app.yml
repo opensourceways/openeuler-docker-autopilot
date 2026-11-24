@@ -58,6 +58,13 @@ on:
         required: false
         default: '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]'
         type: string
+      neutral_runner_labels:
+        description: >-
+          架构无关 job（prepare / open-pr）的 runner 标签（JSON 数组）。
+          runner 需同时带 oe-any 标签，X64 / ARM64 均可承接。
+        required: false
+        default: '["self-hosted","Linux","oe-any"]'
+        type: string
       build_timeout_minutes:
         description: >-
           单架构原生验证预算（分钟）。upgrade_scan 会从
@@ -111,8 +118,9 @@ jobs:
       ${{ inputs.repair_run_id != '' &&
           format('Repair {0} (from run {1})', inputs.app, inputs.repair_run_id) ||
           format('Prepare {0} -> {1}', inputs.app, inputs.version) }}
-    runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
+    runs-on: ${{ fromJSON(inputs.neutral_runner_labels) }}
     # 生成 + 容器内逐条重放 + 当场修 放在一个 job 里；预算按应用注意点文档调整。
+    # 架构无关：X64 / ARM64 runner 均可承接，容器重放使用当前 runner 的真实架构。
     timeout-minutes: ${{ fromJSON(inputs.prepare_timeout_minutes) }}
     outputs:
       branch: ${{ steps.apply.outputs.branch || steps.repair.outputs.branch }}
@@ -127,7 +135,7 @@ jobs:
         id: tools
         uses: ./.github/actions/phase1-setup
         with:
-          arch: x86_64
+          arch: ${{ runner.arch == 'ARM64' && 'aarch64' || 'x86_64' }}
           preflight: "true"
 
       - name: Install dependencies
@@ -154,6 +162,7 @@ jobs:
           GIT_COMMIT_EMAIL: ${{ vars.GIT_COMMIT_EMAIL }}
           SOURCE_REPO_DIR: ${{ github.workspace }}/source-repo
           OPENCODE_BIN: ${{ steps.tools.outputs.opencode_path }}
+          OE_RUNNER_ARCH: ${{ runner.arch == 'ARM64' && 'aarch64' || 'x86_64' }}
           ITEM: ${{ inputs.item }}
         run: |
           "${RUNNER_TEMP}/phase1-venv/bin/python" scripts/harness/upgrade_apply.py \
@@ -444,7 +453,7 @@ jobs:
     name: "Open PR for ${{ inputs.app }}"
     needs: [prepare, replay-aarch64, validate-x86_64, validate-aarch64]
     if: ${{ success() }}
-    runs-on: ${{ fromJSON(inputs.x64_runner_labels) }}
+    runs-on: ${{ fromJSON(inputs.neutral_runner_labels) }}
     timeout-minutes: 20
     steps:
       - name: Check out workflow source

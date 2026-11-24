@@ -110,8 +110,8 @@ jobs:
   discover:
     name: Discover upgradable apps
     runs-on: >-
-      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
-          '["self-hosted","Linux","X64","oe-upgrade-x64"]') }}
+      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_NEUTRAL_RUNNER_LABELS ||
+          '["self-hosted","Linux","oe-any"]') }}
     timeout-minutes: 60
     outputs:
       updates: ${{ steps.scan.outputs.updates }}
@@ -210,6 +210,9 @@ jobs:
       arm64_runner_labels: >-
         ${{ inputs.arm64_runner_labels || vars.UPGRADE_ARM64_RUNNER_LABELS ||
             '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]' }}
+      neutral_runner_labels: >-
+        ${{ inputs.runner_labels || vars.UPGRADE_NEUTRAL_RUNNER_LABELS ||
+            '["self-hosted","Linux","oe-any"]' }}
       build_timeout_minutes: ${{ matrix.item.build_timeout_minutes || '180' }}
       prepare_timeout_minutes: ${{ matrix.item.prepare_timeout_minutes || '240' }}
 
@@ -224,7 +227,7 @@ jobs:
     secrets: inherit
     with:
       items: ${{ needs.discover.outputs.conda_updates }}
-      runner_arch: x64
+      runner_arch: any
 
   # ── 新建：两库都没有的软件，调用场景一先建镜像 ───────────────────
   create-image:
@@ -270,8 +273,8 @@ jobs:
       ${{ always() && needs.upgrade.result == 'failure' &&
           vars.AUTO_REPAIR_UPGRADES != 'false' }}
     runs-on: >-
-      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
-          '["self-hosted","Linux","X64","oe-image-x86"]') }}
+      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_NEUTRAL_RUNNER_LABELS ||
+          '["self-hosted","Linux","oe-any"]') }}
     timeout-minutes: 15
     outputs:
       count: ${{ steps.plan.outputs.count }}
@@ -320,6 +323,9 @@ jobs:
       arm64_runner_labels: >-
         ${{ inputs.arm64_runner_labels || vars.UPGRADE_ARM64_RUNNER_LABELS ||
             '["self-hosted","Linux","ARM64","oe-upgrade-arm64"]' }}
+      neutral_runner_labels: >-
+        ${{ inputs.runner_labels || vars.UPGRADE_NEUTRAL_RUNNER_LABELS ||
+            '["self-hosted","Linux","oe-any"]' }}
       build_timeout_minutes: ${{ matrix.build_timeout_minutes || '180' }}
       prepare_timeout_minutes: ${{ matrix.prepare_timeout_minutes || '240' }}
 
@@ -342,8 +348,8 @@ jobs:
       version: ${{ matrix.item.version }}
       os_version: ${{ matrix.item.os_version }}
       runner_labels: >-
-        ${{ inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
-            '["self-hosted","Linux","X64","oe-upgrade-x64"]' }}
+        ${{ inputs.runner_labels || vars.UPGRADE_NEUTRAL_RUNNER_LABELS ||
+            '["self-hosted","Linux","oe-any"]' }}
       x64_runner_labels: >-
         ${{ inputs.x64_runner_labels || vars.UPGRADE_X64_RUNNER_LABELS ||
             '["self-hosted","Linux","X64","oe-upgrade-x64"]' }}
@@ -359,8 +365,8 @@ jobs:
     needs: [discover, upgrade, conda-upgrade, create-image, plan-repairs, repair, audit]
     if: ${{ always() }}
     runs-on: >-
-      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
-          '["self-hosted","Linux","X64","oe-image-x86"]') }}
+      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_NEUTRAL_RUNNER_LABELS ||
+          '["self-hosted","Linux","oe-any"]') }}
     steps:
       - name: Write summary
         env:
@@ -399,8 +405,8 @@ jobs:
     needs: [discover, upgrade, conda-upgrade, create-image, plan-repairs, repair, audit]
     if: ${{ always() && inputs.source_issue != '' }}
     runs-on: >-
-      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_RUNNER_LABELS ||
-          '["self-hosted","Linux","X64","oe-image-x86"]') }}
+      ${{ fromJSON(inputs.runner_labels || vars.UPGRADE_NEUTRAL_RUNNER_LABELS ||
+          '["self-hosted","Linux","oe-any"]') }}
     timeout-minutes: 10
     steps:
       - name: Check out workflow source

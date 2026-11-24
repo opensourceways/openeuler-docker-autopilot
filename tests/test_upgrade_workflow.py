@@ -114,13 +114,13 @@ def test_conda_updates_are_registered_through_the_reusable_workflow():
     assert job['uses'] == './.github/workflows/conda_ecopkgs_pr.yml'
     assert 'conda_updates' in _squash(job['if'])
     assert job['with']['items'] == '${{ needs.discover.outputs.conda_updates }}'
-    assert job['with']['runner_arch'] == 'x64'
+    assert job['with']['runner_arch'] == 'any'
 
     conda = _workflow(ROOT / '.github' / 'workflows' / 'conda_ecopkgs_pr.yml')
     trigger = _trigger(conda)
     assert 'workflow_call' in trigger
     assert trigger['workflow_call']['inputs']['items']['required'] is True
-    assert trigger['workflow_call']['inputs']['runner_arch']['default'] == 'x64'
+    assert trigger['workflow_call']['inputs']['runner_arch']['default'] == 'any'
 
 
 def test_missing_apps_dispatch_create_new_images():
@@ -138,6 +138,43 @@ def test_missing_apps_dispatch_create_new_images():
     assert 'operation=scenario_one' in text
     assert 'permissions' in data
     assert data['permissions']['actions'] == 'write'
+
+
+def test_arch_neutral_jobs_use_the_shared_oe_any_label():
+    upgrade = _workflow(UPGRADE)['jobs']
+    for name in ('discover', 'summary', 'finalize-issue', 'plan-repairs'):
+        labels = _squash(upgrade[name]['runs-on'])
+        assert 'oe-any' in labels, name
+        assert 'UPGRADE_NEUTRAL_RUNNER_LABELS' in labels, name
+    # create-image 依赖 x64 runner 上的 gh，保持 x64
+    assert 'oe-image-x86' in _squash(upgrade['create-image']['runs-on'])
+
+    app = _workflow(APP)
+    jobs = app['jobs']
+    for name in ('prepare', 'open-pr'):
+        assert _squash(jobs[name]['runs-on']) == \
+            '${{ fromJSON(inputs.neutral_runner_labels) }}'
+    assert _trigger(app)['workflow_call']['inputs']['neutral_runner_labels']['default'] == \
+        '["self-hosted","Linux","oe-any"]'
+    # 生成阶段的工具链与容器重放跟随 runner 的真实架构
+    prepare_text = _squash(jobs['prepare']['steps'])
+    assert "runner.arch == 'ARM64'" in prepare_text
+    assert 'OE_RUNNER_ARCH' in prepare_text
+    # 架构相关 job 不跟着漂移
+    assert _squash(jobs['validate-x86_64']['runs-on']) == \
+        '${{ fromJSON(inputs.x64_runner_labels) }}'
+    assert _squash(jobs['validate-aarch64']['runs-on']) == \
+        '${{ fromJSON(inputs.arm64_runner_labels) }}'
+
+    audit = _workflow(AUDIT)['jobs']
+    for name in ('fix', 'deliver'):
+        assert _squash(audit[name]['runs-on']) == \
+            '${{ fromJSON(inputs.runner_labels) }}'
+    assert "runner.arch == 'ARM64'" in _squash(audit['fix']['steps'])
+    assert _squash(audit['validate-x86_64']['runs-on']) == \
+        '${{ fromJSON(inputs.x64_runner_labels) }}'
+    assert _squash(audit['validate-aarch64']['runs-on']) == \
+        '${{ fromJSON(inputs.arm64_runner_labels) }}'
 
 
 def test_each_app_runs_prepare_dual_arch_validation_then_pr():

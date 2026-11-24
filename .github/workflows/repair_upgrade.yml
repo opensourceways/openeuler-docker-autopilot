@@ -35,6 +35,11 @@ on:
         required: false
         default: '["self-hosted","Linux","ARM64","oe-image-arm64"]'
         type: string
+      neutral_runner_labels:
+        description: '架构无关 job（prepare / open-pr）的 runner 标签（JSON 数组）'
+        required: false
+        default: '["self-hosted","Linux","oe-any"]'
+        type: string
 
 permissions:
   actions: read
@@ -54,3 +59,4 @@ jobs:
       repair_instructions: ${{ inputs.instructions }}
       x64_runner_labels: ${{ inputs.x64_runner_labels }}
       arm64_runner_labels: ${{ inputs.arm64_runner_labels }}
+      neutral_runner_labels: ${{ inputs.neutral_runner_labels }}

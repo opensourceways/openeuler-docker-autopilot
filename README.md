@@ -215,7 +215,8 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 |------------|------|
 | `[self-hosted, Linux, X64, oe-image-x86]` | x86_64 原生构建与测试（场景一 / 二 / 三；CI 修复组件的 amd64 修复） |
 | `[self-hosted, Linux, ARM64, oe-image-arm64]` | aarch64 原生构建与测试（场景一 / 二 / 三；CI 修复组件的 arm64 修复与复验） |
-| `[self-hosted, Linux, X64]` | 监控、查询、生成、发现与交付等轻量 Job（场景二 / 三） |
+| `[self-hosted, Linux, oe-any]` | 架构无关 Job（场景二的 discover / prepare / open-pr / audit / summary / finalize / plan-repairs / conda 登记），X64 与 ARM64 都可承接 |
+| `[self-hosted, Linux, X64]` | 监控、查询等轻量 Job（场景三） |
 
 Runner 需预装 **Docker 与 buildx**。能力由 Job 启动时的 `scripts/runner_preflight.py` 自检把关——**缺失即失败，不做临时安装**。同一 Runner 上会有并发 Job，镜像 tag 与容器名均携带唯一标识，避免互相覆盖。
 
@@ -223,12 +224,13 @@ Issue 监控每 5 分钟轮询一次：由 hwyx86 上的 `oe-issue-poll.timer` �
 
 场景二的发现 / 交付 Job 只需要 Python、git 与网络；双架构验证 Job 额外需要 Docker（由 preflight 把关）。AI Agent 统一使用锁定工具链中的 opencode，**Runner 无需安装 Node.js**；只有把 `AI_RUNNER` 切到 `claude-code` / `claude-code-account` 时才需要 Node 与 Claude Code CLI。
 
-**场景二的机器可换，架构不可换。** 发现 / 汇总 Job 的标签可用手动输入或 Variable `UPGRADE_RUNNER_LABELS` 覆盖；验证 Job 的默认标签是 `oe-image-x86` / `oe-image-arm64`，arm64 只能换成另一台 arm64 机器：
+**场景二里与架构无关的 Job 可以跨架构调度。** 这些 Job 使用共同标签 `oe-any`（X64 / ARM64 Runner 都带），空闲的 ARM 机器会直接承接 prepare / audit 等长任务；只有真正依赖架构的验证 Job 才锁死 `X64` / `ARM64`：
 
 | Job 类别 | 默认标签 | 覆盖方式 |
 |---------|---------|---------|
-| `discover`（轻量） | `["self-hosted","Linux","X64","oe-upgrade-x64"]` | 输入 `runner_labels`，Variable `UPGRADE_RUNNER_LABELS` |
-| `summary`（轻量） | `["self-hosted","Linux","X64","oe-image-x86"]` | 输入 `runner_labels`，Variable `UPGRADE_RUNNER_LABELS` |
+| `discover` / `prepare` / `open-pr` / `audit` / `summary` / `finalize-issue` / `plan-repairs`（架构无关） | `["self-hosted","Linux","oe-any"]` | 输入 `runner_labels`，Variable `UPGRADE_NEUTRAL_RUNNER_LABELS` |
+| `conda` 登记（架构无关） | `["self-hosted","Linux","oe-any"]` | `conda_ecopkgs_pr.yml` 的输入 `runner_arch=any`（也可强制 `x64` / `arm64`） |
+| `create-image`（只调用 `gh workflow run`，依赖 x64 上的 gh） | `["self-hosted","Linux","X64","oe-image-x86"]` | 输入 `runner_labels`，Variable `UPGRADE_RUNNER_LABELS` |
 | `validate-x86_64` | `["self-hosted","Linux","X64","oe-image-x86"]` | `_upgrade_app.yml` 的输入 `x64_runner_labels` |
 | `validate-aarch64`（**必须 arm64**） | `["self-hosted","Linux","ARM64","oe-image-arm64"]` | `_upgrade_app.yml` 的输入 `arm64_runner_labels` |
 | CI 修复组件（`_ci_repair.yml`） | 轻量 `oe-image-x86`；amd64 `oe-fix-amd64`；arm64 `oe-fix-arm64` | 输入 `x64_runner_labels` / `amd64_runner_labels` / `arm64_runner_labels`，Variables `CI_FIX_*_RUNNER_LABELS` |
@@ -264,7 +266,8 @@ Issue 监控每 5 分钟轮询一次：由 hwyx86 上的 `oe-issue-poll.timer` �
 |------|------|--------|
 | `MAX_PARALLEL_IMAGES` | 场景三 Matrix 并行的镜像数上限 | `4` |
 | `MAX_PARALLEL_UPGRADES` | 场景二同一轮并发升级的应用数上限 | `2` |
-| `UPGRADE_RUNNER_LABELS` | 场景二发现 / 汇总 Job 的 runner 标签，JSON 数组 | 未设置时 discover 回退 `oe-upgrade-x64`、summary 回退 `oe-image-x86` |
+| `UPGRADE_NEUTRAL_RUNNER_LABELS` | 场景二架构无关 Job（discover / prepare / open-pr / audit / summary / finalize / plan-repairs / conda 登记）的 runner 标签，JSON 数组 | `["self-hosted","Linux","oe-any"]` |
+| `UPGRADE_RUNNER_LABELS` | 场景二 `create-image` 派发 Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
 | `GITCODE_BOT_USERNAME` | 交付阶段用于推送分支的 GitCode 账号名 | _(无)_ |
 | `AI_RUNNER` | 所有场景的 AI 后端：`opencode` / `claude-code-account` | `opencode` |
 | `AI_MODEL` | 所有场景统一的模型名（`provider/model`） | `gateway/deepseek-v4-pro` |
@@ -274,7 +277,8 @@ Issue 监控每 5 分钟轮询一次：由 hwyx86 上的 `oe-issue-poll.timer` �
 | `PR_COMMENT_ON_FAILURE` | CI 修复组件连续失败时是否回帖源 PR（回帖是 outward-facing 动作，故默认不回；覆盖位置：arm64 复验三轮失败、同一 PR 跑满 6 个 run 停手） | _(空)_ |
 | `GIT_COMMIT_NAME` / `GIT_COMMIT_EMAIL` | 场景二升级 commit 的 git 身份 | `github-actions[bot]` / `...@users.noreply.github.com` |
 | `OPENAI_BASE_URL` | 所有场景统一的模型 API 地址（OpenAI 兼容） | `https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1` |
-| `UPGRADE_RUNNER_LABELS` | 场景二发现 / 汇总 Job 的 runner 标签，JSON 数组 | 未设置时 discover 回退 `oe-upgrade-x64`、summary 回退 `oe-image-x86` |
+| `UPGRADE_NEUTRAL_RUNNER_LABELS` | 场景二架构无关 Job（discover / prepare / open-pr / audit / summary / finalize / plan-repairs / conda 登记）的 runner 标签，JSON 数组 | `["self-hosted","Linux","oe-any"]` |
+| `UPGRADE_RUNNER_LABELS` | 场景二 `create-image` 派发 Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
 | `UPGRADE_REPAIR_INSTRUCTIONS` | 验证失败后自动 repair 的默认说明（留空则 AI 按失败证据自行修复） | _(空)_ |
 | `AUTO_REPAIR_UPGRADES` | 设为 `false` 关闭验证失败后的自动 repair | `true` |
 | `CI_FIX_X64_RUNNER_LABELS` | CI 修复组件轻量 Job（prepare / 分析 / code-fix / 监控）的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
@@ -382,12 +386,12 @@ create_new_images.yml  (operation = scenario_one)
 | `apps_file` | 本轮使用的软件清单（留空 = `config/upgrade-apps.yml`；可指向 `config/upgrade-apps-l5.yml` 等子集） |
 | `limit` | 本轮最多升级几个应用（`0` = 不限） |
 | `audit_limit` | 本轮最多审计几个「目标版本已存在」的应用（`0` = 不限） |
-| `runner_labels` | 发现 / 汇总 job 的 runner 标签（JSON 数组） |
+| `runner_labels` | 架构无关 job（发现 / 汇总 / 回写）的 runner 标签（JSON 数组，留空 = 变量 `UPGRADE_NEUTRAL_RUNNER_LABELS` / 默认 `oe-any`） |
 | `x64_runner_labels` | x86_64 构建 / 验证 runner 标签（JSON 数组，留空 = 变量 `UPGRADE_X64_RUNNER_LABELS` / 默认 `oe-upgrade-x64`） |
 | `arm64_runner_labels` | aarch64 构建 / 验证 runner 标签（JSON 数组，留空 = 变量 `UPGRADE_ARM64_RUNNER_LABELS` / 默认 `oe-upgrade-arm64`） |
 | `max_parallel` | 单轮最多并发几个应用（留空 = 变量 `MAX_PARALLEL_UPGRADES` / 默认 `4`） |
 
-> 升级验证用统一标签 `oe-upgrade-x64` / `oe-upgrade-arm64` 圈定本仓的 4 台构建机（每台 2 个 runner 实例），避免误调度到其他仓库共用 `self-hosted,Linux,X64` 的临时 Runner；一台 Runner 同时只跑一个 Job，`max_parallel` 与实例总数对齐即可吃满机器。
+> 升级验证用统一标签 `oe-upgrade-x64` / `oe-upgrade-arm64` 圈定本仓的 4 台构建机（每台 2 个 runner 实例），避免误调度到其他仓库共用 `self-hosted,Linux,X64` 的临时 Runner；这 8 个实例额外带 `oe-any`，供架构无关 Job 跨架构抢空闲机器。一台 Runner 同时只跑一个 Job，`max_parallel` 与实例总数对齐即可吃满机器。
 
 `discover` job 浅克隆目标仓后调用 [`upgrade_scan.py`](scripts/harness/upgrade_scan.py)，**不查询 upstream-dashboard**：
 
