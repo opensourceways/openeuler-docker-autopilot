@@ -16,3 +16,9 @@ app: openjdk
 
 ## 验证
 - `java -version`；tests/test.sh 存在时以其为准。
+
+<!-- oe-app-note:auto:28.25/24.03-lts-sp4 -->
+## 自动沉淀：28.25 / 24.03-lts-sp4
+
+本次发现版本目录名可能被 RPM 归一化为点号形式（如 28.25），而 java --version 运行时字符串是加号形式（28+25），功能测试的精确版本比较需把 EXPECTED_VERSION 的 `.` 归一化为 `+`（`${EXPECTED_VERSION//./+}`）再比较；下载 URL 用 `${VERSION%%.*}`/`${VERSION#*.}` 同样能正确拆出主版本与 build，无需改动 Dockerfile。
+<!-- /oe-app-note:auto -->
