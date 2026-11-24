@@ -40,9 +40,16 @@ DEFAULT_REPO = "openeuler/openeuler-docker-images"
 
 
 def _token() -> str:
-    token = os.environ.get("GITCODE_TOKEN", "")
+    token = (
+        os.environ.get("GITCODE_ISSUE_TOKEN")
+        or os.environ.get("GITCODE_TOKEN")
+        or ""
+    ).strip()
     if not token:
-        print("::error::GITCODE_TOKEN not set", file=sys.stderr)
+        print(
+            "::error::GITCODE_ISSUE_TOKEN or GITCODE_TOKEN not set",
+            file=sys.stderr,
+        )
         sys.exit(1)
     return token
 

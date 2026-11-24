@@ -408,7 +408,7 @@ jobs:
 
       - name: Write result back to source Issue
         env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_ISSUE_TOKEN: ${{ secrets.GITCODE_ISSUE_TOKEN || secrets.GITCODE_TOKEN }}
           SOURCE_ISSUE: ${{ inputs.source_issue }}
           DISCOVER_RESULT: ${{ needs.discover.result }}
           UPGRADE_RESULT: ${{ needs.upgrade.result }}

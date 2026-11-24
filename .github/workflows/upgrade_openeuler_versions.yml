@@ -176,7 +176,7 @@ jobs:
         run: python scripts/harness/run.py report-failures --oe-version "$OE_VERSION"
       - name: Create failure report Issue
         env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_ISSUE_TOKEN: ${{ secrets.GITCODE_ISSUE_TOKEN || secrets.GITCODE_TOKEN }}
           OE_VERSION: ${{ needs.check.outputs.new_oe_version }}
         run: |
           python scripts/utils/gitcode.py issue create \

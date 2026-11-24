@@ -54,7 +54,7 @@ jobs:
 
       - name: Claim Issues and dispatch scenario two
         env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_ISSUE_TOKEN: ${{ secrets.GITCODE_ISSUE_TOKEN || secrets.GITCODE_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           MAX_ISSUES: ${{ inputs.max_issues || '3' }}

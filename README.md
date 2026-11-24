@@ -247,7 +247,8 @@ Issue 监控每 5 分钟轮询一次：由 hwyx86 上的 `oe-issue-poll.timer` �
 
 | Secret | 用途 | 必需 |
 |--------|------|------|
-| `GITCODE_TOKEN` | GitCode 读写：读 Issue/PR、克隆目标仓、推送升级分支、创建 PR、评论与打标签；CI 修复组件读日志同样依赖它 | 必填 |
+| `GITCODE_TOKEN` | GitCode 代码与 PR 读写：克隆目标仓、推送升级分支、创建 PR、评论与打标签；CI 修复组件读日志同样依赖它 | 必填 |
+| `GITCODE_ISSUE_TOKEN` | GitCode **Issue 管理专用**的高权限 token：扫描 / 认领 Issue、修改 Issue 状态、回写结果评论。留空时回退 `GITCODE_TOKEN`；Issue 由其他用户创建时，必须使用目标仓有 Issue 管理权限的账号 | 建议必填 |
 | `AI_API_KEY` | **所有场景统一的模型 Key**（当前为火山引擎 API 网关 Key）；留空时回退 `DEEPSEEK_API_KEY` | 除 `pipeline_smoke` 外必填 |
 | `DEEPSEEK_API_KEY` | 兼容别名：仅在未配置 `AI_API_KEY` 时作为 Key 使用 | 可选 |
 | `DISPATCH_TOKEN` | CI 修复组件专用：触发本仓 `repository_dispatch`、读写 `ci-fix-log` 数据分支、checkout 源仓库、推送 fix 分支、创建 Fix PR（GitHub PAT，需 `repo` + `workflow` scope） | 使用 CI 修复组件时必填 |

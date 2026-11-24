@@ -1016,7 +1016,7 @@ jobs:
       - name: Report scenario result to source Issue
         if: ${{ always() }}
         env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_ISSUE_TOKEN: ${{ secrets.GITCODE_ISSUE_TOKEN || secrets.GITCODE_TOKEN }}
           SOURCE_ISSUE: ${{ inputs.source_run_id }}
           OUTCOME: >-
             ${{ needs.deliver-fork-pr.result == 'success' &&

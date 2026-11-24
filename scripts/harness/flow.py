@@ -217,10 +217,21 @@ def _fork_deliver(args: argparse.Namespace) -> None:
     )
 
 
+def _issue_token() -> str:
+    """Issue 回写使用高权限 token，缺省回落到 PR token。"""
+    return (
+        os.environ.get("GITCODE_ISSUE_TOKEN")
+        or os.environ.get("GITCODE_TOKEN")
+        or ""
+    ).strip()
+
+
 def _issue_contract_test(args: argparse.Namespace) -> None:
-    token = os.environ.get("GITCODE_TOKEN", "")
+    token = _issue_token()
     if not token:
-        raise IssueLifecycleError("GITCODE_TOKEN is required")
+        raise IssueLifecycleError(
+            "GITCODE_ISSUE_TOKEN or GITCODE_TOKEN is required"
+        )
     resource = run_controlled_issue_probe(
         client=GitCodeClient(token=token),
         target_repo="openeuler/openeuler-docker-images",
@@ -241,10 +252,12 @@ def _issue_contract_test(args: argparse.Namespace) -> None:
 
 
 def _issue_watch(args: argparse.Namespace) -> None:
-    gitcode_token = os.environ.get("GITCODE_TOKEN", "")
+    gitcode_token = _issue_token()
     github_token = os.environ.get("GITHUB_TOKEN", "")
     if not gitcode_token:
-        raise IssueLifecycleError("GITCODE_TOKEN is required")
+        raise IssueLifecycleError(
+            "GITCODE_ISSUE_TOKEN or GITCODE_TOKEN is required"
+        )
     if not github_token:
         raise IssueLifecycleError("GITHUB_TOKEN is required")
 
@@ -302,9 +315,11 @@ def _issue_watch(args: argparse.Namespace) -> None:
 
 
 def _issue_finalize(args: argparse.Namespace) -> None:
-    token = os.environ.get("GITCODE_TOKEN", "")
+    token = _issue_token()
     if not token:
-        raise IssueLifecycleError("GITCODE_TOKEN is required")
+        raise IssueLifecycleError(
+            "GITCODE_ISSUE_TOKEN or GITCODE_TOKEN is required"
+        )
     finalize_args = {
         "client": GitCodeClient(token=token),
         "target_repo": args.target_repo,
@@ -327,10 +342,12 @@ def _issue_finalize(args: argparse.Namespace) -> None:
 
 
 def _upgrade_issue_watch(args: argparse.Namespace) -> None:
-    gitcode_token = os.environ.get("GITCODE_TOKEN", "")
+    gitcode_token = _issue_token()
     github_token = os.environ.get("GITHUB_TOKEN", "")
     if not gitcode_token:
-        raise IssueLifecycleError("GITCODE_TOKEN is required")
+        raise IssueLifecycleError(
+            "GITCODE_ISSUE_TOKEN or GITCODE_TOKEN is required"
+        )
     if not github_token:
         raise IssueLifecycleError("GITHUB_TOKEN is required")
 
@@ -385,9 +402,11 @@ def _upgrade_issue_watch(args: argparse.Namespace) -> None:
 
 
 def _upgrade_issue_finalize(args: argparse.Namespace) -> None:
-    token = os.environ.get("GITCODE_TOKEN", "")
+    token = _issue_token()
     if not token:
-        raise IssueLifecycleError("GITCODE_TOKEN is required")
+        raise IssueLifecycleError(
+            "GITCODE_ISSUE_TOKEN or GITCODE_TOKEN is required"
+        )
     finalize_upgrade_issue(
         client=GitCodeClient(token=token),
         target_repo=args.target_repo,

@@ -78,7 +78,7 @@ jobs:
 
       - name: Create, update, comment and close controlled Issue
         env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_ISSUE_TOKEN: ${{ secrets.GITCODE_ISSUE_TOKEN || secrets.GITCODE_TOKEN }}
           GITHUB_RUN_URL: >-
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |

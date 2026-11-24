@@ -80,6 +80,37 @@ def test_issue_contract_handler_is_fixed_to_explicit_test_operation(
     }
 
 
+def test_issue_contract_handler_prefers_the_dedicated_issue_token(
+    tmp_path, monkeypatch
+):
+    from scripts.harness import flow
+
+    calls = []
+    monkeypatch.setenv("GITCODE_TOKEN", "pr-secret")
+    monkeypatch.setenv("GITCODE_ISSUE_TOKEN", "issue-secret")
+    monkeypatch.setattr(
+        flow,
+        "GitCodeClient",
+        lambda **kwargs: calls.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        flow,
+        "run_controlled_issue_probe",
+        lambda **kwargs: Resource(),
+    )
+
+    flow._issue_contract_test(
+        argparse.Namespace(
+            task_spec=_task_file(tmp_path),
+            github_run_id="123456",
+            github_run_url="https://github.com/example/repo/actions/runs/123456",
+            failure_stage="aarch64-build",
+        )
+    )
+
+    assert calls == [{"token": "issue-secret"}]
+
+
 def test_issue_contract_handler_requires_token_before_client_or_probe(
     tmp_path, monkeypatch
 ):
@@ -88,6 +119,7 @@ def test_issue_contract_handler_requires_token_before_client_or_probe(
 
     calls = []
     monkeypatch.delenv("GITCODE_TOKEN", raising=False)
+    monkeypatch.delenv("GITCODE_ISSUE_TOKEN", raising=False)
     monkeypatch.setattr(
         flow,
         "GitCodeClient",
