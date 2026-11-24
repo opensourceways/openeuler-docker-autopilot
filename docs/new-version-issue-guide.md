@@ -63,16 +63,15 @@
 
 ## 4. Issue 正文（必填：上游证据 JSON）
 
-正文必须粘贴上游看板返回的完整证据 JSON。可直接使用模板 [templates/new-version-issue.md](../templates/new-version-issue.md)，把占位值替换成真实值。流水线会把它原样透传给扫描阶段和生成 Agent，不再自行采集证据。
+正文必须粘贴上游看板返回的证据 JSON。只有 `software` 必填，其余字段可以省略；可直接使用模板 [templates/new-version-issue.md](../templates/new-version-issue.md)，把占位值替换成真实值。流水线会把它原样透传给扫描阶段和生成 Agent，不再自行采集证据。
 
 ```json
 {
   "software": {
     "name": "grpc",
     "repo_url": "https://github.com/grpc/grpc",
-    "version": "1.85.4",  #看板爬取的原生版本
+    "version": "1.85.4"
   },
-#底下的字段都可以为空
   "upstream_evidence": {
     "support_level": "L1",
     "evidence": {
@@ -82,42 +81,47 @@
         {
           "workflow_path": ".github/workflows/ci.yml",
           "workflow_url": "https://github.com/grpc/grpc/blob/<sha>/.github/workflows/ci.yml",
-          "workflow_run_url":"actions运行时的链接"
+          "workflow_run_url": "https://github.com/grpc/grpc/actions/runs/1",
           "test_depth": "smoke"
         }
-      ],
+      ]
     }
   },
   "l3_evidence": {
-                  "check_id": "kp.l3.openeuler_image",
-                  "artifact": "7.23-oe2403sp4",
-                  "source_url": "https://gitcode.com/openeuler/openeuler-docker-images/tree/master/Others/mongoose",
-   }#有docker镜像优先
-
+    "check_id": "kp.l3.openeuler_image",
+    "artifact": "1.85.4-oe2403sp4",
+    "source_url": "https://gitcode.com/openeuler/openeuler-docker-images/tree/master/Others/grpc"
+  },
   "install_candidates": [
     {
-      "type": "source/binary",
+      "type": "source",
       "url": "https://github.com/grpc/grpc/archive/v1.85.4.tar.gz",
-      "artifact":"制品名"
+      "artifact": "grpc-1.85.4.tar.gz"
     }
   ]
 }
 ```
 
+说明：
+
+- `software.version` 填看板爬取的原生版本；
+- `upstream_evidence`、`l3_evidence`、`install_candidates` 都可以省略或为空；
+- `l3_evidence` 只在 docker 仓库已有该版本镜像时填写，有镜像时优先参考它。
+
 字段约束：
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `schema_version` | 是 | 如 `1.1` |
-| `request_id` | 是 | 幂等键，一次实测一个 |
-| `software.name` / `software.repo_url` | 是 | `name` 必须与标题里的软件名一致；`repo_url` 必须是 `https://` |
-| `version.value` / `version.type` | 是 | `value` 必须与标题版本一致（允许 `v` 前缀）；`type` 只能是 `latest_release` 或 `watched` |
-| `upstream_evidence` | 是 | `support_level`、`computed_by`、`evaluated_at`、`evidence` |
-| `upstream_evidence.evidence` | 是 | `check_id`、`result`（`supported` / `not_found` / `blocked`）；`artifact`、`source_url`、`checked_at`、`test_depth`、`ci_workflows`、`assessment_id` 建议填写 |
-| `l3_evidence` | 否 | L3 openEuler 镜像证据；`result = supported` 表示该版本已在 docker 仓库存在，无则填 `null` |
-| `install_candidates` | 是 | 至少一条；每项含 `type`（`source` / `binary`）、`url`（必须 `https://`）、`artifact`、`arch` |
+| `software.name` | 是 | 必须与标题里的软件名一致 |
+| `software.repo_url` | 是 | 必须是 `https://` |
+| `software.version` | 是 | 必须与标题版本一致（允许 `v` 前缀） |
+| `upstream_evidence` | 否 | 可省略；含 `support_level`、`evidence` |
+| `upstream_evidence.evidence` | 否 | 含 `check_id`、`source_url`、`ci_workflows` |
+| `upstream_evidence.evidence.ci_workflows[]` | 否 | 每项含 `workflow_path`、`workflow_url`、`workflow_run_url`、`test_depth` |
+| `l3_evidence` | 否 | 有 docker 镜像时优先；含 `check_id`、`artifact`、`source_url` |
+| `install_candidates` | 否 | 若填写，每项含 `type`（`source` / `binary`）、`url`（必须 `https://`）、`artifact` |
 
-> 正文缺少上述必填字段、软件名/版本与标题不一致、或上游地址不是 HTTPS 时，Issue 会被置为「已拒绝」并回帖原因。
+> 正文缺少 `software`、软件名/版本与标题不一致、或上游地址不是 HTTPS 时，Issue 会被置为「已拒绝」并回帖原因。
 
 ---
 
@@ -162,14 +166,12 @@
 | `title must match 【new-version】upgrade ...` | 严格按第 3 节标题格式重写 |
 | `invalid app name in title` | 软件名只能包含字母、数字、`.`、`_`、`-`，且以字母或数字开头 |
 | `invalid version in title` | 版本号不要带空格/斜杠，例：`1.85.4` |
-| `body must contain the upstream evidence JSON object` | 正文粘贴第 4 节的完整证据 JSON，不要只写文字说明 |
+| `body must contain the upstream evidence JSON object` | 正文粘贴第 4 节的证据 JSON，不要只写文字说明；也检查是否为合法 JSON（不能有注释和尾逗号） |
 | `missing required field: ...` | 补齐第 4 节表格里标为必填的字段 |
 | `software.name must match the app in the title` | 正文 `software.name` 与标题软件名保持一致 |
-| `version.value must match the version in the title` | 正文 `version.value` 与标题版本保持一致 |
+| `software.version must match the version in the title` | 正文 `software.version` 与标题版本保持一致 |
 | `software.repo_url must be an HTTPS URL` | 上游地址改成 `https://...` |
-| `version.type must be latest_release or watched` | 把 `version.type` 改成 `latest_release` 或 `watched` |
-| `upstream_evidence.evidence.result must be supported, not_found or blocked` | 按看板结果填写 `result` |
-| `install_candidates` 相关报错 | 至少提供一条候选，`type` 只能是 `source` / `binary`，`url` 必须是 HTTPS |
+| `install_candidates` 相关报错 | 若填写，`type` 只能是 `source` / `binary`，`url` 必须是 HTTPS |
 | `软件清单、docker 仓与 conda 仓里都没有这个应用` | 软件名写错，或该软件尚未入库；改提 `【new-image】` |
 
 ---
@@ -181,7 +183,7 @@
 ```text
 标题：【new-version】upgrade grpc to 1.85.4 on openEuler 24.03-LTS-SP4
 
-正文：粘贴第 4 节的完整证据 JSON（software.name=grpc，version.value=1.85.4）
+正文：粘贴第 4 节的证据 JSON（software.name=grpc，software.version=1.85.4）
 ```
 
 ### 例 2：conda 软件升级（如 benchmark）
@@ -189,7 +191,7 @@
 ```text
 标题：【new-version】upgrade benchmark to 1.11.0 on openEuler 24.03-lts-sp4
 
-正文：同样粘贴完整证据 JSON（software.name=benchmark，version.value=1.11.0）
+正文：同样粘贴证据 JSON（software.name=benchmark，software.version=1.11.0）
 ```
 
 结果：只登记 conda 版本，不会触发 docker 构建。

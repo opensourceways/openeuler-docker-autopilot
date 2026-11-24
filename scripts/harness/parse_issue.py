@@ -360,16 +360,7 @@ def _upgrade_payload(body: str) -> Mapping[str, object] | None:
     return None
 
 
-_UPGRADE_SCHEMA_FIELDS = (
-    "schema_version",
-    "request_id",
-    "software",
-    "version",
-    "upstream_evidence",
-    "install_candidates",
-)
-_VERSION_TYPES = {"latest_release", "watched"}
-_EVIDENCE_RESULTS = {"supported", "not_found", "blocked"}
+_UPGRADE_REQUIRED_FIELDS = ("software",)
 _CANDIDATE_TYPES = {"source", "binary"}
 
 
@@ -388,59 +379,62 @@ def _required_text(mapping: Mapping, key: str, field: str) -> str:
 
 
 def _validate_upgrade_payload(payload: Mapping) -> None:
-    """校验 Issue 正文里的完整上游证据 JSON。"""
+    """校验 Issue 正文里的上游证据 JSON。
 
-    for field in _UPGRADE_SCHEMA_FIELDS:
+    只有 ``software`` 必填；``upstream_evidence``、``l3_evidence`` 与
+    ``install_candidates`` 可以省略或为空，存在时按结构校验。
+    """
+
+    for field in _UPGRADE_REQUIRED_FIELDS:
         if field not in payload:
             raise IssueParseError(f"missing required field: {field}")
-    _required_text(payload, "schema_version", "body")
-    _required_text(payload, "request_id", "body")
 
     software = _mapping(payload["software"], "software")
     _required_text(software, "name", "software")
+    _required_text(software, "version", "software")
     repo_url = _required_text(software, "repo_url", "software")
     if urlparse(repo_url).scheme != "https":
         raise IssueParseError("software.repo_url must be an HTTPS URL")
 
-    version = _mapping(payload["version"], "version")
-    _required_text(version, "value", "version")
-    version_type = _required_text(version, "type", "version")
-    if version_type not in _VERSION_TYPES:
-        raise IssueParseError(
-            "version.type must be latest_release or watched"
-        )
-
-    upstream = _mapping(payload["upstream_evidence"], "upstream_evidence")
-    _required_text(upstream, "support_level", "upstream_evidence")
-    _required_text(upstream, "computed_by", "upstream_evidence")
-    _required_text(upstream, "evaluated_at", "upstream_evidence")
-    evidence = _mapping(
-        upstream.get("evidence"), "upstream_evidence.evidence"
-    )
-    _required_text(evidence, "check_id", "upstream_evidence.evidence")
-    result = _required_text(evidence, "result", "upstream_evidence.evidence")
-    if result not in _EVIDENCE_RESULTS:
-        raise IssueParseError(
-            "upstream_evidence.evidence.result must be supported, "
-            "not_found or blocked"
-        )
+    upstream = payload.get("upstream_evidence")
+    if upstream is not None:
+        upstream = _mapping(upstream, "upstream_evidence")
+        evidence = upstream.get("evidence")
+        if evidence is not None:
+            evidence = _mapping(
+                evidence, "upstream_evidence.evidence"
+            )
+            workflows = evidence.get("ci_workflows")
+            if workflows is not None:
+                if not isinstance(workflows, list):
+                    raise IssueParseError(
+                        "upstream_evidence.evidence.ci_workflows must be a list"
+                    )
+                for index, workflow in enumerate(workflows):
+                    _mapping(
+                        workflow,
+                        f"upstream_evidence.evidence.ci_workflows[{index}]",
+                    )
 
     l3 = payload.get("l3_evidence")
     if l3 is not None:
         _mapping(l3, "l3_evidence")
 
-    candidates = payload["install_candidates"]
-    if not isinstance(candidates, list) or not candidates:
-        raise IssueParseError("install_candidates must be a non-empty list")
-    for index, candidate in enumerate(candidates):
-        field = f"install_candidates[{index}]"
-        item = _mapping(candidate, field)
-        kind = _required_text(item, "type", field)
-        if kind not in _CANDIDATE_TYPES:
-            raise IssueParseError(f"{field}.type must be source or binary")
-        url = _required_text(item, "url", field)
-        if urlparse(url).scheme != "https":
-            raise IssueParseError(f"{field}.url must be an HTTPS URL")
+    candidates = payload.get("install_candidates")
+    if candidates is not None:
+        if not isinstance(candidates, list):
+            raise IssueParseError("install_candidates must be a list")
+        for index, candidate in enumerate(candidates):
+            field = f"install_candidates[{index}]"
+            item = _mapping(candidate, field)
+            kind = _required_text(item, "type", field)
+            if kind not in _CANDIDATE_TYPES:
+                raise IssueParseError(
+                    f"{field}.type must be source or binary"
+                )
+            url = _required_text(item, "url", field)
+            if urlparse(url).scheme != "https":
+                raise IssueParseError(f"{field}.url must be an HTTPS URL")
 
 
 def _normalize_version(value: str) -> str:
@@ -454,7 +448,7 @@ def parse_upgrade_issue_request(title: str, body: str) -> dict[str, object]:
         【new-version】upgrade <app> to <version> on openEuler <os_version>
 
     The body must carry the upstream evidence JSON object published by the
-    dashboard. Its ``software.name`` and ``version.value`` must match the
+    dashboard. Its ``software.name`` and ``software.version`` must match the
     title; the full payload is returned under ``evidence`` and passed through
     to the upgrade workflow.
     """
@@ -481,16 +475,15 @@ def parse_upgrade_issue_request(title: str, body: str) -> dict[str, object]:
     _validate_upgrade_payload(payload)
 
     software = _mapping(payload["software"], "software")
-    issue_version = _mapping(payload["version"], "version")
     if str(software["name"]).strip().lower() != app.lower():
         raise IssueParseError(
             "software.name must match the app in the title"
         )
-    if _normalize_version(str(issue_version["value"])) != _normalize_version(
+    if _normalize_version(str(software["version"])) != _normalize_version(
         version
     ):
         raise IssueParseError(
-            "version.value must match the version in the title"
+            "software.version must match the version in the title"
         )
 
     return {

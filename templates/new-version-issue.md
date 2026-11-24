@@ -6,53 +6,45 @@
 
 **上游证据（Upstream Evidence，必填）：**
 
-> 粘贴上游看板返回的完整证据 JSON。`software.name` 必须与标题软件名一致，
-> `version.value` 必须与标题版本一致；字段说明见 `docs/new-version-issue-guide.md`。
+> 粘贴上游看板返回的证据 JSON。仅 `software` 必填，`software.name`、`software.version`
+> 必须与标题一致；其余字段可以省略。字段说明见 `docs/new-version-issue-guide.md`。
 
 ```json
 {
-  "schema_version": "1.1",
-  "request_id": "req-<软件名>-<目标版本>",
   "software": {
     "name": "<软件名>",
     "repo_url": "https://github.com/<owner>/<repo>",
-    "raw_category": "<看板原始分类>",
-    "oss_map_id": "<看板映射 ID>"
-  },
-  "version": {
-    "value": "<目标版本>",
-    "type": "watched",
-    "display": "v<目标版本>"
+    "version": "<目标版本>"
   },
   "upstream_evidence": {
     "support_level": "L1",
-    "computed_by": "<采集方>",
-    "evaluated_at": "<ISO8601 时间>",
     "evidence": {
       "check_id": "kp.l1.arm_ci",
-      "result": "supported",
-      "artifact": "<命中的制品、文档或 job 名>",
       "source_url": "https://<可点开的证据地址>",
-      "checked_at": "<ISO8601 时间>",
-      "test_depth": "smoke",
       "ci_workflows": [
         {
           "workflow_path": ".github/workflows/<workflow>.yml",
           "workflow_url": "https://github.com/<owner>/<repo>/blob/<sha>/.github/workflows/<workflow>.yml",
+          "workflow_run_url": "https://github.com/<owner>/<repo>/actions/runs/<run_id>",
           "test_depth": "smoke"
         }
-      ],
-      "assessment_id": "<评估编号>"
+      ]
     }
   },
-  "l3_evidence": null,
+  "l3_evidence": {
+    "check_id": "kp.l3.openeuler_image",
+    "artifact": "<已有镜像版本 / 目录>",
+    "source_url": "https://gitcode.com/openeuler/openeuler-docker-images/tree/<...>"
+  },
   "install_candidates": [
     {
       "type": "source",
       "url": "https://github.com/<owner>/<repo>/archive/refs/tags/v<目标版本>.tar.gz",
-      "artifact": "<软件名>-<目标版本>.tar.gz",
-      "arch": "any"
+      "artifact": "<软件名>-<目标版本>.tar.gz"
     }
   ]
 }
 ```
+
+> `l3_evidence` 只在 docker 仓库已有该版本镜像时填写；有镜像时优先参考它。
+> `install_candidates[].type` 只能是 `source` 或 `binary`。

@@ -282,41 +282,33 @@ UPGRADE_ISSUE_TITLE = (
 
 def _upgrade_body(**overrides) -> str:
     payload = {
-        "schema_version": "1.1",
-        "request_id": "req-grpc-1854",
         "software": {
             "name": "grpc",
             "repo_url": "https://github.com/grpc/grpc",
+            "version": "1.85.4",
             "raw_category": "rpc",
-            "oss_map_id": "oss-grpc",
-        },
-        "version": {
-            "value": "1.85.4",
-            "type": "latest_release",
-            "display": "v1.85.4",
         },
         "upstream_evidence": {
             "support_level": "L1",
-            "computed_by": "kunpeng-evidence",
-            "evaluated_at": "2026-11-20T00:00:00Z",
             "evidence": {
                 "check_id": "kp.l1.arm_ci",
-                "result": "supported",
-                "artifact": "grpc-arm64",
                 "source_url": "https://ci.example.com/jobs/1",
-                "checked_at": "2026-11-20T00:00:00Z",
-                "test_depth": "smoke",
                 "ci_workflows": [],
-                "assessment_id": "assess-grpc",
             },
         },
-        "l3_evidence": None,
+        "l3_evidence": {
+            "check_id": "kp.l3.openeuler_image",
+            "artifact": "1.85.4-oe2403sp4",
+            "source_url": (
+                "https://gitcode.com/openeuler/openeuler-docker-images/"
+                "tree/master/Others/grpc"
+            ),
+        },
         "install_candidates": [
             {
                 "type": "source",
                 "url": "https://github.com/grpc/grpc/archive/v1.85.4.tar.gz",
                 "artifact": "grpc-1.85.4.tar.gz",
-                "arch": "any",
             }
         ],
     }
@@ -333,7 +325,7 @@ def test_parse_upgrade_issue_returns_the_full_evidence_payload():
     assert fields["version"] == "1.85.4"
     assert fields["os_version"] == "24.03-lts-sp4"
     assert fields["source_url"] == "https://github.com/grpc/grpc"
-    assert fields["evidence"]["request_id"] == "req-grpc-1854"
+    assert fields["evidence"]["software"]["version"] == "1.85.4"
     assert (
         fields["evidence"]["upstream_evidence"]["evidence"]["check_id"]
         == "kp.l1.arm_ci"
@@ -346,7 +338,7 @@ def test_parse_upgrade_issue_accepts_a_fenced_json_body():
     fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
 
     assert fields["source_url"] == "https://github.com/grpc/grpc"
-    assert fields["evidence"]["schema_version"] == "1.1"
+    assert fields["evidence"]["software"]["name"] == "grpc"
 
 
 def test_parse_upgrade_issue_requires_the_evidence_body():
@@ -354,17 +346,20 @@ def test_parse_upgrade_issue_requires_the_evidence_body():
         parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, "")
 
 
-@pytest.mark.parametrize(
-    "field",
-    (
-        "schema_version",
-        "request_id",
-        "software",
-        "version",
-        "upstream_evidence",
-        "install_candidates",
-    ),
-)
+def test_parse_upgrade_issue_only_requires_software():
+    payload = json.loads(_upgrade_body())
+    payload.pop("upstream_evidence")
+    payload.pop("l3_evidence")
+    payload.pop("install_candidates")
+
+    fields = parse_upgrade_issue_request(
+        UPGRADE_ISSUE_TITLE, json.dumps(payload, ensure_ascii=False)
+    )
+
+    assert fields["version"] == "1.85.4"
+
+
+@pytest.mark.parametrize("field", ("software",))
 def test_parse_upgrade_issue_requires_every_schema_field(field):
     payload = json.loads(_upgrade_body())
     payload.pop(field)
@@ -387,9 +382,9 @@ def test_parse_upgrade_issue_rejects_a_mismatched_software_name():
 
 def test_parse_upgrade_issue_rejects_a_mismatched_version():
     payload = json.loads(_upgrade_body())
-    payload["version"]["value"] = "1.86.0"
+    payload["software"]["version"] = "1.86.0"
 
-    with pytest.raises(IssueParseError, match="version.value"):
+    with pytest.raises(IssueParseError, match="software.version"):
         parse_upgrade_issue_request(
             UPGRADE_ISSUE_TITLE, json.dumps(payload, ensure_ascii=False)
         )
@@ -397,7 +392,7 @@ def test_parse_upgrade_issue_rejects_a_mismatched_version():
 
 def test_parse_upgrade_issue_accepts_a_v_prefixed_version_value():
     payload = json.loads(_upgrade_body())
-    payload["version"]["value"] = "v1.85.4"
+    payload["software"]["version"] = "v1.85.4"
 
     fields = parse_upgrade_issue_request(
         UPGRADE_ISSUE_TITLE, json.dumps(payload, ensure_ascii=False)
@@ -416,11 +411,11 @@ def test_parse_upgrade_issue_requires_an_https_repo_url():
         )
 
 
-def test_parse_upgrade_issue_requires_install_candidates():
+def test_parse_upgrade_issue_rejects_an_unknown_candidate_type():
     payload = json.loads(_upgrade_body())
-    payload["install_candidates"] = []
+    payload["install_candidates"][0]["type"] = "source/binary"
 
-    with pytest.raises(IssueParseError, match="install_candidates"):
+    with pytest.raises(IssueParseError, match="source or binary"):
         parse_upgrade_issue_request(
             UPGRADE_ISSUE_TITLE, json.dumps(payload, ensure_ascii=False)
         )

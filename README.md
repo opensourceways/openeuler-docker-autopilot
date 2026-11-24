@@ -130,7 +130,7 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 | **升级候选发现** | GitCode `【new-version】` Issue 提供目标版本与上游证据，扫描阶段只与目标仓已有目录对比（**不查询看板**）；缺字段 / 已有 open PR 跳过，目标版本目录已存在转审计；手动触发可用清单兜底 |
 | **确定性版本升级** | 复制最新版本目录，Dockerfile 由 AI 依据 Issue 证据与上游源码重新生成（禁止机械替换版本号）；README / `doc/image-info.yml` 更新版本、追加 `meta.yml`；生成内容缺目标版本号即失败交人工 |
 | **目标版本已存在的审计与修复** | 目标版本目录已在目标仓时不跳过：确定性检查版本/tag/meta/测试脚本/image-info，AI 审计后由修复 Agent 更新 Dockerfile 与 doc/image-info.yml，推分支并先过双架构原生校验，通过后再开 PR |
-| **升级证据** | 由触发 Issue 提供完整证据包（`source=gitcode-issue`，含 L1 证据、`l3_evidence`、`install_candidates`），作为镜像构建、测试生成与 PR 留痕的参考，不参与门禁；手动路径回落最小 `source=manual` 证据 |
+| **升级证据** | 由触发 Issue 提供证据包（`source=gitcode-issue`，含 L1 证据、`l3_evidence`、`install_candidates`），作为镜像构建、测试生成与 PR 留痕的参考，不参与门禁；手动路径回落最小 `source=manual` 证据 |
 | **PR CI 失败修复（手动组件）** | `_ci_repair.yml` 复用原自动修复链路：诊断 → 容器内逐条执行修复 → arm64 复验，同一 PR 最多 6 个 run；入口为手动 / 显式 dispatch，不再自动轮询 |
 | **容器内逐条执行式修复** | 不在文本上盲改：在自托管 Runner 的容器里逐条执行 Dockerfile 指令、失败即修，跑通后反推 Dockerfile 并用 `docker build` 验证 |
 | **精准日志抓取** | 从 PR 评论表格逐行解析 FAILED 行，只取实际失败架构的构建 job 日志、排除 trigger/编排层；日志与 `ci_failed` 状态矛盾时主动标记「证据不足」而不是猜根因 |
@@ -460,9 +460,9 @@ clone 目标仓 → 确定性检查 → upgrade_auditor Agent → upgrade_fixer 
 
 升级证据来自触发 Issue 的正文，自动升级不再抓取 upstream-dashboard：
 
-- Issue 正文必须是完整证据 JSON，包含 `schema_version`、`request_id`、`software`、`version`、`upstream_evidence`、`l3_evidence`（可选）与 `install_candidates`；字段约束见 [`docs/new-version-issue-guide.md`](docs/new-version-issue-guide.md)；
-- [`parse_issue.py`](scripts/harness/parse_issue.py) 校验必填字段，并要求 `software.name` / `version.value` 与标题一致；[`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把它归一化为 `source=gitcode-issue` 的证据包，保留原始字段；
-- [`upgrade_scan.py`](scripts/harness/upgrade_scan.py) 只在应用同名时把该证据写入升级矩阵，其它条目仍使用最小 `source=manu部回落 `manual`；
+- Issue 正文是证据 JSON：`software`（`name` / `repo_url` / `version`）必填，`upstream_evidence`、`l3_evidence`、`install_candidates` 可省略；字段约束见 [`docs/new-version-issue-guide.md`](docs/new-version-issue-guide.md)；
+- [`parse_issue.py`](scripts/harness/parse_issue.py) 校验必填字段，并要求 `software.name` / `software.version` 与标题一致；[`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把它归一化为 `source=gitcode-issue` 的证据包，保留原始字段；
+- [`upgrade_scan.py`](scripts/harness/upgrade_scan.py) 只在应用同名时把该证据写入升级矩阵，其它条目仍回落到 `source=manual`；
 - 证据会出现在 PR 正文、Dockerfile 生成提示与测试生成提示里，**只作参考，不参与门禁**；上游版本是否真实可用，由 AI 生成与双架构构建/功能测试兜底验证。
 
 ### 4.6 PR CI 修复组件（手动）

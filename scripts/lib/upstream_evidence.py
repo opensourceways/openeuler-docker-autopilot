@@ -69,30 +69,21 @@ def from_issue_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     """
     payload = payload or {}
     software = payload.get("software")
-    version = payload.get("version")
     upstream = payload.get("upstream_evidence")
     software = software if isinstance(software, Mapping) else {}
-    version = version if isinstance(version, Mapping) else {}
     upstream = upstream if isinstance(upstream, Mapping) else {}
     entry = upstream.get("evidence")
     return {
         "source": "gitcode-issue",
-        "schema_version": payload.get("schema_version"),
-        "request_id": payload.get("request_id"),
         "name": software.get("name"),
         "repo_url": software.get("repo_url"),
-        "version": version.get("value"),
-        "display_version": version.get("display"),
-        "version_type": version.get("type"),
+        "version": software.get("version"),
         "support_level": upstream.get("support_level"),
-        "computed_by": upstream.get("computed_by"),
-        "evaluated_at": upstream.get("evaluated_at"),
         "collector": [dict(entry)] if isinstance(entry, Mapping) else [],
         "l3_evidence": payload.get("l3_evidence"),
         "install_candidates": list(payload.get("install_candidates") or []),
         "raw": {
             "software": dict(software),
-            "version": dict(version),
             "upstream_evidence": {
                 key: value
                 for key, value in upstream.items()
@@ -343,17 +334,11 @@ def _render_issue_markdown(evidence: dict[str, Any]) -> str:
 
 
 def _issue_evidence_lines(evidence: dict[str, Any]) -> list[str]:
-    version_line = f"- 版本：`{evidence.get('version') or 'unknown'}`"
-    if evidence.get("version_type"):
-        version_line += f"（{evidence['version_type']}）"
     return [
-        f"- 证据来源：触发 Issue（schema_version={evidence.get('schema_version') or 'unknown'}）",
-        f"- request_id：`{evidence.get('request_id') or 'unknown'}`",
+        "- 证据来源：触发 Issue",
         f"- 上游仓库：{evidence.get('repo_url') or 'unknown'}",
-        version_line,
+        f"- 版本：`{evidence.get('version') or 'unknown'}`",
         f"- 证据等级：`{evidence.get('support_level') or 'unknown'}`",
-        f"- 采集方：{evidence.get('computed_by') or 'unknown'}",
-        f"- 评估时间：{evidence.get('evaluated_at') or 'unknown'}",
     ]
 
 
@@ -367,8 +352,7 @@ def _issue_candidate_lines(evidence: dict[str, Any]) -> list[str]:
             continue
         lines.append(
             f"- `{candidate.get('type')}` {candidate.get('url')} "
-            f"artifact=`{candidate.get('artifact')}` "
-            f"arch=`{candidate.get('arch')}`"
+            f"artifact=`{candidate.get('artifact')}`"
         )
     return lines
 
@@ -416,7 +400,10 @@ def _render_collector(entries: list[Any]) -> list[str]:
                 path = workflow.get("workflow_path") or "unknown"
                 depth = workflow.get("test_depth") or "unknown"
                 url = workflow.get("workflow_url") or ""
+                run_url = workflow.get("workflow_run_url") or ""
                 line += f"\n  ci: `{path}` (test_depth=`{depth}`) {url}".rstrip()
+                if run_url:
+                    line += f"\n  ci run: {run_url}"
         lines.append(line)
     return lines
 

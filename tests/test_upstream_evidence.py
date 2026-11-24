@@ -155,47 +155,38 @@ class RenderTest(unittest.TestCase):
 
 
 _ISSUE_PAYLOAD = {
-    "schema_version": "1.1",
-    "request_id": "req-grpc-1854",
     "software": {
         "name": "grpc",
         "repo_url": "https://github.com/grpc/grpc",
+        "version": "1.85.4",
         "raw_category": "rpc",
-        "oss_map_id": "oss-grpc",
-    },
-    "version": {
-        "value": "1.85.4",
-        "type": "watched",
-        "display": "v1.85.4",
     },
     "upstream_evidence": {
         "support_level": "L1",
-        "computed_by": "kunpeng-evidence",
-        "evaluated_at": "2026-11-20T00:00:00Z",
         "evidence": {
             "check_id": "kp.l1.arm_ci",
-            "result": "supported",
-            "artifact": "grpc-arm64",
             "source_url": "https://ci.example.com/jobs/1",
-            "checked_at": "2026-11-20T00:00:00Z",
-            "test_depth": "smoke",
             "ci_workflows": [
                 {
                     "workflow_path": ".github/workflows/ci.yml",
                     "workflow_url": "https://github.com/grpc/grpc/blob/abc/ci.yml",
+                    "workflow_run_url": (
+                        "https://github.com/grpc/grpc/actions/runs/1"
+                    ),
                     "test_depth": "smoke",
                 }
             ],
-            "assessment_id": "assess-grpc",
         },
     },
-    "l3_evidence": {"result": "not_found"},
+    "l3_evidence": {
+        "check_id": "kp.l3.openeuler_image",
+        "artifact": "1.85.4-oe2403sp4",
+    },
     "install_candidates": [
         {
             "type": "source",
             "url": "https://github.com/grpc/grpc/archive/v1.85.4.tar.gz",
             "artifact": "grpc-1.85.4.tar.gz",
-            "arch": "any",
         }
     ],
 }
@@ -211,8 +202,14 @@ class IssueEvidenceTest(unittest.TestCase):
         self.assertEqual(evidence["version"], "1.85.4")
         self.assertEqual(evidence["support_level"], "L1")
         self.assertEqual(evidence["collector"][0]["check_id"], "kp.l1.arm_ci")
-        self.assertEqual(evidence["l3_evidence"], {"result": "not_found"})
-        self.assertEqual(evidence["raw"]["software"]["oss_map_id"], "oss-grpc")
+        self.assertEqual(
+            evidence["l3_evidence"],
+            {
+                "check_id": "kp.l3.openeuler_image",
+                "artifact": "1.85.4-oe2403sp4",
+            },
+        )
+        self.assertEqual(evidence["raw"]["software"]["raw_category"], "rpc")
         self.assertNotIn(
             "evidence", evidence["raw"]["upstream_evidence"]
         )
@@ -222,10 +219,12 @@ class IssueEvidenceTest(unittest.TestCase):
         self.assertIn("kp.l1.arm_ci", prompt)
         self.assertIn("test_depth=`smoke`", prompt)
         self.assertIn("ci.yml", prompt)
+        self.assertIn("ci run: https://github.com/grpc/grpc/actions/runs/1", prompt)
         self.assertIn("安装候选（1 条）", prompt)
         self.assertIn("v1.85.4.tar.gz", prompt)
 
         markdown = upstream_evidence.render_markdown(evidence)
         self.assertIn("## 上游证据（来自触发 Issue）", markdown)
-        self.assertIn("req-grpc-1854", markdown)
+        self.assertIn("1.85.4", markdown)
         self.assertIn("kp.l1.arm_ci", markdown)
+        self.assertIn("actions/runs/1", markdown)

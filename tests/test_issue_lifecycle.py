@@ -787,32 +787,18 @@ UPGRADE_ISSUE_TITLE = (
 def _upgrade_body(name: str, version: str) -> str:
     return json.dumps(
         {
-            "schema_version": "1.1",
-            "request_id": f"req-{name}-{version}",
             "software": {
                 "name": name,
                 "repo_url": f"https://github.com/{name}/{name}",
+                "version": version,
                 "raw_category": "rpc",
-                "oss_map_id": f"oss-{name}",
-            },
-            "version": {
-                "value": version,
-                "type": "watched",
-                "display": version,
             },
             "upstream_evidence": {
                 "support_level": "L1",
-                "computed_by": "kunpeng-evidence",
-                "evaluated_at": "2026-11-20T00:00:00Z",
                 "evidence": {
                     "check_id": "kp.l1.arm_ci",
-                    "result": "supported",
-                    "artifact": f"{name}-arm64",
                     "source_url": "https://ci.example.com/jobs/1",
-                    "checked_at": "2026-11-20T00:00:00Z",
-                    "test_depth": "smoke",
                     "ci_workflows": [],
-                    "assessment_id": f"assess-{name}",
                 },
             },
             "l3_evidence": None,
@@ -824,7 +810,6 @@ def _upgrade_body(name: str, version: str) -> str:
                         f"tags/v{version}.tar.gz"
                     ),
                     "artifact": f"{name}-{version}.tar.gz",
-                    "arch": "any",
                 }
             ],
         },
@@ -897,7 +882,7 @@ def test_upgrade_issue_is_claimed_and_dispatched_with_its_source_issue():
     assert claimed.request.os_version == "24.03-lts-sp4"
     assert claimed.request.source_url == "https://github.com/grpc/grpc"
     assert claimed.request.evidence["source"] == "gitcode-issue"
-    assert claimed.request.evidence["request_id"] == "req-grpc-1.85.4"
+    assert claimed.request.evidence["version"] == "1.85.4"
     assert claimed.request.evidence["collector"][0]["check_id"] == "kp.l1.arm_ci"
     assert duplicate is None
     assert len(dispatched) == 1
