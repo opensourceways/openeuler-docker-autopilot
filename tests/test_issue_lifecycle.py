@@ -960,6 +960,59 @@ def test_upgrade_scan_claims_gitcode_default_todo_status():
     assert client.issue["issue_state"] == "已接纳"
 
 
+def test_task_issue_claim_uses_in_progress_status():
+    from scripts.lib.issue_lifecycle import claim_upgrade_issue
+
+    issue = _upgrade_trigger_issue(
+        issue_state="待办的",
+        issue_state_detail={"title": "待办的"},
+        issue_type="任务",
+        issue_type_detail={"title": "任务", "id": 1884},
+    )
+    client = UpgradeScanClient([issue])
+    dispatched = []
+
+    claimed = claim_upgrade_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=None,
+        dispatch=dispatched.append,
+        parse_task=_parse_upgrade_task,
+    )
+
+    assert claimed is not None
+    assert client.issue["issue_state"] == "进行中"
+    assert [item["app"] for item in dispatched] == ["grpc"]
+
+
+def test_task_issue_failure_keeps_in_progress_and_comments():
+    from scripts.lib.issue_lifecycle import finalize_upgrade_issue
+
+    client = TriggerIssueClient(
+        _upgrade_trigger_issue(
+            issue_state="进行中",
+            issue_state_detail={"title": "进行中"},
+            issue_type="任务",
+            issue_type_detail={"title": "任务", "id": 1884},
+        )
+    )
+
+    finalize_upgrade_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=81,
+        outcome="failure",
+        run_url=GITHUB_RUN_URL,
+        failure_summary="arm64 replay rejected",
+    )
+
+    assert [name for name, _ in client.calls] == ["get", "comment"]
+    comment = client.calls[1][1]["body"]
+    assert "需要人工处理" in comment
+    assert "arm64 replay rejected" in comment
+    assert client.issue["issue_state"] == "进行中"
+
+
 def test_upgrade_scan_queues_same_app_behind_an_accepted_issue():
     from scripts.lib.issue_lifecycle import claim_upgrade_issue
 
