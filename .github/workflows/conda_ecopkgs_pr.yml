@@ -60,7 +60,11 @@ env:
   TARGET_BRANCH: master
 
 concurrency:
-  group: conda-ecopkgs-pr-${{ github.ref }}
+  # 一次升级扫描会同时为多个包登记版本。GitHub 每个 concurrency group 只保留
+  # 1 个运行中 + 1 个排队，固定 group 会让后来的登记请求互相取消（日志
+  # blob 不存在，job 从未启动）。按 run 隔离后不同升级 run 可并行，
+  # 同一 run 内的多包仍在同一个 job 里串行。
+  group: conda-ecopkgs-pr-${{ github.ref }}-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
