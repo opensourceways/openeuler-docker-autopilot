@@ -97,6 +97,38 @@ def _emit_output(**values: str) -> None:
             handle.write(f"{key}={value}\n")
 
 
+# KunpengTest 4.7 禁止 set -e / set -o errexit，其余选项（-u、-o pipefail）允许。
+_SET_OPTIONS_LINE_RE = re.compile(r"^(\s*)set\s+(-[A-Za-z]+)(.*)$")
+_SET_ERREXIT_LINE_RE = re.compile(r"^(\s*)set\s+-o\s+errexit\s*$")
+
+
+def _strip_errexit(text: str) -> str:
+    """删除 set -e / set -o errexit，保留其它选项和行尾符。
+
+    只做这一处确定性改写：现有测试脚本是人工维护的共享资产，不整体重写，
+    避免丢失断言语义；改写后仍要重新跑完整静态契约。
+    """
+    changed = False
+    result: list[str] = []
+    for line in text.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        ending = line[len(body):]
+        if _SET_ERREXIT_LINE_RE.match(body):
+            changed = True
+            continue
+        match = _SET_OPTIONS_LINE_RE.match(body)
+        if match:
+            indent, options, rest = match.groups()
+            if "e" in options[1:]:
+                changed = True
+                remaining = options[1:].replace("e", "")
+                if not remaining:
+                    continue
+                body = f"{indent}set -{remaining}{rest}"
+        result.append(body + ending)
+    return "".join(result) if changed else text
+
+
 def _ensure_test_script(
     *,
     repo_dir: Path,
@@ -105,10 +137,12 @@ def _ensure_test_script(
     plan: version_upgrade.UpgradePlan,
     item: dict,
 ) -> str:
-    """确保测试脚本存在且通过静态契约；返回 added / existing。
+    """确保测试脚本存在且通过静态契约；返回 added / existing / existing-fixed。
 
-    升级不允许在没有测试脚本的情况下继续：缺脚本就生成，生成失败或现有脚本
-    不满足 KunpengTest 契约都直接失败，不推分支、不浪费双架构构建。
+    升级不允许在没有测试脚本的情况下继续：缺脚本就生成，生成失败直接失败，
+    不推分支、不浪费双架构构建。现有脚本若只是用了 KunpengTest 4.7 禁止的
+    ``set -e``，先做确定性最小改写（只去掉 e）再复检；其它违规仍然失败，
+    避免自动重写覆盖人工维护的测试语义。
     """
     from scripts.harness.testgen_generate import generate_test_script
     from scripts.lib.kunpeng_test_contract import check_test_script
@@ -117,6 +151,25 @@ def _ensure_test_script(
     existing = _existing_test_script(app_dir)
     if existing is not None:
         findings = check_test_script(existing)
+        if findings and {f["code"] for f in findings} == {"kunpeng.set_e"}:
+            with existing.open("r", encoding="utf-8", newline="") as handle:
+                original = handle.read()
+            patched = _strip_errexit(original)
+            if patched != original:
+                with existing.open("w", encoding="utf-8", newline="") as handle:
+                    handle.write(patched)
+                findings = check_test_script(existing)
+                if not findings:
+                    log_stage(
+                        "upgrade-apply",
+                        f"{app}: 去掉 "
+                        f"{existing.relative_to(repo_dir).as_posix()} 中 "
+                        "KunpengTest 4.7 禁止的 set -e，复用其余断言",
+                    )
+                    return "existing-fixed"
+                # 复检仍失败时还原，避免把半成品写进升级分支。
+                with existing.open("w", encoding="utf-8", newline="") as handle:
+                    handle.write(original)
         if findings:
             detail = "; ".join(
                 f"{finding['code']}: {finding['message']}" for finding in findings

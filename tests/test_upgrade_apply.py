@@ -37,6 +37,46 @@ _EVIDENCE = {
 }
 
 
+_COMPLIANT_BODY = """
+
+EXPECTED_VERSION="${EXPECTED_VERSION:?EXPECTED_VERSION is required}"
+
+test_binary_present() {
+    if command -v myapp >/dev/null 2>&1; then
+        echo "PASS: binary myapp exists"
+        return 0
+    fi
+    echo "FAIL: binary myapp not found in PATH"
+    return 1
+}
+
+test_version() {
+    local out
+    out="$(myapp --version 2>&1 || true)"
+    if [ "${out}" = "myapp version ${EXPECTED_VERSION}" ]; then
+        echo "PASS: exact version ${out}"
+        return 0
+    fi
+    echo "FAIL: expected 'myapp version ${EXPECTED_VERSION}', got '${out}'"
+    return 1
+}
+
+main() {
+    local failures=0
+    test_binary_present || failures=$((failures + 1))
+    test_version        || failures=$((failures + 1))
+    if [ "${failures}" -eq 0 ]; then
+        echo "ALL_TESTS_PASSED"
+        return 0
+    fi
+    echo "TESTS_FAILED: ${failures} failure(s)"
+    return 1
+}
+
+main "$@"
+"""
+
+
 def _make_app(root: Path) -> Path:
     app = root / "Database" / "kvrocks"
     image = app / "2.16.0" / "24.03-lts-sp4"
@@ -385,6 +425,55 @@ class EnsureTestScriptTest(unittest.TestCase):
                     plan=plan,
                     item={"version": "2.17.0"},
                 )
+
+    def test_existing_script_with_set_e_is_repaired(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(Path(tmp))
+            tests_dir = app / "tests"
+            tests_dir.mkdir()
+            script = tests_dir / "test.sh"
+            script.write_text(
+                "#!/bin/bash\nset -euo pipefail\n" + _COMPLIANT_BODY,
+                encoding="utf-8",
+                newline="\n",
+            )
+            plan = version_upgrade.plan_upgrade(app)
+
+            status = upgrade_apply._ensure_test_script(
+                repo_dir=app.parent.parent,
+                app="kvrocks",
+                domain="Database",
+                plan=plan,
+                item={"version": "2.17.0"},
+            )
+
+            self.assertEqual(status, "existing-fixed")
+            text = script.read_text(encoding="utf-8")
+            self.assertIn("set -uo pipefail", text)
+            self.assertNotIn("set -euo pipefail", text)
+
+    def test_set_e_repair_keeps_file_when_other_violations_remain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(Path(tmp))
+            tests_dir = app / "tests"
+            tests_dir.mkdir()
+            script = tests_dir / "test.sh"
+            original = (
+                "#!/bin/bash\nset -euo pipefail\n" + _COMPLIANT_BODY + "\nexit 0\n"
+            )
+            script.write_text(original, encoding="utf-8", newline="\n")
+            plan = version_upgrade.plan_upgrade(app)
+
+            with self.assertRaises(version_upgrade.UpgradeError):
+                upgrade_apply._ensure_test_script(
+                    repo_dir=app.parent.parent,
+                    app="kvrocks",
+                    domain="Database",
+                    plan=plan,
+                    item={"version": "2.17.0"},
+                )
+
+            self.assertEqual(script.read_text(encoding="utf-8"), original)
 
 
 class UpgradePrTitleTest(unittest.TestCase):
