@@ -52,6 +52,15 @@ runs:
           --require-hashes \
           -r .github/python-phase1.lock.txt
 
+    # flow.py 及其依赖模块在顶层 import requests，而锁文件只覆盖确定性工具链。
+    # 运行时依赖在这里统一补齐，避免每个调用 phase1-venv 的 job 各自安装时遗漏。
+    - name: Install runtime dependencies
+      shell: bash
+      run: |
+        "${RUNNER_TEMP}/phase1-venv/bin/python" -m pip install \
+          --disable-pip-version-check \
+          -r requirements.txt
+
     - name: Bootstrap locked runner tools
       id: tools
       if: ${{ inputs.arch != '' }}
