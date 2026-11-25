@@ -217,10 +217,11 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 | `[self-hosted, Linux, ARM64, oe-image-arm64]` | aarch64 原生构建与测试（场景一 / 二 / 三；CI 修复组件的 arm64 修复与复验） |
 | `[self-hosted, Linux, oe-any]` | 架构无关 Job（场景二的 discover / prepare / open-pr / audit / summary / finalize / plan-repairs / conda 登记），X64 与 ARM64 都可承接 |
 | `[self-hosted, Linux, X64]` | 监控、查询等轻量 Job（场景三） |
+| `[self-hosted, Linux, X64, oe-issue-poll]` | 三个场景的 Issue 轮询 Job（hwyx86 专用轮询机，与镜像构建机隔离） |
 
 Runner 需预装 **Docker 与 buildx**。能力由 Job 启动时的 `scripts/runner_preflight.py` 自检把关——**缺失即失败，不做临时安装**。同一 Runner 上会有并发 Job，镜像 tag 与容器名均携带唯一标识，避免互相覆盖。
 
-Issue 监控每 5 分钟轮询一次：由 hwyx86 上的 `oe-issue-poll.timer` 调 `workflow_dispatch`，跑在专用 `oe-issue-poll` Runner 上（与镜像构建机隔离，不会被长任务卡住）。GitHub 自带 cron 只保留每小时一次的兜底，因为其 5 分钟 schedule 属于 best-effort，可能长期延迟或丢跑；需要换机器时设置 Variable `ISSUE_POLL_RUNNER_LABELS`。
+三个场景的 Issue 轮询（场景一 `monitor_new_image_issues.yml`、场景二 `monitor_upgrade_issues.yml`、场景三 `monitor_oe_upgrade_issues.yml`）默认每 5 分钟一次：由 hwyx86 上的 `oe-issue-poll.timer` 调 `workflow_dispatch`，跑在专用 `oe-issue-poll` Runner 上（与镜像构建机隔离，不会被长任务卡住）。GitHub 自带 cron 只保留低频兜底（场景一/二每小时、场景三每 30 分钟），因为其 5 分钟 schedule 属于 best-effort，可能长期延迟或丢跑；需要换机器时设置 Variable `ISSUE_POLL_RUNNER_LABELS`。
 
 场景二的发现 / 交付 Job 只需要 Python、git 与网络；双架构验证 Job 额外需要 Docker（由 preflight 把关）。AI Agent 统一使用锁定工具链中的 opencode，**Runner 无需安装 Node.js**；只有把 `AI_RUNNER` 切到 `claude-code` / `claude-code-account` 时才需要 Node 与 Claude Code CLI。
 

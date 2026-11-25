@@ -1,6 +1,10 @@
 name: Watch GitCode new-image Issues
 
 on:
+  # 主调度：hwyx86 上的 oe-issue-poll.timer 每 5 分钟调用 workflow_dispatch。
+  # GitHub 自带 cron 是 best-effort 队列，只保留每小时一次作为兜底。
+  schedule:
+    - cron: '42 * * * *'
   workflow_dispatch:
     inputs:
       issue_number:
@@ -27,7 +31,11 @@ jobs:
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
           github.repository_id == '1316941460' }}
-    runs-on: [self-hosted, Linux, X64, oe-image-x86]
+    # 专用轮询 runner：与镜像构建机隔离，5 分钟轮询不会被长任务卡住。
+    # 需要换机器时设置 Variable ISSUE_POLL_RUNNER_LABELS（JSON 数组）。
+    runs-on: >-
+      ${{ fromJSON(vars.ISSUE_POLL_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-issue-poll"]') }}
     timeout-minutes: 10
     steps:
       - name: Check out workflow source

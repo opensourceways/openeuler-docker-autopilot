@@ -31,8 +31,11 @@ def test_watcher_has_plan_and_deliver_inputs_and_serial_concurrency():
         "scope",
         "mode",
     }
-    assert inputs["tracking_issue_number"]["required"] is True
+    assert inputs["tracking_issue_number"]["required"] is False
     assert inputs["mode"]["options"] == ["plan", "deliver"]
+    job = data["jobs"]["oe-upgrade-advance"]
+    assert "ISSUE_POLL_RUNNER_LABELS" in job["runs-on"]
+    assert "oe-issue-poll" in job["runs-on"]
     assert data["permissions"] == {"actions": "write", "contents": "read"}
     assert data["concurrency"]["cancel-in-progress"] is False
     text = WATCH.read_text()

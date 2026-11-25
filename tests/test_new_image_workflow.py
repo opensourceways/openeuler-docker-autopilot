@@ -323,7 +323,7 @@ def test_issue_watcher_polls_on_schedule_and_scans_up_to_max_issues():
     trigger = _trigger(data)
 
     assert set(trigger) == {"schedule", "workflow_dispatch"}
-    assert trigger["schedule"][0]["cron"] == "*/5 * * * *"
+    assert trigger["schedule"][0]["cron"] == "42 * * * *"
     assert '#   - cron: "*/5 * * * *"' not in WATCH_PATH.read_text()
     assert data["permissions"] == {
         "actions": "write",
@@ -334,12 +334,8 @@ def test_issue_watcher_polls_on_schedule_and_scans_up_to_max_issues():
 
     job = data["jobs"]["watch"]
     text = _job_text(job)
-    assert job["runs-on"] == [
-        "self-hosted",
-        "Linux",
-        "X64",
-        "oe-image-x86",
-    ]
+    assert "ISSUE_POLL_RUNNER_LABELS" in job["runs-on"]
+    assert "oe-issue-poll" in job["runs-on"]
     assert "github.event_name == 'workflow_dispatch'" in job["if"]
     assert "github.repository_id == '1316941460'" in job["if"]
     assert "PHASE1_TEST_ISSUE_NUMBER" not in text
@@ -358,7 +354,7 @@ def test_issue_watcher_polls_on_schedule_and_scans_up_to_max_issues():
     assert "GITCODE_TOKEN" in text
     assert "github.token" in text
     assert "DEEPSEEK_API_KEY" not in text
-    assert "oe-image-x86" in text
+    assert "oe-issue-poll" in text
 
 
 def test_workflows_do_not_use_github_hosted_ubuntu_runners():

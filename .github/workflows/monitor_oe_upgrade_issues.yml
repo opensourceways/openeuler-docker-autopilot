@@ -1,13 +1,16 @@
 name: Monitor openEuler Upgrade Issues
 
 on:
+  # 主调度：hwyx86 上的 oe-issue-poll.timer 每 5 分钟调用 workflow_dispatch。
+  # GitHub 自带 cron 是 best-effort 队列，只保留每 30 分钟一次作为兜底。
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       tracking_issue_number:
-        description: "Tracking GitCode Issue number"
-        required: true
+        description: >-
+          Tracking GitCode Issue number; empty scans open 【oe-upgrade】 Issues
+        required: false
         type: string
       oe_version:
         description: "Target openEuler version; empty reuses the Issue request"
@@ -39,14 +42,20 @@ concurrency:
 jobs:
   oe-upgrade-advance:
     name: Plan or advance one upgrade activity
-    runs-on: [self-hosted, Linux, X64, oe-image-x86]
+    # 专用轮询 runner：与镜像构建机隔离，轮询不会被长任务卡住。
+    # 需要换机器时设置 Variable ISSUE_POLL_RUNNER_LABELS（JSON 数组）。
+    runs-on: >-
+      ${{ fromJSON(vars.ISSUE_POLL_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-issue-poll"]') }}
     timeout-minutes: 20
     steps:
       - name: Check out workflow source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Validate manual inputs
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' &&
+              inputs.tracking_issue_number != '' }}
         env:
           ISSUE_NUMBER: ${{ inputs.tracking_issue_number }}
         run: |
