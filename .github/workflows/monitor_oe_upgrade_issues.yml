@@ -1,8 +1,8 @@
 name: Monitor openEuler Upgrade Issues
 
 on:
-  # 主调度：hwyx86 上的 oe-issue-poll.timer 每 5 分钟调用 workflow_dispatch。
-  # GitHub 自带 cron 是 best-effort 队列，只保留每 30 分钟一次作为兜底。
+  # 暂未纳入 hwyx86 的定时派发：先靠 GitHub cron 每 30 分钟兜底，
+  # 端到端验证通过后再挂到 oe-issue-poll 的 5 分钟 timer 上。
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:

@@ -1,7 +1,7 @@
 name: Watch GitCode new-image Issues
 
 on:
-  # 主调度：hwyx86 上的 oe-issue-poll.timer 每 5 分钟调用 workflow_dispatch。
+  # 主调度：hwyx86 上的 oe-new-image-poll.timer 每 30 分钟调用 workflow_dispatch。
   # GitHub 自带 cron 是 best-effort 队列，只保留每小时一次作为兜底。
   schedule:
     - cron: '42 * * * *'
