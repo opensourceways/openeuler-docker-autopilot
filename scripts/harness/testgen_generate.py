@@ -238,7 +238,13 @@ def generate_test_script(
             required_keys=REQUIRED_AGENT_KEYS,
             timeout=timeout,
         )
-        findings = check_test_script(repo_dir / test_rel)
+        test_path = repo_dir / test_rel
+        if test_path.is_file():
+            # 生成器只负责写内容：可执行位在这里统一补齐（与 deliver 一致），
+            # 否则 Linux 上的静态检查永远报 kunpeng.not_executable，调用方会
+            # 把刚生成的脚本整个丢掉。
+            test_path.chmod(test_path.stat().st_mode | 0o111)
+        findings = check_test_script(test_path)
         findings += _scope_findings(repo_dir, allowed_prefix)
         if not findings:
             return []

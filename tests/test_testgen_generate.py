@@ -205,6 +205,33 @@ class GenerateTestScriptTest(unittest.TestCase):
                 [],
             )
 
+    def test_generated_script_gets_the_executable_bit(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _init_target_repo(Path(tmp))
+            with mock.patch.object(
+                testgen_generate,
+                "run_agent",
+                side_effect=_script_writer([_GOOD_SCRIPT]),
+            ):
+                findings = testgen_generate.generate_test_script(
+                    repo_dir=repo,
+                    app="myapp",
+                    domain="Database",
+                    dockerfile_rel="Database/myapp/2.0.0/24.03-lts-sp4/Dockerfile",
+                    source_url="",
+                    latest_version="2.0.0",
+                    api_key="key",
+                    executable=Path("/fake/opencode"),
+                )
+            test_path = repo / "Database" / "myapp" / "tests" / "test.sh"
+
+            self.assertEqual(findings, [])
+            # Linux 上静态契约要求可执行位；生成器要自己补齐，不能靠 agent
+            if os.name != "nt":
+                self.assertTrue(test_path.stat().st_mode & 0o111)
+
     def test_repairs_then_passes(self) -> None:
         import tempfile
 
