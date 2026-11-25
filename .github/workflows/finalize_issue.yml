@@ -1,0 +1,102 @@
+name: Finalize GitCode Issue
+
+# 场景二的轻量回写入口：不重跑发现/构建/验证，只把已有结果写回来源 Issue。
+#
+# 用途：补跑成功但 Issue 没刷新时一次性收口。手动 dispatch
+# upgrade_upstream_versions.yml 时没有 source_issue，finalize-issue 会被跳过；
+# Issue 已进入「进行中」也不会被轮询重新认领，于是 PR 都合了 Issue 还挂着。
+# 这里直接调用 flow.py upgrade-issue-finalize 追加结果评论：成功时把 Issue 置
+# 「已完成」并关闭（附带 PR 链接），失败时保持「进行中」并补失败说明。
+#
+# 触发：workflow_dispatch，一次只处理一个 Issue。
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: '要回写的 GitCode Issue 编号'
+        required: true
+        type: string
+      outcome:
+        description: '写回的结果'
+        required: true
+        type: choice
+        default: success
+        options:
+          - success
+          - failure
+      pr_url:
+        description: '本轮产出的 PR 地址（如 https://gitcode.com/openeuler/openeuler-docker-images/merge_requests/6732）'
+        required: false
+        type: string
+      run_url:
+        description: '记入评论的 workflow run 地址；留空用本次 run'
+        required: false
+        type: string
+      failure_summary:
+        description: 'outcome=failure 时的失败说明'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finalize-issue-${{ inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    name: Write result back to the Issue
+    # 与轮询共用专用机器：只做两次 GitCode API 调用，不占构建资源。
+    runs-on: >-
+      ${{ fromJSON(vars.ISSUE_POLL_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-issue-poll"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate inputs
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          PR_URL: ${{ inputs.pr_url }}
+          RUN_URL: ${{ inputs.run_url }}
+        run: |
+          case "${ISSUE_NUMBER}" in
+            ''|*[!0-9]*|0)
+              echo "issue_number must be a positive integer" >&2
+              exit 2
+              ;;
+          esac
+          for value in "${PR_URL}" "${RUN_URL}"; do
+            if [ -z "${value}" ]; then
+              continue
+            fi
+            case "${value}" in
+              https://*) ;;
+              *)
+                echo "pr_url / run_url must be HTTPS URLs" >&2
+                exit 2
+                ;;
+            esac
+          done
+
+      - name: Write result back to the source Issue
+        env:
+          GITCODE_ISSUE_TOKEN: ${{ secrets.GITCODE_ISSUE_TOKEN || secrets.GITCODE_TOKEN }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          OUTCOME: ${{ inputs.outcome }}
+          PR_URL: ${{ inputs.pr_url }}
+          RUN_URL: ${{ inputs.run_url ||
+              format('{0}/{1}/actions/runs/{2}',
+                     github.server_url, github.repository, github.run_id) }}
+          FAILURE_SUMMARY: ${{ inputs.failure_summary }}
+        run: |
+          python3 scripts/harness/flow.py upgrade-issue-finalize \
+            --target-repo openeuler/openeuler-docker-images \
+            --issue-number "${ISSUE_NUMBER}" \
+            --outcome "${OUTCOME}" \
+            --run-url "${RUN_URL}" \
+            --pr-url "${PR_URL}" \
+            --failure-summary "${FAILURE_SUMMARY}"

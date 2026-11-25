@@ -8,6 +8,7 @@ WATCH = ROOT / ".github" / "workflows" / "monitor_oe_upgrade_issues.yml"
 WORKER = ROOT / ".github" / "workflows" / "oe_upgrade_worker.yml"
 LEGACY = ROOT / ".github" / "workflows" / "upgrade_openeuler_versions.yml"
 ROUND = ROOT / ".github" / "workflows" / "_create_new_image_rounds.yml"
+FINALIZE = ROOT / ".github" / "workflows" / "finalize_issue.yml"
 
 
 def _load(path):
@@ -121,6 +122,29 @@ def test_worker_passes_dynamic_architecture_and_task_namespace_to_rounds():
 
     round_data = _load(ROUND)
     assert "task_key" in _on(round_data)["workflow_call"]["inputs"]
+
+
+def test_finalize_only_entry_rewrites_one_issue_without_rerunning_the_pipeline():
+    data = _load(FINALIZE)
+    trigger = _on(data)["workflow_dispatch"]["inputs"]
+
+    assert set(trigger) == {
+        "issue_number",
+        "outcome",
+        "pr_url",
+        "run_url",
+        "failure_summary",
+    }
+    assert trigger["issue_number"]["required"] is True
+    assert trigger["outcome"]["options"] == ["success", "failure"]
+    assert set(data["jobs"]) == {"finalize"}
+    text = FINALIZE.read_text()
+    assert "upgrade-issue-finalize" in text
+    assert "openeuler/openeuler-docker-images" in text
+    assert "oe-issue-poll" in text
+    # 轻量回写：不得重新触发发现/构建/验证链路。
+    assert set(_on(data)) == {"workflow_dispatch"}
+    assert "gh workflow run" not in text
 
 
 def test_worker_uses_declared_architectures_for_package_and_cleanup():
