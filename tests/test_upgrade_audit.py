@@ -178,6 +178,86 @@ class FixValidationTest(unittest.TestCase):
         )
         self.assertTrue(any("目标版本" in problem for problem in problems))
 
+    def test_fix_prompt_states_the_image_info_command_requirement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(Path(tmp))
+            context = upgrade_audit.collect_context(repo, _ITEM)
+            findings = upgrade_audit.deterministic_findings(context)
+            prompt = upgrade_audit.build_fix_prompt(
+                context,
+                findings,
+                {"verdict": "issues", "summary": "doc 与测试脚本不一致"},
+                problems=["doc/image-info.yml 仍未包含测试脚本命令 ['srun']"],
+            )
+
+        self.assertIn('"test_script_commands"', prompt)
+        self.assertIn("Hard requirement: image-info usage", prompt)
+        self.assertIn("srun", prompt)
+        self.assertIn("Previous attempt was rejected", prompt)
+        self.assertIn("仍未包含测试脚本命令", prompt)
+
+    def test_fix_retries_with_the_rejected_problems_when_validation_fails(
+        self,
+    ) -> None:
+        rejected = self._corrected_payload()
+        rejected["image_info"] = (
+            "name: slurm\ntags: 26.05.6.1\nusage: |\n  docker run it\n"
+        )
+        corrected = self._corrected_payload()
+        prompts: list[str] = []
+
+        def fake_agent(**kwargs: object) -> mock.Mock:
+            prompts.append(str(kwargs["prompt"]))
+            return mock.Mock(payload=rejected if len(prompts) == 1 else corrected)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(Path(tmp))
+            context = upgrade_audit.collect_context(repo, _ITEM)
+            with (
+                mock.patch.dict("os.environ", {"OPENCODE_BIN": "/bin/true"}),
+                mock.patch.object(
+                    upgrade_audit.ai_provider, "api_key", return_value="k"
+                ),
+                mock.patch.object(
+                    upgrade_audit, "run_agent", side_effect=fake_agent
+                ),
+                mock.patch.object(upgrade_audit, "_reset_workspace"),
+            ):
+                payload = upgrade_audit.run_agent_fix(context, [], {}, repo)
+
+        self.assertEqual(payload, corrected)
+        self.assertEqual(len(prompts), 2)
+        self.assertNotIn("Previous attempt was rejected", prompts[0])
+        self.assertIn("Previous attempt was rejected", prompts[1])
+        self.assertIn("测试脚本命令", prompts[1])
+
+    def test_fix_gives_up_after_the_final_rejected_attempt(self) -> None:
+        rejected = self._corrected_payload()
+        rejected["image_info"] = "name: slurm\ntags: 26.05.6.1\n"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(Path(tmp))
+            context = upgrade_audit.collect_context(repo, _ITEM)
+            with (
+                mock.patch.dict("os.environ", {"OPENCODE_BIN": "/bin/true"}),
+                mock.patch.object(
+                    upgrade_audit.ai_provider, "api_key", return_value="k"
+                ),
+                mock.patch.object(
+                    upgrade_audit,
+                    "run_agent",
+                    return_value=mock.Mock(payload=rejected),
+                ) as agent,
+                mock.patch.object(upgrade_audit, "_reset_workspace"),
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    upgrade_audit.run_agent_fix(context, [], {}, repo)
+
+        message = str(raised.exception)
+        self.assertIn("AI fix failed validation", message)
+        self.assertIn("测试脚本命令", message)
+        self.assertEqual(agent.call_count, 2)
+
     def test_apply_fix_writes_dockerfile_and_image_info(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = _make_repo(Path(tmp))

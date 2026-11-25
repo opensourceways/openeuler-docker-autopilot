@@ -596,10 +596,18 @@ def run_agent_audit(context: dict, findings: list[dict], repo_dir: Path) -> dict
 
 
 def build_fix_prompt(
-    context: dict, findings: list[dict], audit_payload: dict
+    context: dict,
+    findings: list[dict],
+    audit_payload: dict,
+    problems: list[str] | None = None,
 ) -> str:
-    """组装修复提示：审计结论 + 现有文件 + 测试脚本 + 证据。"""
+    """组装修复提示：审计结论 + 现有文件 + 测试脚本 + 证据。
+
+    ``problems`` 是上一轮 ``validate_fix`` 的拒绝原因：回灌给 Agent 再试一次，
+    避免同一处确定性要求被连续忽略。
+    """
     prompt = Path(agent_prompt_file("upgrade-fixer")).read_text(encoding="utf-8")
+    commands = _test_commands(context["test_scripts"])
     contract = {
         "app": context["app"],
         "domain": context["domain"],
@@ -618,6 +626,7 @@ def build_fix_prompt(
         )
         or [],
         "test_script_paths": [s["path"] for s in context["test_scripts"]],
+        "test_script_commands": commands,
     }
     parts = [
         prompt,
@@ -636,6 +645,17 @@ def build_fix_prompt(
         + context["meta_yml"].rstrip()
         + "\n```\n",
     ]
+    if commands:
+        parts.append(
+            "\n\n## Hard requirement: image-info usage must mention the "
+            "test command\n\n"
+            "``validate_fix`` 会拒绝本次修复，除非返回的 ``image_info`` 文本中"
+            "至少出现测试脚本实际调用的命令之一："
+            + "、".join(f"``{command}``" for command in commands)
+            + "。请把这些命令写进 usage（例如 ``bash tests/test.sh test_version`` "
+            "或直接 ``test_version``），不要因为“文档看起来不用改”就原样返回。\n"
+        )
+
     if context["image_info"]:
         parts.append(
             "\n\n## Current doc/image-info.yml\n\n```yaml\n"
@@ -652,12 +672,20 @@ def build_fix_prompt(
         )
     parts.append("\n\n" + upstream_evidence.render_prompt(context["evidence"]))
     parts.append(app_notes.render_prompt(app_notes.load(context["app"])))
+    if problems:
+        parts.append(
+            "\n\n## Previous attempt was rejected\n\n"
+            "上一轮修复没有通过确定性校验，必须逐条修正后重新返回完整 JSON：\n\n"
+            + "\n".join(f"- {problem}" for problem in problems)
+            + "\n"
+        )
     parts.append(
         "\n\n## Final response contract\n\n"
         "最终响应必须恰好是一个 JSON 对象，包含以下键："
         "success(bool)、dockerfile(str，完整 Dockerfile)、"
         'install_mode(str，"source" 或 "binary"，必须与最终 Dockerfile 的实际做法一致)、'
-        "image_info(str，完整 doc/image-info.yml；不需要修改时原样返回)、"
+        "image_info(str，完整 doc/image-info.yml；不需要修改时原样返回，"
+        "但 usage 必须满足上文列出的测试命令约束)、"
         "changes(list[str])、summary(str)、"
         "app_note(str 或 null，本次新增的可复用经验)、error(null 或 str)。"
         "不得修改工作区文件；只返回 JSON。\n"
@@ -984,6 +1012,8 @@ def run_agent_fix(
     findings: list[dict],
     audit_payload: dict,
     repo_dir: Path,
+    *,
+    max_attempts: int = 2,
 ) -> dict:
     api_key = ai_provider.api_key()
     executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
@@ -992,32 +1022,44 @@ def run_agent_fix(
             "AI_API_KEY (or DEEPSEEK_API_KEY) and opencode are required for fix"
         )
 
-    prompt = build_fix_prompt(context, findings, audit_payload)
-    log_stage("upgrade-audit", f"{context['app']}: agent fix start")
-    try:
-        result = run_agent(
-            executable=Path(executable),
-            role=FIX_AGENT_ROLE,
-            prompt=prompt,
-            workspace=repo_dir,
-            api_key=api_key,
-            required_keys=FIX_REQUIRED_KEYS,
-            timeout=AUDIT_AGENT_TIMEOUT_SECONDS,
+    problems: list[str] = []
+    payload: dict = {}
+    for attempt in range(1, max_attempts + 1):
+        prompt = build_fix_prompt(
+            context, findings, audit_payload, problems=problems
         )
-    finally:
-        _reset_workspace(repo_dir)
+        retry = "" if attempt == 1 else f" (retry {attempt - 1})"
+        log_stage("upgrade-audit", f"{context['app']}: agent fix start{retry}")
+        try:
+            result = run_agent(
+                executable=Path(executable),
+                role=FIX_AGENT_ROLE,
+                prompt=prompt,
+                workspace=repo_dir,
+                api_key=api_key,
+                required_keys=FIX_REQUIRED_KEYS,
+                timeout=AUDIT_AGENT_TIMEOUT_SECONDS,
+            )
+        finally:
+            _reset_workspace(repo_dir)
 
-    payload = result.payload
-    if not bool(payload.get("success")):
-        raise SystemExit(
-            f"{context['app']}: fix agent failed: {payload.get('error')}"
-        )
-    problems = validate_fix(context, payload)
-    if problems:
-        raise SystemExit(
-            f"{context['app']}: AI fix failed validation: {'；'.join(problems)}"
-        )
-    return payload
+        payload = result.payload
+        if not bool(payload.get("success")):
+            raise SystemExit(
+                f"{context['app']}: fix agent failed: {payload.get('error')}"
+            )
+        problems = validate_fix(context, payload)
+        if not problems:
+            return payload
+        if attempt < max_attempts:
+            log_stage(
+                "upgrade-audit",
+                f"{context['app']}: 修复未通过确定性校验，回灌 "
+                f"{len(problems)} 个问题后重试：{'；'.join(problems)}",
+            )
+    raise SystemExit(
+        f"{context['app']}: AI fix failed validation: {'；'.join(problems)}"
+    )
 
 
 def render_markdown(
