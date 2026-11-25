@@ -1,0 +1,90 @@
+name: Audit ARM portability (static)
+
+# 场景二的补充能力：只做静态审计，不构建、不推分支、不开 PR。
+#
+# 针对目标仓中**用源码构建镜像**的软件，判断：
+#   1. 上游项目是否已经适配 ARM（README / CI 证据，联网探测 GitHub）；
+#   2. 本仓是否为了让镜像能在 ARM 上构建而修改了上游源码（patch / sed / 覆盖文件）
+#      或写了 aarch64 条件分支。
+#
+# 只允许手动触发；按 domain 批量执行，每个软件只审计其最新版本目录。
+# 结果写入本次运行的 Step Summary，并上传 JSON artifact。
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: '目标 domain（逗号分隔可多个；all = 全部支持的领域）'
+        required: true
+        type: string
+      apps:
+        description: '只审计这些应用（逗号分隔；留空 = domain 内全部）'
+        required: false
+        default: ''
+        type: string
+      runner_labels:
+        description: 'runner 标签（JSON 数组）'
+        required: false
+        default: '["self-hosted","Linux","oe-any"]'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  TARGET_REPO: openeuler/openeuler-docker-images
+  TARGET_BRANCH: master
+
+jobs:
+  audit:
+    name: Static ARM portability audit
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    timeout-minutes: 60
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up runner environment
+        uses: ./.github/actions/phase1-setup
+
+      - name: Clone target repository
+        uses: ./.github/actions/clone-retry
+        with:
+          url: "https://oauth2:${{ secrets.GITCODE_TOKEN }}@gitcode.com/${{ env.TARGET_REPO }}.git"
+          destination: target-repo
+          branch: ${{ env.TARGET_BRANCH }}
+
+      - name: Static audit
+        env:
+          DOMAIN: ${{ inputs.domain }}
+          APPS: ${{ inputs.apps }}
+          # 认证配额 5000/h，避免批量自核时触发匿名 60/h 限流。
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/arm-audit"
+          "${RUNNER_TEMP}/phase1-venv/bin/python" \
+            scripts/harness/arm_portability_audit.py report \
+            --repo target-repo \
+            --domain "${DOMAIN}" \
+            --apps "${APPS}" \
+            --output "${RUNNER_TEMP}/arm-audit/results.json" \
+            --summary "${RUNNER_TEMP}/arm-audit/summary.md"
+
+      - name: Publish step summary
+        if: ${{ always() }}
+        run: |
+          if [ -f "${RUNNER_TEMP}/arm-audit/summary.md" ]; then
+            cat "${RUNNER_TEMP}/arm-audit/summary.md" >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "未生成审计摘要。" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload audit result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: arm-portability-audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/arm-audit/
+          if-no-files-found: warn
+          retention-days: 30
