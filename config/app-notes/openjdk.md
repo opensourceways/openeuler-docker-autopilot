@@ -16,3 +16,9 @@ app: openjdk
 
 ## 验证
 - `java -version`；tests/test.sh 存在时以其为准。
+
+<!-- oe-app-note:auto:28.25/24.03-lts-sp4 -->
+## 自动沉淀：28.25 / 24.03-lts-sp4
+
+openjdk 版本目录名用 '.' 分隔（如 28.25），而 java --version 运行时报告 '28-ea+25-xxxx' 解析为 '28+25'；test.sh 比较前须把 EXPECTED_VERSION 的 '.' 替换为 '+'，否则版本校验在两架构都会失败。
+<!-- /oe-app-note:auto -->
