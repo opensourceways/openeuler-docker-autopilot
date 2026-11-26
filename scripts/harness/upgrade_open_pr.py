@@ -23,6 +23,10 @@ _TEST_STATUS_TEXT = {
         "该应用已有 `tests/test.sh`，但含 KunpengTest 4.7 禁止的 `set -e`，"
         "本次只去掉该选项后复用其余断言"
     ),
+    "existing-repaired": (
+        "该应用已有 `tests/test.sh`，但未通过 KunpengTest 静态契约；"
+        "本次就地修复该脚本后复用原有测试覆盖"
+    ),
     "pending": "该应用缺 `tests/test.sh`，本次生成未通过（非阻断，可手动触发 Generate Test Scripts 补）",
 }
 

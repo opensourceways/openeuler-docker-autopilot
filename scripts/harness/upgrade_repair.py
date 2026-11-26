@@ -512,6 +512,8 @@ def _test_status(repo_dir: Path, test_rel: str) -> str:
     )
     if diff.returncode == 0 and re.search(r"^A\t", diff.stdout or "", re.MULTILINE):
         return "added"
+    if diff.returncode == 0 and re.search(r"^M\t", diff.stdout or "", re.MULTILINE):
+        return "existing-repaired"
     return "existing"
 
 

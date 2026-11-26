@@ -107,8 +107,16 @@ _MKTEMP_ASSIGN_RE = re.compile(
     re.MULTILINE,
 )
 _TRAP_CALL_RE = re.compile(r"\btrap\b")
-# 现有脚本里可以确定性修复的契约违规；其它违规仍然失败。
+# 现有脚本里可以确定性修复的契约违规；其余违规交给 AI 就地修复 test.sh。
 _FIXABLE_CODES = {"kunpeng.set_e", "kunpeng.mktemp_without_trap"}
+_TEST_REPAIR_AGENT_ROLE = "testgen_creator"
+_TEST_REPAIR_REQUIRED_KEYS = (
+    "success",
+    "files_created",
+    "test_script_path",
+    "summary",
+)
+_TEST_REPAIR_TIMEOUT_SECONDS = 1800
 
 
 def _strip_errexit(text: str) -> str:
@@ -157,6 +165,87 @@ def _add_mktemp_trap(text: str) -> str:
     return text[:line_end] + insertion + text[line_end:]
 
 
+def _changed_paths(repo_dir: Path) -> set[str]:
+    output = _git(repo_dir, "status", "--porcelain").stdout.splitlines()
+    paths: set[str] = set()
+    for line in output:
+        entry = line[3:].strip().strip('"')
+        if entry:
+            paths.add(entry)
+    return paths
+
+
+def _restore_outside(repo_dir: Path, allowed: set[str]) -> None:
+    """撤销 Agent 在允许范围之外的改动，保证修复只落在 test.sh 上。"""
+    for path in sorted(_changed_paths(repo_dir) - allowed):
+        _git(repo_dir, "checkout", "--", path, check=False)
+        _git(repo_dir, "clean", "-fd", "--", path, check=False)
+
+
+def _repair_existing_test_script(
+    *,
+    repo_dir: Path,
+    app: str,
+    domain: str,
+    plan: version_upgrade.UpgradePlan,
+    item: dict,
+    test_path: Path,
+    findings: list[dict],
+    api_key: str,
+    executable: Path,
+) -> list[dict]:
+    """让 Agent 就地修复已有 test.sh，返回修复后的静态契约违规。"""
+    from scripts.lib.kunpeng_test_contract import check_test_script
+
+    relative = test_path.relative_to(repo_dir).as_posix()
+    original = test_path.read_text(encoding="utf-8", errors="replace")
+    prompt = Path(agent_prompt_file("testgen-creator")).read_text(encoding="utf-8")
+    prompt += (
+        "\n\n## Immutable task contract\n\n"
+        + json.dumps(
+            {
+                "package_name": app,
+                "domain": domain,
+                "test_script_path": relative,
+                "dockerfile_path": (
+                    f"{domain}/{app}/{plan.old_version}/{plan.os_version}/Dockerfile"
+                ),
+                "repo_url": str(item.get("source_url") or ""),
+                "latest_version": str(item["version"]),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n\n## Repair scope\n\n"
+        "- 就地修复上面这个 test.sh，使其通过 KunpengTest 静态契约。\n"
+        "- 只允许修改该文件；不得新建、修改或删除其它任何文件。\n"
+        "- 保留原脚本已有的测试用例覆盖与命令，不要整体重写成无关测试。\n"
+        "- 删除 `set -e` / `set -o errexit`，失败分支自己收集并输出 FAIL。\n"
+        "- 必须保留 EXPECTED_VERSION 守卫，并新增与实际输出比较的精确断言。\n"
+        "\n## 当前脚本\n\n```bash\n"
+        + original
+        + "\n```\n\n## 静态契约违规（必须逐条修复）\n\n"
+        + json.dumps(findings, indent=2, ensure_ascii=False)
+        + "\n\n## Final response contract\n\n"
+        "最终响应必须恰好是一个 JSON 对象，包含以下键："
+        "success(bool)、files_created(list[str])、test_script_path(str)、"
+        "summary(str)。\n"
+    )
+    run_agent(
+        executable=Path(executable),
+        role=_TEST_REPAIR_AGENT_ROLE,
+        prompt=prompt,
+        workspace=repo_dir,
+        api_key=api_key,
+        required_keys=_TEST_REPAIR_REQUIRED_KEYS,
+        timeout=_TEST_REPAIR_TIMEOUT_SECONDS,
+    )
+    test_path.chmod(test_path.stat().st_mode | 0o111)
+    remaining = [f for f in check_test_script(test_path) if f.get("code")]
+    _restore_outside(repo_dir, {relative})
+    return remaining
+
+
 def _ensure_test_script(
     *,
     repo_dir: Path,
@@ -165,12 +254,15 @@ def _ensure_test_script(
     plan: version_upgrade.UpgradePlan,
     item: dict,
 ) -> str:
-    """确保测试脚本存在且通过静态契约；返回 added / existing / existing-fixed。
+    """确保测试脚本存在且通过静态契约。
+
+    返回值：added / existing / existing-fixed / existing-repaired。
 
     升级不允许在没有测试脚本的情况下继续：缺脚本就生成，生成失败直接失败，
-    不推分支、不浪费双架构构建。现有脚本若只有 KunpengTest 的 ``set -e``
-    和/或 ``mktemp`` 缺 ``trap`` 清理这两类违规，先做确定性最小改写再复检；
-    其它违规仍然失败，避免自动重写覆盖人工维护的测试语义。
+    不推分支、不浪费双架构构建。现有脚本的违规分两层处理：
+    ``set -e`` 与 ``mktemp`` 缺 ``trap`` 做确定性最小改写；其余违规交给
+    Agent 就地修复 test.sh（保留原有测试语义，只允许改这一个文件），
+    修复后复检；仍不通过才失败并还原原脚本。
     """
     from scripts.harness.testgen_generate import generate_test_script
     from scripts.lib.kunpeng_test_contract import check_test_script
@@ -201,6 +293,33 @@ def _ensure_test_script(
                 with existing.open("w", encoding="utf-8", newline="") as handle:
                     handle.write(original)
         if findings:
+            api_key = ai_provider.api_key()
+            executable = os.environ.get("OPENCODE_BIN") or shutil.which("opencode")
+            if api_key and executable:
+                with existing.open("r", encoding="utf-8", newline="") as handle:
+                    original = handle.read()
+                remaining = _repair_existing_test_script(
+                    repo_dir=repo_dir,
+                    app=app,
+                    domain=domain,
+                    plan=plan,
+                    item=item,
+                    test_path=existing,
+                    findings=findings,
+                    api_key=api_key,
+                    executable=Path(executable),
+                )
+                if not remaining:
+                    log_stage(
+                        "upgrade-apply",
+                        f"{app}: AI 修复 "
+                        f"{existing.relative_to(repo_dir).as_posix()} "
+                        "的静态契约违规后复用",
+                    )
+                    return "existing-repaired"
+                with existing.open("w", encoding="utf-8", newline="") as handle:
+                    handle.write(original)
+                findings = remaining
             detail = "; ".join(
                 f"{finding['code']}: {finding['message']}" for finding in findings
             )
