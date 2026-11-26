@@ -15,7 +15,6 @@ from parse_issue import (
     parse_issue_body,
     parse_issue_request,
     parse_upgrade_issue_request,
-    parse_upgrade_request,
     validate,
 )
 
@@ -277,7 +276,7 @@ def test_validate_accepts_the_target_repository_three_field_body():
 
 
 UPGRADE_ISSUE_TITLE = (
-    "【new-version】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4"
+    "【自动升级需求】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4"
 )
 
 
@@ -440,7 +439,7 @@ FLAT_EVIDENCE = """软件名(software.name): grpc
 """
 
 
-def test_flat_evidence_block_parses_for_legacy_titles():
+def test_flat_evidence_block_parses_for_an_auto_upgrade_title():
     fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, FLAT_EVIDENCE)
 
     assert fields["app"] == "grpc"
@@ -485,11 +484,11 @@ def test_flat_evidence_accepts_plain_labels_without_legacy_names():
         "测试深度: smoke\n"
     )
 
-    fields = parse_upgrade_request("【镜像任务】升级 grpc 至 1.85.4", body)
+    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
 
     assert fields["app"] == "grpc"
     assert fields["version"] == "1.85.4"
-    assert fields["os_version"] == ""
+    assert fields["os_version"] == "24.03-lts-sp4"
     assert fields["source_url"] == "https://github.com/grpc/grpc"
     assert fields["evidence"]["upstream_evidence"]["evidence"][
         "ci_workflows"
@@ -518,11 +517,22 @@ def test_flat_evidence_groups_repeated_workflow_and_candidate_lines():
 
 
 def test_flat_evidence_requires_the_software_group():
-    with pytest.raises(IssueParseError, match="upstream evidence fields"):
-        parse_upgrade_request(
-            "【镜像任务】升级 grpc 至 1.85.4",
+    with pytest.raises(IssueParseError, match="upstream evidence"):
+        parse_upgrade_issue_request(
+            UPGRADE_ISSUE_TITLE,
             "中游制品(l3_evidence.artifact): 1.85.4-oe2403sp4\n",
         )
+
+
+def test_parse_upgrade_issue_still_accepts_the_legacy_title():
+    fields = parse_upgrade_issue_request(
+        "【new-version】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4",
+        FLAT_EVIDENCE,
+    )
+
+    assert fields["app"] == "grpc"
+    assert fields["version"] == "1.85.4"
+    assert fields["os_version"] == "24.03-lts-sp4"
 
 
 def test_parse_upgrade_issue_rejects_an_unsafe_app_name():

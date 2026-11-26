@@ -38,12 +38,20 @@
 
 ## 3. Issue 标题（必填）
 
-**新格式（推荐）**：标题统一为 `【镜像任务】<一句话描述>`，场景由正文 `任务类型（Type）： upgrade-version` 决定，
-参数写在正文的 `Software` / `Target Version` / `openEuler 版本` 字段里（模板见 `templates/image-issue.md`）：
+**新格式（推荐）**：
 
 ```text
-【镜像任务】升级 grpc 至 1.85.4
+【自动升级需求】upgrade <软件名> to <目标版本> on openEuler <openEuler版本>
 ```
+
+示例：
+
+```text
+【自动升级需求】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4
+【自动升级需求】upgrade benchmark to 1.11.0 on openEuler 24.03-LTS-SP4
+```
+
+参数全部写在标题里，正文只填上游证据（模板见 [templates/auto-upgrade-issue.md](../templates/auto-upgrade-issue.md)）。
 
 **旧格式（仍永久兼容）**：
 
@@ -61,7 +69,7 @@
 
 注意：
 
-- 旧格式下 `【new-version】` 必须原样保留（中文方括号）；
+- 前缀 `【自动升级需求】` / `【new-version】` 必须原样保留（中文方括号）；
 - `upgrade`、`to`、`on openEuler` 是固定英文关键字；
 - 标题里不要加“请”“麻烦”“版本升级”等额外文字；
 - 软件名和版本号之间只隔 `to`，前后各一个空格。
@@ -70,24 +78,24 @@
 
 ## 4. Issue 正文（必填：上游证据）
 
-正文用平铺字段描述上游证据（旧的 JSON 块仍可识别，但不再推荐）。每行一个字段，字段名与值之间是**半角冒号加一个空格**（`: `）；括号及括号内的英文是旧字段名，仅作对照，**实际填写时要删除括号及其内容**。可直接使用模板 [templates/image-issue.md](../templates/image-issue.md) 或 [templates/new-version-issue.md](../templates/new-version-issue.md)，把占位值替换成真实值。流水线会把它透传给扫描阶段和生成 Agent，不再自行采集证据。
+正文用平铺字段描述上游证据（旧的 JSON 块仍可识别，但不再推荐）。每行一个字段，字段名与值之间是**半角冒号加一个空格**（`: `）；括号及括号内的英文是旧字段名，仅作对照，**实际填写时要删除括号及其内容**。可直接使用模板 [templates/auto-upgrade-issue.md](../templates/auto-upgrade-issue.md)，把示例值替换成真实值。流水线会把它透传给扫描阶段和生成 Agent，不再自行采集证据。
 
 ```text
-软件名(software.name): grpc
-源码仓库(software.repo_url): https://github.com/grpc/grpc
-软件版本(software.version): 1.85.4
-上游支持检查点(upstream_evidence.check_id): kp.l1.arm_ci
-上游支持检查点地址(upstream_evidence.source_url): https://ci.example.com/jobs/1
-门禁路径(ci_workflows.workflow_path): .github/workflows/ci.yml
-门禁地址(ci_workflows.workflow_url): https://github.com/grpc/grpc/blob/<sha>/.github/workflows/ci.yml
-门禁运行地址(ci_workflows.workflow_run_url): https://github.com/grpc/grpc/actions/runs/1
-测试深度(test_depth): smoke
-中游检查点(l3_evidence.check_id): kp.l3.openeuler_image
-中游制品(l3_evidence.artifact): 1.85.4-oe2403sp4
-中游路径(l3_evidence.source_url): https://gitcode.com/openeuler/openeuler-docker-images/tree/master/Others/grpc
-安装候选(install_candidates.type): source
-候选包地址(install_candidates.url): https://github.com/grpc/grpc/archive/v1.85.4.tar.gz
-候选包制品(install_candidates.artifact): grpc-1.85.4.tar.gz
+软件名: grpc
+源码仓库: https://github.com/grpc/grpc
+软件版本: 1.85.4
+上游支持检查点: kp.l1.arm_ci
+上游支持检查点地址: https://ci.example.com/jobs/1
+门禁路径: .github/workflows/ci.yml
+门禁地址: https://github.com/grpc/grpc/blob/<sha>/.github/workflows/ci.yml
+门禁运行地址: https://github.com/grpc/grpc/actions/runs/1
+测试深度: smoke
+中游检查点: kp.l3.openeuler_image
+中游制品: 1.85.4-oe2403sp4
+中游路径: https://gitcode.com/openeuler/openeuler-docker-images/tree/master/Others/grpc
+安装候选: source
+候选包地址: https://github.com/grpc/grpc/archive/v1.85.4.tar.gz
+候选包制品: grpc-1.85.4.tar.gz
 ```
 
 说明：
@@ -153,13 +161,13 @@
 
 | 回帖原因 | 修正方式 |
 |---|---|
-| `title must match 【new-version】upgrade ...` | 严格按第 3 节标题格式重写 |
+| `title must match 【自动升级需求】upgrade ...` | 严格按第 3 节标题格式重写 |
 | `invalid app name in title` | 软件名只能包含字母、数字、`.`、`_`、`-`，且以字母或数字开头 |
 | `invalid version in title` | 版本号不要带空格/斜杠，例：`1.85.4` |
-| `body must contain the upstream evidence fields (软件名 / 源码仓库 / 软件版本 ...)` | 正文按第 4 节补上平铺证据字段，每行 `字段: 值`；旧的 JSON 块也仍然可用 |
+| `body must contain the upstream evidence JSON object` | 正文按第 4 节补上平铺证据字段，每行 `字段: 值`；旧的 JSON 块也仍然可用 |
 | `missing required field: ...` | 补齐第 4 节表格里标为必填的字段 |
-| `software.name must match the Software field` | `软件名` 与正文 `Software` 字段 / 标题软件名保持一致 |
-| `software.version must match the Target Version field` | `软件版本` 与正文 `Target Version` 字段 / 标题版本保持一致 |
+| `software.name must match the app in the title` | `软件名` 与标题里的软件名保持一致 |
+| `software.version must match the version in the title` | `软件版本` 与标题里的版本保持一致 |
 | `software.repo_url must be an HTTPS URL` | 上游地址改成 `https://...` |
 | `install_candidates` 相关报错 | 若填写，`type` 只能是 `source` / `binary`，`url` 必须是 HTTPS |
 | `软件清单、docker 仓与 conda 仓里都没有这个应用` | 软件名写错，或该软件尚未入库；改提 `【new-image】` |
@@ -171,8 +179,7 @@
 ### 例 1：docker 升级（最常见）
 
 ```text
-标题：【new-version】upgrade grpc to 1.85.4 on openEuler 24.03-LTS-SP4
-（或统一标题：【镜像任务】升级 grpc 至 1.85.4，正文第一行写 任务类型（Type）： upgrade-version）
+标题：【自动升级需求】upgrade grpc to 1.85.4 on openEuler 24.03-LTS-SP4
 
 正文：第 4 节的平铺证据字段（软件名: grpc，软件版本: 1.85.4）
 ```
@@ -180,7 +187,7 @@
 ### 例 2：conda 软件升级（如 benchmark）
 
 ```text
-标题：【new-version】upgrade benchmark to 1.11.0 on openEuler 24.03-lts-sp4
+标题：【自动升级需求】upgrade benchmark to 1.11.0 on openEuler 24.03-lts-sp4
 
 正文：同样的平铺证据字段（软件名: benchmark，软件版本: 1.11.0）
 ```
@@ -190,7 +197,7 @@
 ### 例 3：docker 和 conda 都有（如 OpenCV）
 
 ```text
-标题：【new-version】upgrade OpenCV to 4.12.0 on openEuler 24.03-lts-sp4
+标题：【自动升级需求】upgrade OpenCV to 4.12.0 on openEuler 24.03-lts-sp4
 
 正文：完整平铺证据字段（含门禁 / 中游 / 安装候选）
 ```

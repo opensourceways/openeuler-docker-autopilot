@@ -12,9 +12,9 @@ from typing import Any, Callable, Mapping
 
 from scripts.lib.gitcode_client import GitCodeResource
 from scripts.lib.issue_router import (
+    AUTO_UPGRADE_TITLE_PREFIX,
     LEGACY_TITLE_PREFIXES,
     SCENARIO_UPGRADE,
-    UNIFIED_TITLE_PREFIX,
 )
 from scripts.lib.task_spec import TaskSpec
 
@@ -68,7 +68,7 @@ class ClaimedUpgradeIssue:
 
 @dataclass(frozen=True)
 class ClaimedRoutedIssue:
-    """One claimed ``【镜像任务】`` Issue and the scenario chosen for it."""
+    """One claimed auto-upgrade Issue and the scenario chosen for it."""
 
     number: int
     url: str
@@ -660,7 +660,7 @@ def _select_routed_issue(
         # 旧标题由各自的 monitor 认领，避免同一 Issue 被两条路径同时认领。
         if any(
             _title_has_prefix(issue, prefix)
-            for prefix in LEGACY_TITLE_PREFIXES.values()
+            for prefix in LEGACY_TITLE_PREFIXES
         ):
             continue
         try:
@@ -686,13 +686,13 @@ def claim_routed_issue(
     dispatch: Callable[[str, Any, int], None],
     accepted_comments: Mapping[str, str],
 ) -> ClaimedRoutedIssue | None:
-    """Claim one ``【镜像任务】`` Issue and dispatch the scenario named in its body."""
+    """Claim one ``【自动升级需求】`` Issue and dispatch its scenario."""
 
     if issue_number is None:
         issues = client.list_issues(
             target_repo=target_repo,
             state="open",
-            search=UNIFIED_TITLE_PREFIX,
+            search=AUTO_UPGRADE_TITLE_PREFIX,
         )
         issue = _select_routed_issue(issues, route)
         if issue is None:

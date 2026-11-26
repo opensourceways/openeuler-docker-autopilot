@@ -126,9 +126,7 @@ from scripts.lib.target_contract import (
 from scripts.lib.upstream_format_check import run_upstream_format_check
 from scripts.harness.parse_issue import (
     parse_issue_request,
-    parse_new_image_request,
     parse_upgrade_issue_request,
-    parse_upgrade_request,
 )
 from scripts.lib.issue_router import (
     SCENARIO_NEW_IMAGE,
@@ -805,7 +803,7 @@ def _upgrade_issue_watch(args: argparse.Namespace) -> None:
 
 
 def _issue_dispatch(args: argparse.Namespace) -> None:
-    """Claim one 【镜像任务】 Issue and dispatch the scenario named in its body."""
+    """Claim one 【自动升级需求】 Issue and dispatch its scenario."""
 
     gitcode_token = _issue_token()
     github_token = os.environ.get("GITHUB_TOKEN", "")
@@ -832,9 +830,9 @@ def _issue_dispatch(args: argparse.Namespace) -> None:
     def route(issue: Mapping[str, object]) -> tuple[str, object]:
         title = str(issue.get("title", ""))
         body = str(issue.get("body", "") or "")
-        scenario = route_issue(title, body)
+        scenario = route_issue(title)
         if scenario == SCENARIO_NEW_IMAGE:
-            fields = parse_new_image_request(title, body)
+            fields = parse_issue_request(title, body)
             return scenario, TaskSpec.from_workflow_dispatch(
                 {
                     "app": fields["package_name"],
@@ -845,7 +843,7 @@ def _issue_dispatch(args: argparse.Namespace) -> None:
                 }
             )
         if scenario == SCENARIO_UPGRADE:
-            fields = parse_upgrade_request(title, body)
+            fields = parse_upgrade_issue_request(title, body)
             return scenario, IssueUpgradeRequest(
                 app=fields["app"],
                 version=fields["version"],
@@ -1508,9 +1506,9 @@ def _add_delivery_commands(commands: argparse._SubParsersAction) -> None:
     issue_dispatch = commands.add_parser(
         "issue-dispatch",
         description=(
-            "Claim one 【镜像任务】 Issue and dispatch the scenario declared by "
-            "its body Type; legacy 【new-image】/【new-version】/【oe-upgrade】 "
-            "titles keep working."
+            "Claim one 【自动升级需求】 Issue and dispatch scenario two; "
+            "legacy 【new-image】/【new-version】/【oe-upgrade】 titles keep "
+            "working through their own monitors."
         ),
     )
     issue_dispatch.add_argument("--target-repo", required=True)

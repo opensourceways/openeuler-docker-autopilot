@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 from scripts.lib.issue_router import (
@@ -7,179 +5,212 @@ from scripts.lib.issue_router import (
     SCENARIO_OE_UPGRADE,
     SCENARIO_UPGRADE,
     IssueRoutingError,
-    parse_issue_type,
     route_issue,
 )
 
 TARGET_REPO = "openeuler/openeuler-docker-images"
 
+UPGRADE_TITLE = (
+    "【自动升级需求】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4"
+)
+LEGACY_UPGRADE_TITLE = (
+    "【new-version】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4"
+)
+NEW_IMAGE_TITLE = (
+    "【new-image】add kvrocks 2.16.0 docker image on openEuler 24.03-LTS-SP4"
+)
+OE_UPGRADE_TITLE = "【oe-upgrade】补齐 openEuler 24.03-LTS-SP4 镜像"
 
-def _new_image_body(type_value="new-image"):
+
+def _new_image_body():
     return (
-        f"**任务类型（Type）：** {type_value}\n"
         "**软件包名称（Package Name）：** kvrocks\n"
         "**源码仓库（Source Repository）：** "
         "https://github.com/apache/kvrocks/tree/v2.16.0\n"
         "**所属领域（Domain）：** Database\n"
-        "**openEuler 版本（openEuler Version）：** 24.03-lts-sp4\n"
-        "**应用版本（App Version）：** 2.16.0\n"
     )
 
 
-def _upgrade_body(type_value="upgrade-version"):
-    payload = {
-        "software": {
-            "name": "grpc",
-            "repo_url": "https://github.com/grpc/grpc",
-            "version": "1.85.4",
-        }
-    }
+def _upgrade_body(name="grpc", version="1.85.4"):
     return (
-        f"**任务类型（Type）：** {type_value}\n"
-        "**软件名（Software）：** grpc\n"
-        "**目标版本（Target Version）：** 1.85.4\n"
-        "**openEuler 版本（openEuler Version）：** 24.03-lts-sp4\n\n"
-        "```json\n"
-        f"{json.dumps(payload)}\n"
-        "```\n"
+        f"软件名: {name}\n"
+        "源码仓库: https://github.com/grpc/grpc\n"
+        f"软件版本: {version}\n"
+        "门禁路径: .github/workflows/ci.yml\n"
+        "测试深度: smoke\n"
     )
 
 
-def _oe_body(type_value="oe-upgrade"):
+def _oe_body():
     return (
-        f"**任务类型（Type）：** {type_value}\n"
         "**openEuler 目标版本（Target openEuler Version）：** 24.03-lts-sp4\n"
         "**Scope：** HPC,Database\n"
     )
 
 
 @pytest.mark.parametrize(
-    ("declared", "expected"),
+    ("title", "expected"),
     [
-        ("new-image", SCENARIO_NEW_IMAGE),
-        ("NEW_IMAGE", SCENARIO_NEW_IMAGE),
-        ("新建镜像", SCENARIO_NEW_IMAGE),
-        ("upgrade-version", SCENARIO_UPGRADE),
-        ("应用升级", SCENARIO_UPGRADE),
-        ("Upgrade", SCENARIO_UPGRADE),
-        ("oe-upgrade", SCENARIO_OE_UPGRADE),
-        ("系统升级", SCENARIO_OE_UPGRADE),
+        (UPGRADE_TITLE, SCENARIO_UPGRADE),
+        (LEGACY_UPGRADE_TITLE, SCENARIO_UPGRADE),
+        (NEW_IMAGE_TITLE, SCENARIO_NEW_IMAGE),
+        (OE_UPGRADE_TITLE, SCENARIO_OE_UPGRADE),
     ],
 )
-def test_body_type_selects_scenario(declared, expected):
-    assert route_issue("【镜像任务】任意描述", _new_image_body(declared)) == expected
+def test_title_prefix_selects_scenario(title, expected):
+    assert route_issue(title) == expected
 
 
-def test_legacy_titles_still_route():
-    assert (
-        route_issue("【new-image】add kvrocks docker image on openEuler 24.03", "")
-        == SCENARIO_NEW_IMAGE
-    )
-    assert (
-        route_issue("【new-version】upgrade grpc to 1.85.4 on openEuler 24.03", "")
-        == SCENARIO_UPGRADE
-    )
-    assert (
-        route_issue("【oe-upgrade】补齐 openEuler 24.03-LTS-SP4 镜像", "")
-        == SCENARIO_OE_UPGRADE
-    )
-
-
-def test_body_type_wins_over_legacy_title():
-    body = _oe_body()
-    assert route_issue("【镜像任务】补齐镜像", body) == SCENARIO_OE_UPGRADE
-
-
-def test_missing_type_and_unknown_title_is_rejected():
+def test_unknown_title_is_rejected():
     with pytest.raises(IssueRoutingError, match="无法判断场景"):
-        route_issue("【镜像任务】没有类型", "只有一段描述")
+        route_issue("【镜像任务】没有类型")
 
 
-def test_conflicting_type_and_legacy_title_is_rejected():
-    with pytest.raises(IssueRoutingError, match="不一致"):
-        route_issue("【new-image】add kvrocks docker image", _oe_body())
+def test_claim_routed_issue_dispatches_the_auto_upgrade_scenario():
+    from scripts.lib.issue_lifecycle import claim_routed_issue
 
+    client = _FakeClient([_issue(51, UPGRADE_TITLE, _upgrade_body())])
+    dispatched = []
 
-def test_unknown_type_is_rejected():
-    with pytest.raises(IssueRoutingError, match="unsupported"):
-        route_issue("【镜像任务】描述", _new_image_body("hotfix"))
-
-
-def test_duplicate_type_is_rejected():
-    body = _new_image_body() + "**任务类型（Type）：** oe-upgrade\n"
-    with pytest.raises(IssueRoutingError, match="duplicate"):
-        parse_issue_type(body)
-
-
-def test_unified_new_image_reads_every_parameter_from_body():
-    from scripts.harness.parse_issue import parse_new_image_request
-
-    fields = parse_new_image_request("【镜像任务】新增 kvrocks 镜像", _new_image_body())
-
-    assert fields == {
-        "package_name": "kvrocks",
-        "source_repo_url": "https://github.com/apache/kvrocks/tree/v2.16.0",
-        "domain": "Database",
-        "os_version": "24.03-lts-sp4",
-        "app_version": "2.16.0",
-    }
-
-
-def test_unified_new_image_requires_openEuler_version_in_body():
-    from scripts.harness.parse_issue import parse_new_image_request
-
-    body = _new_image_body().replace(
-        "**openEuler 版本（openEuler Version）：** 24.03-lts-sp4\n", ""
-    )
-    with pytest.raises(ValueError, match="os_version"):
-        parse_new_image_request("【镜像任务】新增 kvrocks 镜像", body)
-
-
-def test_unified_upgrade_reads_parameters_from_body():
-    from scripts.harness.parse_issue import parse_upgrade_request
-
-    fields = parse_upgrade_request("【镜像任务】升级 grpc", _upgrade_body())
-
-    assert fields["app"] == "grpc"
-    assert fields["version"] == "1.85.4"
-    assert fields["os_version"] == "24.03-lts-sp4"
-    assert fields["source_url"] == "https://github.com/grpc/grpc"
-    assert fields["evidence"]["software"]["name"] == "grpc"
-
-
-def test_unified_upgrade_rejects_evidence_version_mismatch():
-    from scripts.harness.parse_issue import parse_upgrade_request
-
-    body = _upgrade_body().replace('"version": "1.85.4"', '"version": "1.84.0"')
-    with pytest.raises(ValueError, match="software.version"):
-        parse_upgrade_request("【镜像任务】升级 grpc", body)
-
-
-def test_unified_oe_upgrade_reads_version_from_body():
-    from scripts.lib.oe_upgrade_contract import parse_upgrade_issue
-
-    options = parse_upgrade_issue(
-        321, "【镜像任务】补齐 openEuler 24.03-LTS-SP4 镜像", _oe_body(), mode="plan"
+    claimed = claim_routed_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=None,
+        route=_route,
+        dispatch=lambda scenario, payload, number: dispatched.append(
+            (scenario, payload, number)
+        ),
+        accepted_comments=_comments(),
     )
 
-    assert options.oe_version == "24.03-lts-sp4"
-    assert options.scope == ("Database", "HPC")
+    assert claimed is not None
+    assert claimed.scenario == SCENARIO_UPGRADE
+    assert claimed.number == 51
+    scenario, payload, number = dispatched[0]
+    assert scenario == SCENARIO_UPGRADE
+    assert payload["app"] == "grpc"
+    assert payload["version"] == "1.85.4"
+    assert number == 51
+    list_call = client.calls[0][1]
+    assert list_call["search"] == "【自动升级需求】"
+    update_call = next(call for name, call in client.calls if name == "update")
+    assert update_call["issue_status"] == "已接纳"
+    comment = next(call for name, call in client.calls if name == "comment")
+    assert comment["body"] == _comments()[SCENARIO_UPGRADE]
+
+
+def test_claim_routed_issue_skips_legacy_titled_issues():
+    from scripts.lib.issue_lifecycle import claim_routed_issue
+
+    legacy = _issue(53, LEGACY_UPGRADE_TITLE, _upgrade_body())
+    unified = _issue(54, UPGRADE_TITLE, _upgrade_body())
+    client = _FakeClient([legacy, unified])
+    dispatched = []
+
+    claimed = claim_routed_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=None,
+        route=_route,
+        dispatch=lambda *args: dispatched.append(args),
+        accepted_comments=_comments(),
+    )
+
+    assert claimed is not None
+    assert claimed.number == 54
+    assert claimed.scenario == SCENARIO_UPGRADE
+    assert len(dispatched) == 1
+
+
+def test_claim_routed_issue_rejects_an_unroutable_title():
+    from scripts.lib.issue_lifecycle import claim_routed_issue
+
+    client = _FakeClient([_issue(52, "【镜像任务】没有类型", "只有一段描述")])
+    dispatched = []
+
+    claimed = claim_routed_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=None,
+        route=_route,
+        dispatch=lambda *args: dispatched.append(args),
+        accepted_comments=_comments(),
+    )
+
+    assert claimed is None
+    assert dispatched == []
+    update_call = next(call for name, call in client.calls if name == "update")
+    assert update_call["issue_status"] == "已拒绝"
+    comment = next(call for name, call in client.calls if name == "comment")
+    assert "无法判断场景" in comment["body"]
+
+
+def test_explicit_new_image_issue_number_routes_to_scenario_one():
+    from scripts.lib.issue_lifecycle import claim_routed_issue
+
+    client = _FakeClient([_issue(61, NEW_IMAGE_TITLE, _new_image_body())])
+    dispatched = []
+
+    claimed = claim_routed_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=61,
+        route=_route,
+        dispatch=lambda scenario, payload, number: dispatched.append(
+            (scenario, payload, number)
+        ),
+        accepted_comments=_comments(),
+    )
+
+    assert claimed is not None
+    assert claimed.scenario == SCENARIO_NEW_IMAGE
+    assert dispatched[0][1].app == "kvrocks"
+
+
+def test_explicit_oe_upgrade_issue_number_routes_to_scenario_three():
+    from scripts.lib.issue_lifecycle import claim_routed_issue
+
+    client = _FakeClient([_issue(71, OE_UPGRADE_TITLE, _oe_body())])
+    dispatched = []
+
+    claimed = claim_routed_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=71,
+        route=_route,
+        dispatch=lambda scenario, payload, number: dispatched.append(
+            (scenario, payload, number)
+        ),
+        accepted_comments=_comments(),
+    )
+
+    assert claimed is not None
+    assert claimed.scenario == SCENARIO_OE_UPGRADE
+    assert dispatched[0][1].oe_version == "24.03-lts-sp4"
 
 
 def _route(issue):
     from scripts.harness.parse_issue import (
-        parse_new_image_request,
-        parse_upgrade_request,
+        parse_issue_request,
+        parse_upgrade_issue_request,
     )
+    from scripts.lib.oe_upgrade_contract import parse_upgrade_issue
 
     title = issue["title"]
     body = issue["body"]
-    scenario = route_issue(title, body)
+    scenario = route_issue(title)
     if scenario == SCENARIO_NEW_IMAGE:
-        return scenario, parse_new_image_request(title, body)
+        fields = parse_issue_request(title, body)
+        return scenario, _Task(fields)
     if scenario == SCENARIO_UPGRADE:
-        return scenario, parse_upgrade_request(title, body)
-    return scenario, {"body": body}
+        return scenario, parse_upgrade_issue_request(title, body)
+    number = int(issue.get("number", 0))
+    return scenario, parse_upgrade_issue(number, title, body, mode="plan")
+
+
+class _Task:
+    def __init__(self, fields):
+        self.app = fields["package_name"]
 
 
 class _FakeClient:
@@ -227,86 +258,3 @@ def _comments():
         SCENARIO_UPGRADE: "升级请求已接纳。",
         SCENARIO_OE_UPGRADE: "版本升级请求已接纳。",
     }
-
-
-def test_claim_routed_issue_dispatches_the_scenario_named_in_the_body():
-    from scripts.lib.issue_lifecycle import claim_routed_issue
-
-    client = _FakeClient([_issue(51, "【镜像任务】新增 kvrocks 镜像", _new_image_body())])
-    dispatched = []
-
-    claimed = claim_routed_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=None,
-        route=_route,
-        dispatch=lambda scenario, payload, number: dispatched.append(
-            (scenario, payload, number)
-        ),
-        accepted_comments=_comments(),
-    )
-
-    assert claimed is not None
-    assert claimed.scenario == SCENARIO_NEW_IMAGE
-    assert claimed.number == 51
-    scenario, payload, number = dispatched[0]
-    assert scenario == SCENARIO_NEW_IMAGE
-    assert payload["package_name"] == "kvrocks"
-    assert payload["os_version"] == "24.03-lts-sp4"
-    assert number == 51
-    list_call = client.calls[0][1]
-    assert list_call["search"] == "【镜像任务】"
-    update_call = next(call for name, call in client.calls if name == "update")
-    assert update_call["issue_status"] == "已接纳"
-    comment = next(call for name, call in client.calls if name == "comment")
-    assert comment["body"] == _comments()[SCENARIO_NEW_IMAGE]
-
-
-def test_claim_routed_issue_skips_legacy_titled_issues():
-    from scripts.lib.issue_lifecycle import claim_routed_issue
-
-    legacy = _issue(
-        53,
-        "【new-version】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4",
-        _upgrade_body(),
-    )
-    unified = _issue(54, "【镜像任务】升级 grpc", _upgrade_body())
-    client = _FakeClient([legacy, unified])
-    dispatched = []
-
-    claimed = claim_routed_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=None,
-        route=_route,
-        dispatch=lambda *args: dispatched.append(args),
-        accepted_comments=_comments(),
-    )
-
-    assert claimed is not None
-    assert claimed.number == 54
-    assert claimed.scenario == SCENARIO_UPGRADE
-    assert len(dispatched) == 1
-
-
-def test_claim_routed_issue_rejects_issue_without_type():
-    from scripts.lib.issue_lifecycle import claim_routed_issue
-
-    client = _FakeClient([_issue(52, "【镜像任务】没有类型", "只有一段描述")])
-    dispatched = []
-
-    claimed = claim_routed_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=None,
-        route=_route,
-        dispatch=lambda *args: dispatched.append(args),
-        accepted_comments=_comments(),
-    )
-
-    assert claimed is None
-    assert dispatched == []
-    update_call = next(call for name, call in client.calls if name == "update")
-    assert update_call["issue_status"] == "已拒绝"
-    comment = next(call for name, call in client.calls if name == "comment")
-    assert "无法判断场景" in comment["body"]

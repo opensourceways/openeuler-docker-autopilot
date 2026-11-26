@@ -4,8 +4,8 @@
 【new-version】upgrade <软件名> to <目标版本> on openEuler <openEuler版本>
 ```
 
-> 新格式推荐用 `【镜像任务】` + `任务类型（Type）： upgrade-version`，见 `templates/image-issue.md`；
-> 旧标题继续兼容。
+> 新格式标题为 `【自动升级需求】upgrade <软件名> to <目标版本> on openEuler <openEuler版本>`，
+> 见 `templates/auto-upgrade-issue.md`；旧标题 `【new-version】` 继续兼容。
 
 **上游证据（必填）：**
 
