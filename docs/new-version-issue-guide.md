@@ -70,7 +70,7 @@
 
 ## 4. Issue 正文（必填：上游证据）
 
-正文用平铺字段描述上游证据（旧的 JSON 块仍可识别，但不再推荐）。每行一个字段，字段名与值之间是**半角冒号加一个空格**（`: `）；括号里的英文是旧字段名，可原样保留（解析时忽略括号内容），也可以删掉。可直接使用模板 [templates/image-issue.md](../templates/image-issue.md) 或 [templates/new-version-issue.md](../templates/new-version-issue.md)，把占位值替换成真实值。流水线会把它透传给扫描阶段和生成 Agent，不再自行采集证据。
+正文用平铺字段描述上游证据（旧的 JSON 块仍可识别，但不再推荐）。每行一个字段，字段名与值之间是**半角冒号加一个空格**（`: `）；括号及括号内的英文是旧字段名，仅作对照，**实际填写时要删除括号及其内容**。可直接使用模板 [templates/image-issue.md](../templates/image-issue.md) 或 [templates/new-version-issue.md](../templates/new-version-issue.md)，把占位值替换成真实值。流水线会把它透传给扫描阶段和生成 Agent，不再自行采集证据。
 
 ```text
 软件名(software.name): grpc
