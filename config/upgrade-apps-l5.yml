@@ -1,161 +1,101 @@
-# 上游支持等级 L5 的软件（上游原生/中游/下游支持等级均不成立）。
-# 版本按上游快照（2026-11-19）手动补入 config/upgrade-apps-l5.yml：
-# auto-upgrade 不查询外部版本服务，只读这里的 version / source_url。
-#
-# 说明：
-# - source_url 以目标仓 doc/image-info.yml 的 upstream 为准；
-#   上游地址与实际镜像不一致时（drbd、grpc-server、parquet）已修正。
-# - DRBD 镜像应构建 LINBIT/drbd 内核模块；仓库现有 9.31.0 实际构建的是
-#   drbd-utils（版本线不同），因此清单改用内核模块版本 9.3.5，并用
-#   allow_downgrade 跳过「9.3.5 < 9.31.0」的降级保护。
-# - grpc-server 构建的是 grpc-java，其最新 tag 为 v1.85.1，会转入审计。
-# - Parquet 镜像构建的是 apache-parquet-format，2.12.0 已存在，会转入审计。
-# - pwdft / ScaNN 上游只发 commit，版本沿用仓库的 7 位短 SHA 约定。
+# 看板鲲鹏域当前 level_auto=L5 的软件（严格快照，重新生成会覆盖旧条目）。
+# docker 目标在 openeuler-docker-images 的 {app, domain} 目录；
+# conda 目标在 openeuler/conda-ecopkgs 的 packages/{package} 目录。
+# version 取看板 latest_release，source_url 取看板 repo_url。
+# 生成：python scripts/utils/fetch_l5_apps.py --repo ... --conda-repo ...
 apps:
-- name: Ansible
-  app: ansible
-  domain: Others
-  version: "2.22.0"
-  source_url: "https://github.com/ansible/ansible"
-- name: Cactus
-  app: cactus
-  domain: HPC
-  version: "4.0.0"
-  source_url: "https://github.com/ComparativeGenomicsToolkit/cactus"
-- name: Ceph
-  app: ceph
-  domain: Storage
-  version: "22.0.0"
-  source_url: "https://github.com/ceph/ceph"
-- name: DRBD
-  app: drbd
-  domain: Storage
-  version: "9.3.5"
-  source_url: "https://github.com/LINBIT/drbd"
-  allow_downgrade: true
-  build_notes: >-
-    镜像的核心产物是 DRBD 内核模块：从 LINBIT/drbd 的 v9.3.5 源码执行 make -j /
-    make install，KDIR 指向容器内 kernel-devel 的内核源码目录；不要只构建
-    LINBIT/drbd-utils 用户态工具（drbd-utils 是另一条版本线，没有 v9.3.5 tag）。
-    如镜像仍需要 drbdadm 等用户态命令，可另装 drbd-utils，但内核模块必须来自
-    LINBIT/drbd v9.3.5。
-- name: Druid
-  app: druid
-  domain: Bigdata
-  version: "39.0.0"
-  source_url: "https://github.com/apache/druid"
-- name: eccodes
-  app: eccodes
-  domain: HPC
-  version: "2.50.1"
-  source_url: "https://github.com/ecmwf/eccodes"
-- name: fbthrift
-  app: fbthrift
-  domain: Others
-  version: "2026.11.16.00"
-  source_url: "https://github.com/facebook/fbthrift"
-- name: FVCOM
-  app: fvcom
-  domain: HPC
-  version: "4.4.13"
-  source_url: "https://github.com/FVCOM-GitHub/FVCOM"
-- name: Golang
-  app: go
-  domain: Others
-  version: "1.27.4"
-  source_url: "https://github.com/golang/go"
-- name: Gradle
-  app: gradle
-  domain: Others
-  version: "9.9.1"
-  source_url: "https://github.com/gradle/gradle"
-- name: grpc
-  app: grpc-server
-  domain: Others
-  version: "1.85.1"
-  source_url: "https://github.com/grpc/grpc-java"
-- name: jdk
-  app: openjdk
-  domain: Others
-  version: "28+24"
-  source_url: "https://github.com/openjdk/jdk"
-- name: Jenkins
-  app: jenkins
-  domain: Others
-  version: "2.591"
-  source_url: "https://github.com/jenkinsci/jenkins"
-- name: libconfig
-  app: libconfig
-  domain: Others
-  version: "1.8.3"
-  source_url: "https://github.com/hyperrealm/libconfig"
-- name: lustre-release
-  app: lustre
-  domain: Storage
-  version: "2.17.61"
-  source_url: "https://github.com/lustre/lustre-release"
-- name: LZ4
-  app: lz4
-  domain: Others
-  version: "1.11.1"
-  source_url: "https://github.com/lz4/lz4"
-- name: Maven
-  app: maven
-  domain: Others
-  version: "3.10.1"
-  source_url: "https://github.com/apache/maven"
-- name: Milvus
-  app: milvus
-  domain: Database
-  version: "3.0.6"
-  source_url: "https://github.com/milvus-io/milvus"
-- name: Mongoose
-  app: mongoose
-  domain: Others
-  version: "7.24"
-  source_url: "https://github.com/cesanta/mongoose"
+- name: apptainer
+  conda:
+    package: apptainer
+  version: 1.5.5
+  source_url: https://github.com/apptainer/apptainer
+- name: batchelor
+  conda:
+    package: bioconductor-batchelor
+  version: 1.28.0
+  source_url: https://bioconductor.org/packages/3.20/bioc/html/batchelor.html
+- name: genomation
+  conda:
+    package: bioconductor-genomation
+  version: 1.44.0
+  source_url: https://bioconductor.org/packages/3.20/bioc/html/genomation.html
+- name: kebabs
+  conda:
+    package: bioconductor-kebabs
+  version: 1.40.0
+  source_url: https://bioconductor.org/packages/3.20/bioc/html/kebabs.html
+- name: monocle
+  conda:
+    package: bioconductor-monocle
+  version: 2.34.0
+  source_url: https://bioconductor.org/packages/3.20/bioc/html/monocle.html
+- name: DELFT3D
+  conda:
+    package: delft3d4
+  version: '2027.01'
+  source_url: https://github.com/deltares/delft3d
+- name: Expat
+  conda:
+    package: expat
+  version: 2.11.0
+  source_url: https://github.com/libexpat/libexpat
+- name: Kubernetes
+  docker:
+    app: kubernetes
+    domain: Cloud
+  version: 1.37.3
+  source_url: https://github.com/kubernetes/kubernetes
 - name: MySQL
-  app: mysql
-  domain: Database
-  version: "26.10.0"
-  source_url: "https://github.com/mysql/mysql-server"
-- name: NEMO
-  app: nemo
-  domain: HPC
-  version: "6.8.4"
-  source_url: "https://github.com/linuxmint/nemo"
+  docker:
+    app: mysql
+    domain: Database
+  version: 26.10.0.1
+  source_url: https://github.com/mysql/mysql-server
 - name: OpenFOAM
-  app: openfoam
-  domain: HPC
-  version: "20261113"
-  source_url: "https://sourceforge.net/projects/openfoam/files/"
-- name: Parquet
-  app: parquet
-  domain: Bigdata
-  version: "2.12.0"
-  source_url: "https://github.com/apache/parquet-format"
-- name: pwdft
-  app: pwdft
-  domain: HPC
-  version: "8259536"
-  source_url: "https://github.com/ebylaska/PWDFT"
-- name: RabbitMQ
-  app: rabbitmq
-  domain: Cloud
-  version: "4.4.1"
-  source_url: "https://github.com/rabbitmq/rabbitmq-server"
-- name: Ruby
-  app: ruby
-  domain: Others
-  version: "4.0.10"
-  source_url: "https://github.com/ruby/ruby"
+  docker:
+    app: openfoam
+    domain: HPC
+  version: '20261113'
+  source_url: https://github.com/openfoam/openfoam-dev
+- name: Trinity
+  docker:
+    app: trinity
+    domain: HPC
+  conda:
+    package: trinity
+  version: 2.16.3
+  source_url: https://github.com/trinityrnaseq/trinityrnaseq
+- name: edk2
+  docker:
+    app: edk2
+    domain: Others
+  version: '202611'
+  source_url: https://github.com/tianocore/edk2
+- name: Erlang
+  docker:
+    app: erlang
+    domain: Others
+  conda:
+    package: erlang
+  version: 29.1.3
+  source_url: https://github.com/erlang/otp
+- name: Jenkins
+  docker:
+    app: jenkins
+    domain: Others
+  version: '2.592'
+  source_url: https://github.com/jenkinsci/jenkins
 - name: ScaNN
-  app: scann
-  domain: Others
-  version: "7117df5"
-  source_url: "https://github.com/google-research/google-research"
-- name: Snort
-  app: snort3
-  domain: Others
-  version: "3.13.2.0"
-  source_url: "https://github.com/snort3/snort3"
+  docker:
+    app: scann
+    domain: Others
+  version: 4a7bc8ab0bc770e71a259b7966c500496b99010a
+  source_url: https://github.com/google-research/google-research
+- name: Shiny
+  docker:
+    app: shiny
+    domain: Others
+  conda:
+    package: r-shiny
+  version: 1.15.0
+  source_url: https://github.com/rstudio/shiny
