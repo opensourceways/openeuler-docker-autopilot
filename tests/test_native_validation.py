@@ -119,6 +119,63 @@ def test_image_os_identity_is_read_without_running_a_shell(tmp_path):
     assert not any("/bin/sh" in call or "/bin/bash" in call for call in calls)
 
 
+def test_image_os_identity_accepts_version_id_without_service_pack(tmp_path):
+    """真实 openEuler 镜像的 VERSION_ID 恒为 24.03，SP 只在 VERSION/PRETTY_NAME。"""
+    from scripts.lib.native_validation import inspect_image_os_identity
+
+    def runner(command, cwd, env, timeout):
+        command = list(command)
+        if command[:2] == ["docker", "cp"]:
+            Path(command[-1]).write_text(
+                'ID="openEuler"\n'
+                'VERSION_ID="24.03"\n'
+                'VERSION="24.03 (LTS-SP4)"\n'
+                'PRETTY_NAME="openEuler 24.03 (LTS-SP4)"\n'
+            )
+        return subprocess.CompletedProcess(command, 0, "container-id\n", "")
+
+    report = inspect_image_os_identity(
+        runner=runner,
+        workspace=tmp_path,
+        image_id="sha256:candidate",
+        target_oe="24.03-lts-sp4",
+        container="oe-os-identity",
+        report_dir=tmp_path / "evidence",
+    )
+
+    assert report["status"] == "passed"
+    assert report["observed_oe"] == "24.03"
+    assert report["expected_oe"] == "24.03-lts-sp4"
+
+
+def test_image_os_identity_rejects_wrong_service_pack(tmp_path):
+    from scripts.lib.native_validation import (
+        NativeValidationError,
+        inspect_image_os_identity,
+    )
+
+    def runner(command, cwd, env, timeout):
+        command = list(command)
+        if command[:2] == ["docker", "cp"]:
+            Path(command[-1]).write_text(
+                'ID="openEuler"\n'
+                'VERSION_ID="24.03"\n'
+                'VERSION="24.03 (LTS-SP3)"\n'
+                'PRETTY_NAME="openEuler 24.03 (LTS-SP3)"\n'
+            )
+        return subprocess.CompletedProcess(command, 0, "container-id\n", "")
+
+    with pytest.raises(NativeValidationError, match="24.03-lts-sp3"):
+        inspect_image_os_identity(
+            runner=runner,
+            workspace=tmp_path,
+            image_id="sha256:candidate",
+            target_oe="24.03-lts-sp4",
+            container="oe-os-identity",
+            report_dir=tmp_path / "evidence",
+        )
+
+
 def test_image_os_identity_rejects_source_release(tmp_path):
     from scripts.lib.native_validation import (
         NativeValidationError,

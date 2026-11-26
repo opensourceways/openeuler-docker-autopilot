@@ -848,20 +848,28 @@ def inspect_image_os_identity(
             for name in ("ID", "VERSION_ID", "VERSION", "PRETTY_NAME")
             if name in fields
         }
+        observed_version_id = _normalize_observed_oe(fields.get("VERSION_ID", ""))
         report: dict[str, object] = {
             "status": "passed",
             "expected_oe": target_oe,
-            "observed_oe": _normalize_observed_oe(fields.get("VERSION_ID", "")),
+            "observed_oe": observed_version_id,
             "fields": safe_fields,
             "os_release_sha256": hashlib.sha256(raw).hexdigest(),
         }
         errors: list[str] = []
         if fields.get("ID", "").lower() != "openeuler":
             errors.append("ID is not openEuler")
-        if report["observed_oe"] != target_oe:
+        # openEuler 所有 24.03 LTS 服务包的 VERSION_ID 都是 "24.03"，SP 级别
+        # 只写在 VERSION / PRETTY_NAME 里。这里只比较主次版本，SP 精确匹配
+        # 交给下面的展示字段校验。
+        expected_base = target_oe.split("-", 1)[0]
+        observed_base = (
+            observed_version_id.split("-", 1)[0] if observed_version_id else ""
+        )
+        if observed_base != expected_base:
             errors.append(
-                f"expected {target_oe} but found "
-                f"{report['observed_oe'] or fields.get('VERSION_ID', 'unknown')}"
+                f"expected {target_oe} (base {expected_base}) but found "
+                f"{observed_version_id or fields.get('VERSION_ID', 'unknown')}"
             )
         display_fields = [
             name for name in ("VERSION", "PRETTY_NAME") if fields.get(name)
