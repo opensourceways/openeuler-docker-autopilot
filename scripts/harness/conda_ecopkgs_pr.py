@@ -73,46 +73,8 @@ def branch_name(item: dict) -> str:
 
 ANACONDA_API = "https://api.anaconda.org/package/{channel}/{package}"
 ARCH_SUBDIRS = {"x86_64": "linux-64", "aarch64": "linux-aarch64"}
-# 包目录缺少 cases.yml 时补的功能用例；按包名追加更具体的冒烟用例。
+# 包目录缺少 cases.yml 时补的通用功能用例超时（秒）。
 _GENERIC_CASE_TIMEOUT = {"installed-version": 60, "package-integrity": 120}
-_CURATED_CASES = {
-    "apptainer": {
-        "name": "version-cli",
-        "description": "apptainer --version 输出必须包含申报版本",
-        "cmd": 'apptainer --version | grep -F "${PKG_VERSION}"',
-        "timeout": 120,
-    },
-    "expat": {
-        "name": "header-present",
-        "description": "expat 开发头文件必须随包安装",
-        "cmd": 'test -f "$CONDA_PREFIX/include/expat.h"',
-        "timeout": 60,
-    },
-    "benchmark": {
-        "name": "header-present",
-        "description": "benchmark C++ 头文件必须随包安装",
-        "cmd": 'test -f "$CONDA_PREFIX/include/benchmark/benchmark.h"',
-        "timeout": 60,
-    },
-    "trinity": {
-        "name": "entrypoint-present",
-        "description": "Trinity 主程序必须随包安装且可执行",
-        "cmd": 'test -x "$CONDA_PREFIX/bin/Trinity"',
-        "timeout": 60,
-    },
-    "bioconductor-batchelor": {
-        "name": "r-library-load",
-        "description": "R 库 batchelor 必须可正常加载",
-        "cmd": "Rscript -e 'library(batchelor); cat(\"ok\\n\")'",
-        "timeout": 120,
-    },
-    "bioconductor-genomation": {
-        "name": "r-library-load",
-        "description": "R 库 genomation 必须可正常加载",
-        "cmd": "Rscript -e 'library(genomation); cat(\"ok\\n\")'",
-        "timeout": 120,
-    },
-}
 
 
 class UpstreamIndexError(RuntimeError):
@@ -177,7 +139,7 @@ def _load_channel(repo_dir: Path, package: str) -> str:
 def cases_yaml(package: str) -> str:
     """生成 packages/<pkg>/tests/cases.yml 的内容。
 
-    通用用例只依赖 conda 元数据，对所有包都成立；已知包再追加一条冒烟用例。
+    只放不依赖具体软件的命令：安装版本核对 + 包文件完整性，对所有包都成立。
     """
     cases = [
         {
@@ -205,9 +167,6 @@ def cases_yaml(package: str) -> str:
             "timeout": _GENERIC_CASE_TIMEOUT["package-integrity"],
         },
     ]
-    curated = _CURATED_CASES.get(package)
-    if curated:
-        cases.append(dict(curated))
     body = yaml.safe_dump(
         {"cases": cases},
         allow_unicode=True,

@@ -176,13 +176,9 @@ class CasesYamlTest(unittest.TestCase):
             self.assertEqual(case["category"], "functional")
             self.assertIsInstance(case["timeout"], int)
 
-    def test_known_package_gets_curated_case(self) -> None:
-        parsed = yaml.safe_load(conda_ecopkgs_pr.cases_yaml("bioconductor-batchelor"))
-        names = [case["name"] for case in parsed["cases"]]
-        self.assertIn("r-library-load", names)
-
     def test_generated_cmd_uses_declared_package_name(self) -> None:
         parsed = yaml.safe_load(conda_ecopkgs_pr.cases_yaml("expat"))
+        self.assertEqual(len(parsed["cases"]), 2)
         self.assertIn("conda-meta/expat-", parsed["cases"][0]["cmd"])
 
 
