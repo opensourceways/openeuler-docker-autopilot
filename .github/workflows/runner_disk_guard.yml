@@ -66,9 +66,24 @@ jobs:
           set -u
 
           free_gib() {
-            local target="/var/lib/docker"
-            [ -d "${target}" ] || target="/"
-            df -Pk "${target}" | awk 'NR==2 {printf "%d", $4/1048576}'
+            df -Pk "$1" | awk 'NR==2 {printf "%d", $4/1048576}'
+          }
+
+          # 同一台机器上 docker 数据目录与 runner 工作目录可能不在同一个文件系统，
+          # 取所有相关挂载点的最小值作为"该机剩余空间"。
+          min_free_gib() {
+            local min=""
+            for path in "$@"; do
+              [ -d "${path}" ] || continue
+              local value
+              value="$(free_gib "${path}")"
+              [ -n "${value}" ] || continue
+              echo "  ${path}: ${value} GiB" >&2
+              if [ -z "${min}" ] || [ "${value}" -lt "${min}" ]; then
+                min="${value}"
+              fi
+            done
+            printf '%s' "${min}"
           }
 
           summary() {
@@ -77,9 +92,18 @@ jobs:
             fi
           }
 
+          paths="/ /var/lib/docker"
+          if [ -n "${RUNNER_WORKSPACE:-}" ]; then
+            paths="${paths} ${RUNNER_WORKSPACE}"
+          fi
+          if [ -n "${RUNNER_TEMP:-}" ]; then
+            paths="${paths} ${RUNNER_TEMP}"
+          fi
+
           runner="${RUNNER_NAME:-unknown}"
-          before="$(free_gib)"
-          echo "runner=${runner} free_before=${before}GiB threshold=${MIN_FREE_GIB}GiB"
+          echo "runner=${runner} threshold=${MIN_FREE_GIB}GiB"
+          before="$(min_free_gib ${paths})"
+          echo "runner=${runner} free_before=${before}GiB"
           summary "### Runner disk guard: ${runner}"
           summary ""
           summary "- free before: ${before} GiB"
@@ -129,7 +153,7 @@ jobs:
               -exec rm -rf {} + 2>/dev/null || true
           fi
 
-          after="$(free_gib)"
+          after="$(min_free_gib ${paths})"
           echo "runner=${runner} free_after=${after}GiB"
           summary "- free after: ${after} GiB"
           summary "- action: cleaned"
