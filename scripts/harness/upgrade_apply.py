@@ -100,6 +100,15 @@ def _emit_output(**values: str) -> None:
 # KunpengTest 4.7 禁止 set -e / set -o errexit，其余选项（-u、-o pipefail）允许。
 _SET_OPTIONS_LINE_RE = re.compile(r"^(\s*)set\s+(-[A-Za-z]+)(.*)$")
 _SET_ERREXIT_LINE_RE = re.compile(r"^(\s*)set\s+-o\s+errexit\s*$")
+# KunpengTest 4.2 要求使用 mktemp 时必须有 trap 清理。
+_MKTEMP_ASSIGN_RE = re.compile(
+    r"^(\s*)(?:local\s+|declare\s+)?([A-Za-z_][A-Za-z0-9_]*)="
+    r"\"?\$\(\s*mktemp\b",
+    re.MULTILINE,
+)
+_TRAP_CALL_RE = re.compile(r"\btrap\b")
+# 现有脚本里可以确定性修复的契约违规；其它违规仍然失败。
+_FIXABLE_CODES = {"kunpeng.set_e", "kunpeng.mktemp_without_trap"}
 
 
 def _strip_errexit(text: str) -> str:
@@ -129,6 +138,25 @@ def _strip_errexit(text: str) -> str:
     return "".join(result) if changed else text
 
 
+def _add_mktemp_trap(text: str) -> str:
+    """为裸 mktemp 赋值补一行 trap 清理（仅在脚本完全没有 trap 时）。
+
+    只识别 ``NAME="$(mktemp ...)"`` / ``local NAME=$(mktemp ...)`` 这种简单
+    赋值；匹配不到就保持原样，让调用方按契约失败处理。
+    """
+    if _TRAP_CALL_RE.search(text):
+        return text
+    match = _MKTEMP_ASSIGN_RE.search(text)
+    if not match:
+        return text
+    indent, name = match.group(1), match.group(2)
+    line_end = text.find("\n", match.end())
+    if line_end == -1:
+        line_end = len(text)
+    insertion = f"\n{indent}trap 'rm -rf \"${{{name}}}\"' EXIT"
+    return text[:line_end] + insertion + text[line_end:]
+
+
 def _ensure_test_script(
     *,
     repo_dir: Path,
@@ -140,9 +168,9 @@ def _ensure_test_script(
     """确保测试脚本存在且通过静态契约；返回 added / existing / existing-fixed。
 
     升级不允许在没有测试脚本的情况下继续：缺脚本就生成，生成失败直接失败，
-    不推分支、不浪费双架构构建。现有脚本若只是用了 KunpengTest 4.7 禁止的
-    ``set -e``，先做确定性最小改写（只去掉 e）再复检；其它违规仍然失败，
-    避免自动重写覆盖人工维护的测试语义。
+    不推分支、不浪费双架构构建。现有脚本若只有 KunpengTest 的 ``set -e``
+    和/或 ``mktemp`` 缺 ``trap`` 清理这两类违规，先做确定性最小改写再复检；
+    其它违规仍然失败，避免自动重写覆盖人工维护的测试语义。
     """
     from scripts.harness.testgen_generate import generate_test_script
     from scripts.lib.kunpeng_test_contract import check_test_script
@@ -151,10 +179,12 @@ def _ensure_test_script(
     existing = _existing_test_script(app_dir)
     if existing is not None:
         findings = check_test_script(existing)
-        if findings and {f["code"] for f in findings} == {"kunpeng.set_e"}:
+        codes = {finding["code"] for finding in findings}
+        if findings and codes <= _FIXABLE_CODES:
             with existing.open("r", encoding="utf-8", newline="") as handle:
                 original = handle.read()
             patched = _strip_errexit(original)
+            patched = _add_mktemp_trap(patched)
             if patched != original:
                 with existing.open("w", encoding="utf-8", newline="") as handle:
                     handle.write(patched)
@@ -164,7 +194,7 @@ def _ensure_test_script(
                         "upgrade-apply",
                         f"{app}: 去掉 "
                         f"{existing.relative_to(repo_dir).as_posix()} 中 "
-                        "KunpengTest 4.7 禁止的 set -e，复用其余断言",
+                        "KunpengTest 禁止的 set -e / 补 mktemp trap 清理后复用",
                     )
                     return "existing-fixed"
                 # 复检仍失败时还原，避免把半成品写进升级分支。

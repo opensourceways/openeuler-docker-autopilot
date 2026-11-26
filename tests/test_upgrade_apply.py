@@ -76,6 +76,37 @@ main() {
 main "$@"
 """
 
+_SCRIPT_WITH_MKTEMP_WITHOUT_TRAP = """#!/bin/bash
+set -euo pipefail
+
+EXPECTED_VERSION="${EXPECTED_VERSION:?EXPECTED_VERSION is required}"
+
+test_version() {
+    local out work
+    out="$(myapp --version 2>&1 || true)"
+    work="$(mktemp -d)"
+    if [ "${out}" = "myapp version ${EXPECTED_VERSION}" ]; then
+        echo "PASS: exact version ${out}"
+        return 0
+    fi
+    echo "FAIL: expected 'myapp version ${EXPECTED_VERSION}', got '${out}'"
+    return 1
+}
+
+main() {
+    local failures=0
+    test_version || failures=$((failures + 1))
+    if [ "${failures}" -eq 0 ]; then
+        echo "ALL_TESTS_PASSED"
+        return 0
+    fi
+    echo "TESTS_FAILED: ${failures} failure(s)"
+    return 1
+}
+
+main "$@"
+"""
+
 
 def _make_app(root: Path) -> Path:
     app = root / "Database" / "kvrocks"
@@ -451,6 +482,32 @@ class EnsureTestScriptTest(unittest.TestCase):
             text = script.read_text(encoding="utf-8")
             self.assertIn("set -uo pipefail", text)
             self.assertNotIn("set -euo pipefail", text)
+
+    def test_set_e_and_mktemp_without_trap_are_repaired(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _make_app(Path(tmp))
+            tests_dir = app / "tests"
+            tests_dir.mkdir()
+            script = tests_dir / "test.sh"
+            script.write_text(
+                _SCRIPT_WITH_MKTEMP_WITHOUT_TRAP,
+                encoding="utf-8",
+                newline="\n",
+            )
+            plan = version_upgrade.plan_upgrade(app)
+
+            status = upgrade_apply._ensure_test_script(
+                repo_dir=app.parent.parent,
+                app="kvrocks",
+                domain="Database",
+                plan=plan,
+                item={"version": "2.17.0"},
+            )
+
+            self.assertEqual(status, "existing-fixed")
+            text = script.read_text(encoding="utf-8")
+            self.assertIn("set -uo pipefail", text)
+            self.assertIn("""trap 'rm -rf "${work}"' EXIT""", text)
 
     def test_set_e_repair_keeps_file_when_other_violations_remain(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
