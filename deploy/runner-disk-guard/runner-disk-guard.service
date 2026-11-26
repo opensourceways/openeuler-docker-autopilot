@@ -5,7 +5,4 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=__RUNNER_USER__
-Environment=HOME=__RUNNER_HOME__
-TimeoutStartSec=120
-ExecStart=__GH_BIN__ workflow run __WORKFLOW__ --repo __REPO__ --ref __REF__
+ExecStart=/usr/local/bin/runner-disk-guard.sh

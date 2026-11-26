@@ -8,6 +8,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "runner_disk_guard.yml"
 SERVICE = ROOT / "deploy" / "runner-disk-guard" / "runner-disk-guard.service"
 TIMER = ROOT / "deploy" / "runner-disk-guard" / "runner-disk-guard.timer"
 INSTALL = ROOT / "deploy" / "runner-disk-guard" / "install.sh"
+DISPATCH = ROOT / "deploy" / "runner-disk-guard" / "runner-disk-guard.sh"
 
 
 def _load(path):
@@ -67,8 +68,11 @@ def test_units_and_installer_are_present():
     service = SERVICE.read_text(encoding="utf-8")
     timer = TIMER.read_text(encoding="utf-8")
     installer = INSTALL.read_text(encoding="utf-8")
+    dispatcher = DISPATCH.read_text(encoding="utf-8")
 
-    assert "__GH_BIN__" in service and "__REPO__" in service
-    assert "OnUnitActiveSec=30min" in timer
-    assert "Persistent=true" in timer
+    assert "ExecStart=/usr/local/bin/runner-disk-guard.sh" in service
+    assert "OnCalendar=*:0/30" in timer
+    assert "runner_disk_guard.yml" in dispatcher
+    assert "dispatches" in dispatcher
     assert "systemctl enable --now runner-disk-guard.timer" in installer
+    assert "/etc/oe-issue-poll/token" in installer

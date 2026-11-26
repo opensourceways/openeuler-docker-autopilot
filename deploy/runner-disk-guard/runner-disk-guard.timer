@@ -1,10 +1,10 @@
 [Unit]
-Description=Run Runner Disk Guard every 30 minutes
+Description=Dispatch Runner Disk Guard every 30 minutes
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=30min
-Persistent=true
+OnCalendar=*:0/30
+AccuracySec=1min
 Unit=runner-disk-guard.service
 
 [Install]

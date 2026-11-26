@@ -5,7 +5,8 @@ name: Runner Disk Guard
 # 每台 Runner 各跑一个 Job，不依赖 SSH。4 台构建机各有 2 个 runner 实例并共享
 # 同一块磁盘，因此只扫每台机器的主实例（oe-fix-* / oe-image-*）即可。
 #
-# 主调度：hwyx86 上的 runner-disk-guard.timer 每 30 分钟调用 workflow_dispatch；
+# 主调度：hwyx86 上的 runner-disk-guard.timer 每 30 分钟通过
+# deploy/runner-disk-guard/runner-disk-guard.sh 调用 dispatch API；
 # GitHub cron 只作低频兜底，手动触发始终可用。
 #
 # 清理范围：BuildKit/buildx 缓存、停止的容器、未使用镜像、7 天前的 runner 临时文件。
