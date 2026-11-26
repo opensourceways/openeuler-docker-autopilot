@@ -668,7 +668,12 @@ def _finalize_issue(
         target_state = "open"
     if current_status == target_status and current_status != claimed_status:
         return None
-    if current_status != claimed_status:
+    # 手动重跑一个已挂起的 Issue 也可能这次成功：GitCode 允许
+    # 「已挂起」→「已完成」+ close，此时应正常收口而不是拒绝。
+    finalizable = {claimed_status}
+    if current_status == "已挂起" and outcome == "success":
+        finalizable.add("已挂起")
+    if current_status not in finalizable:
         raise IssueLifecycleError(
             f"cannot finalize Issue in {current_status!r} status"
         )

@@ -1013,6 +1013,34 @@ def test_task_issue_failure_keeps_in_progress_and_comments():
     assert client.issue["issue_state"] == "进行中"
 
 
+def test_suspended_issue_success_is_finalized_after_rerun():
+    """手动重跑已挂起的 Issue 并成功时，应能正常收口而不是报状态错误。"""
+    from scripts.lib.issue_lifecycle import finalize_upgrade_issue
+
+    client = TriggerIssueClient(
+        _upgrade_trigger_issue(
+            issue_state="已挂起",
+            issue_state_detail={"title": "已挂起"},
+        )
+    )
+
+    finalize_upgrade_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=81,
+        outcome="success",
+        run_url=GITHUB_RUN_URL,
+        pr_url=(
+            "https://gitcode.com/openeuler/openeuler-docker-images/"
+            "merge_requests/6755"
+        ),
+    )
+
+    assert [name for name, _ in client.calls] == ["get", "comment", "update"]
+    assert client.issue["state"] == "closed"
+    assert client.issue["issue_state"] == "已完成"
+
+
 def test_upgrade_scan_queues_same_app_behind_an_accepted_issue():
     from scripts.lib.issue_lifecycle import claim_upgrade_issue
 
