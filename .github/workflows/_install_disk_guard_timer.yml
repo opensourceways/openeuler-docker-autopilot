@@ -21,6 +21,7 @@ jobs:
 
       - name: Verify
         run: |
-          systemctl list-timers --all runner-disk-guard.timer
-          systemctl status runner-disk-guard.timer --no-pager
+          date
+          systemctl list-timers --all | grep -E 'runner-disk-guard|NEXT' || true
+          systemctl show runner-disk-guard.timer -p NextElapseUSecRealtime -p NextElapseUSecMonotonic
           grep -E 'TOKEN_FILE|REPO=|WORKFLOW=|REF=' /usr/local/bin/runner-disk-guard.sh
