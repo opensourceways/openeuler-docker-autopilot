@@ -227,7 +227,7 @@ Runner 需预装 **Docker 与 buildx**。能力由 Job 启动时的 `scripts/run
 
 Issue 轮询的主调度在 hwyx86 上，跑在专用 `oe-issue-poll` Runner 上（与镜像构建机隔离，不会被长任务卡住）：场景二 `monitor_upgrade_issues.yml` 由 `oe-issue-poll.timer` 每 5 分钟派发；场景一 `monitor_new_image_issues.yml` 由 `oe-new-image-poll.timer` 每 30 分钟派发；场景三 `monitor_oe_upgrade_issues.yml` 暂未纳入定时派发，只靠 GitHub cron 每 30 分钟兜底（端到端验证通过后再挂）。GitHub 自带 cron 只作低频兜底，因为其 schedule 属于 best-effort，可能长期延迟或丢跑；需要换机器时设置 Variable `ISSUE_POLL_RUNNER_LABELS`。
 
-**Runner 磁盘巡检。** [`runner_disk_guard.yml`](.github/workflows/runner_disk_guard.yml) 给每台主 Runner 各派一个 Job，在本机检查剩余空间；低于 70 GiB 时就地清理 BuildKit/buildx 缓存、停止的容器、未使用镜像和 7 天前的 runner 临时文件。同机另一个实例正在构建时（检测到运行中容器），只做安全清理，跳过 buildx/builder 全量清理。主调度由 hwyx86 上的 `runner-disk-guard.timer` 每 30 分钟触发，安装脚本见 [`deploy/runner-disk-guard/install.sh`](deploy/runner-disk-guard/install.sh)；阈值可用 Variable `RUNNER_DISK_MIN_FREE_GIB` 或手动输入覆盖。
+**Runner 磁盘巡检。** [`runner_disk_guard.yml`](.github/workflows/runner_disk_guard.yml) 给每台主 Runner 各派一个 Job，在本机取 `/`、`/var/lib/docker`、Runner 工作目录三者中最小的剩余空间；低于 70 GiB 时就地清理 BuildKit/buildx 缓存、停止的容器、未使用镜像和 7 天前的 runner 临时文件。同机另一个实例正在构建时（检测到运行中容器），只做安全清理，跳过 buildx/builder 全量清理。主调度由 hwyx86 上的 `runner-disk-guard.timer` 每 30 分钟触发（派发脚本复用 `/etc/oe-issue-poll/token`），安装脚本见 [`deploy/runner-disk-guard/install.sh`](deploy/runner-disk-guard/install.sh)；阈值可用 Variable `RUNNER_DISK_MIN_FREE_GIB` 或手动输入覆盖。
 
 场景二的发现 / 交付 Job 只需要 Python、git 与网络；双架构验证 Job 额外需要 Docker（由 preflight 把关）。AI Agent 统一使用锁定工具链中的 opencode，**Runner 无需安装 Node.js**；只有把 `AI_RUNNER` 切到 `claude-code` / `claude-code-account` 时才需要 Node 与 Claude Code CLI。
 
