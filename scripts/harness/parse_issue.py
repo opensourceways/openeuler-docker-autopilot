@@ -53,6 +53,34 @@ _OE_VERSION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 统一 Issue 的上游证据用「中文标签(旧字段名): 值」的平铺格式，等价的 JSON 结构为
+# software / upstream_evidence.evidence / l3_evidence / install_candidates。
+_FLAT_EVIDENCE_LABELS = {
+    "软件名": "software.name",
+    "源码仓库": "software.repo_url",
+    "软件版本": "software.version",
+    "上游支持检查点": "upstream_evidence.check_id",
+    "上游支持检查点地址": "upstream_evidence.source_url",
+    "门禁路径": "ci_workflows.workflow_path",
+    "门禁地址": "ci_workflows.workflow_url",
+    "门禁运行地址": "ci_workflows.workflow_run_url",
+    "测试深度": "ci_workflows.test_depth",
+    "中游检查点": "l3_evidence.check_id",
+    "中游制品": "l3_evidence.artifact",
+    "中游路径": "l3_evidence.source_url",
+    "安装候选": "install_candidates.type",
+    "候选包地址": "install_candidates.url",
+    "候选包制品": "install_candidates.artifact",
+}
+_FLAT_EVIDENCE_KEYS = {
+    **_FLAT_EVIDENCE_LABELS,
+    **{path: path for path in _FLAT_EVIDENCE_LABELS.values()},
+}
+_FLAT_LINE_RE = re.compile(r"^\s*(?P<label>[^:：]{1,80}?)\s*[:：]\s*(?P<value>.*?)\s*$")
+_LABEL_LEGACY_RE = re.compile(
+    r"^(?P<name>.+?)\s*[（(]\s*(?P<legacy>[^（）()]+?)\s*[）)]\s*$"
+)
+
 _TITLE_RE = re.compile(
     r"^\s*【new-image】\s*add\s+(?P<request>.+?)\s+docker\s+image\s+"
     r"on\s+openEuler\s+(?P<os_version>\d{2}\.\d{2}"
@@ -360,6 +388,15 @@ def parse_issue_request(title: str, body: str) -> dict[str, str]:
 
 
 def _upgrade_payload(body: str) -> Mapping[str, object] | None:
+    """提取上游证据：优先旧的 JSON 块，其次统一格式的平铺字段。"""
+
+    payload = _json_evidence(body)
+    if payload is not None:
+        return payload
+    return _flat_evidence(body)
+
+
+def _json_evidence(body: str) -> Mapping[str, object] | None:
     """尽量从正文提取 JSON 对象；没有或非法时返回 None。"""
 
     candidates: list[str] = []
@@ -378,6 +415,105 @@ def _upgrade_payload(body: str) -> Mapping[str, object] | None:
         if isinstance(payload, Mapping):
             return payload
     return None
+
+
+def _flat_evidence_label(label: str) -> str | None:
+    """把「软件名(software.name)」「软件名」「software.name」都归一到字段路径。"""
+
+    text = label.strip().strip("*").strip()
+    if not text:
+        return None
+    match = _LABEL_LEGACY_RE.match(text)
+    names = [text]
+    if match is not None:
+        names = [match.group("name").strip(), match.group("legacy").strip()]
+    for name in names:
+        canonical = _FLAT_EVIDENCE_KEYS.get(name)
+        if canonical is not None:
+            return canonical
+    return None
+
+
+def _flat_evidence_value(value: str) -> str:
+    return value.strip().strip("`").strip()
+
+
+def _flat_evidence(body: str) -> dict[str, object] | None:
+    """解析统一 Issue 的平铺证据块，组装成与旧 JSON 等价的结构。
+
+    支持的字段形如 ``软件名: grpc`` 或 ``软件名(software.name): grpc``；同一段正文里
+    可以重复出现 ``门禁路径`` / ``安装候选``，每组字段合成一个列表项。
+    """
+
+    values: dict[str, str] = {}
+    ci_entries: list[dict[str, str]] = []
+    ci_entry: dict[str, str] | None = None
+    candidates: list[dict[str, str]] = []
+    candidate: dict[str, str] | None = None
+    matched = False
+
+    for line in body.splitlines():
+        match = _FLAT_LINE_RE.match(line)
+        if match is None:
+            continue
+        canonical = _flat_evidence_label(match.group("label"))
+        if canonical is None:
+            continue
+        value = _flat_evidence_value(match.group("value"))
+        if not value:
+            continue
+        matched = True
+        if canonical == "ci_workflows.workflow_path":
+            ci_entry = {"workflow_path": value}
+            ci_entries.append(ci_entry)
+        elif canonical.startswith("ci_workflows."):
+            if ci_entry is None:
+                ci_entry = {}
+                ci_entries.append(ci_entry)
+            ci_entry[canonical.split(".", 1)[1]] = value
+        elif canonical == "install_candidates.type":
+            candidate = {"type": value}
+            candidates.append(candidate)
+        elif canonical.startswith("install_candidates."):
+            if candidate is None:
+                candidate = {}
+                candidates.append(candidate)
+            candidate[canonical.split(".", 1)[1]] = value
+        else:
+            values[canonical] = value
+
+    if not matched:
+        return None
+
+    payload: dict[str, object] = {}
+    software = {
+        key.split(".", 1)[1]: value
+        for key, value in values.items()
+        if key.startswith("software.")
+    }
+    if software:
+        payload["software"] = software
+    evidence: dict[str, object] = {}
+    for key in ("check_id", "source_url"):
+        value = values.get(f"upstream_evidence.{key}")
+        if value:
+            evidence[key] = value
+    if ci_entries:
+        evidence["ci_workflows"] = ci_entries
+    if evidence:
+        payload["upstream_evidence"] = {"evidence": evidence}
+    l3 = {
+        key.split(".", 1)[1]: value
+        for key, value in values.items()
+        if key.startswith("l3_evidence.")
+    }
+    if l3:
+        payload["l3_evidence"] = l3
+    if candidates:
+        payload["install_candidates"] = candidates
+    if "software" not in payload:
+        return None
+    return payload
 
 
 _UPGRADE_REQUIRED_FIELDS = ("software",)
@@ -563,46 +699,45 @@ def parse_upgrade_request(title: str, body: str) -> dict[str, object]:
     """Parse one scenario-two request.
 
     旧标题（``【new-version】upgrade ...``）从标题取 app / 版本 / openEuler 版本；
-    统一标题（``【镜像任务】``）从正文的 Software / Target Version / openEuler
-    Version 字段取，正文证据 JSON 仍须与这些字段一致。
+    统一标题（``【镜像任务】``）的 app 与版本取自证据块（``软件名`` / ``软件版本``），
+    也可由正文的 Software / Target Version 字段覆盖，两者必须一致。``openEuler
+    版本`` 可选，留空时只跳过 conda 登记。
     """
 
     if _UPGRADE_TITLE_RE.fullmatch(title):
         return parse_upgrade_issue_request(title, body)
 
-    app = _body_field(body, _UPGRADE_BODY_FIELDS["software"])
-    version = _body_field(body, _UPGRADE_BODY_FIELDS["version"])
-    os_version = _body_field(body, _UPGRADE_BODY_FIELDS["os_version"])
-    missing = [
-        label
-        for label, value in (
-            ("Software", app),
-            ("Target Version", version),
-            ("openEuler Version", os_version),
-        )
-        if not value
-    ]
-    if missing:
-        raise IssueParseError(f"missing required fields: {', '.join(missing)}")
-    if not _APP_NAME_RE.fullmatch(app or ""):
-        raise IssueParseError(f"invalid Software field: {app!r}")
-    if not _VERSION_RE.fullmatch(version or ""):
-        raise IssueParseError(f"invalid Target Version field: {version!r}")
-    if not _OE_VERSION_RE.fullmatch(os_version or ""):
-        raise IssueParseError(f"invalid openEuler version: {os_version!r}")
-
     payload = _upgrade_payload(body)
     if payload is None:
         raise IssueParseError(
-            "body must contain the upstream evidence JSON object"
+            "body must contain the upstream evidence fields "
+            "(软件名 / 源码仓库 / 软件版本 ...)"
         )
     _validate_upgrade_payload(payload)
-
     software = _mapping(payload["software"], "software")
-    if str(software["name"]).strip().lower() != (app or "").lower():
-        raise IssueParseError("software.name must match the Software field")
+
+    app = (
+        _body_field(body, _UPGRADE_BODY_FIELDS["software"])
+        or str(software["name"]).strip()
+    )
+    version = (
+        _body_field(body, _UPGRADE_BODY_FIELDS["version"])
+        or str(software["version"]).strip()
+    )
+    os_version = _body_field(body, _UPGRADE_BODY_FIELDS["os_version"]) or ""
+    if not _APP_NAME_RE.fullmatch(app):
+        raise IssueParseError(f"invalid Software field: {app!r}")
+    if not _VERSION_RE.fullmatch(version):
+        raise IssueParseError(f"invalid Target Version field: {version!r}")
+    if os_version and not _OE_VERSION_RE.fullmatch(os_version):
+        raise IssueParseError(f"invalid openEuler version: {os_version!r}")
+
+    if str(software["name"]).strip().lower() != app.lower():
+        raise IssueParseError(
+            "software.name must match the Software field"
+        )
     if _normalize_version(str(software["version"])) != _normalize_version(
-        version or ""
+        version
     ):
         raise IssueParseError(
             "software.version must match the Target Version field"

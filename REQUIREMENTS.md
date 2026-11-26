@@ -35,7 +35,7 @@ openEuler社区有如下两种分类：
 
 应用上游发布新版本时，需要为存量应用补一个新版本镜像目录，还要判断已有最新版本的 Dockerfile 是否可信：
 
-1. 版本与上游证据由 GitCode `【镜像任务】`（`Type: upgrade-version`）Issue 提供（正文 `Software` / `Target Version` / `openEuler 版本` + `software` 必填的证据 JSON，可附 `upstream_evidence` / `l3_evidence` / `install_candidates`），扫描阶段只对比目标仓已有目录；
+1. 版本与上游证据由 GitCode `【镜像任务】`（`Type: upgrade-version`）Issue 提供（正文平铺字段 `软件名` / `源码仓库` / `软件版本` 必填，可附 `上游支持检查点`、`中游检查点`、`安装候选`；旧 JSON 块仍可识别），扫描阶段只对比目标仓已有目录；
 2. 缺新版本 → 补功能测试 + AI 依证据与固定上游源码生成 Dockerfile + 确定性目录/元数据落盘 + 双架构原生验证 → 一应用一 PR；
 3. 目标版本目录已存在 → AI 审计并修复 Dockerfile 与 `doc/image-info.yml`，双架构通过后开 PR；
 4. conda 仓同名软件同步在 `packages/<包名>/supported-versions.yml` 登记，登记前校验上游产物。

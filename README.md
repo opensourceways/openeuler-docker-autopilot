@@ -57,7 +57,7 @@ openEuler 社区维护着一批应用容器镜像。系统覆盖四个场景，�
 | 场景 | 触发源 | 执行内容 | 输出 |
 |------|--------|----------|------|
 | **① 新增应用镜像** | GitCode Issue（`【镜像任务】` + `Type: new-image`；旧标题 `【new-image】` 仍兼容） | 解析需求 → 生成镜像文件与测试 → 门禁 → 双架构构建测试 → 有界修复 | 单个应用的完整镜像目录 PR |
-| **② 应用自动升级** | GitCode Issue（`【镜像任务】` + `Type: upgrade-version`，正文带上游证据 JSON；旧标题 `【new-version】` 仍兼容）/ 手动触发 | 解析 Issue 证据 → 对比目标仓已有目录 → 缺新版本：补测试 + AI 依证据生成 Dockerfile + 元数据落盘 + 双架构验证；已是最新：AI 审计并修复 Dockerfile 与 doc/image-info.yml | 一应用一 PR |
+| **② 应用自动升级** | GitCode Issue（`【镜像任务】` + `Type: upgrade-version`，正文带上游证据字段；旧标题 `【new-version】` 仍兼容）/ 手动触发 | 解析 Issue 证据 → 对比目标仓已有目录 → 缺新版本：补测试 + AI 依证据生成 Dockerfile + 元数据落盘 + 双架构验证；已是最新：AI 审计并修复 Dockerfile 与 doc/image-info.yml | 一应用一 PR |
 | **③ openEuler 版本升级** | GitCode Issue（`【镜像任务】` + `Type: oe-upgrade`，正文给目标版本与 Scope；旧标题 `【oe-upgrade】` 仍兼容）/ 手动 | 控制器按 Issue 固定请求 → 单领域串行规划 → 一次派发一个任务（准备候选 → 4 轮双架构校验 → 封存 → PR）→ 回写 Issue 汇总 | 一任务一 PR，Issue 持续更新进度 |
 | **④ 功能测试脚本补齐** | 手动触发（指定软件名） | 定位该软件最新镜像目录 → AI 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮） | 一软件一 PR（含 Dockerfile 空行触发目标仓构建 + 功能测试） |
 
@@ -385,7 +385,7 @@ create_new_images.yml  (operation = scenario_one)
 
 ### 4.1 触发与候选发现
 
-统一入口是 [`monitor_image_issues.yml`](.github/workflows/monitor_image_issues.yml)：扫描 `【镜像任务】` Issue，按正文 `Type` 路由，`upgrade-version` 交给 [`upgrade_upstream_versions.yml`](.github/workflows/upgrade_upstream_versions.yml)。旧入口 [`monitor_upgrade_issues.yml`](.github/workflows/monitor_upgrade_issues.yml) 继续扫 `【new-version】` 标题。正文必须给出 `Software` / `Target Version` / `openEuler 版本` 并粘贴上游证据 JSON（`software` / `version` / `upstream_evidence` / `l3_evidence` / `install_candidates`，可人工整理），模板见 [`templates/image-issue.md`](templates/image-issue.md)，字段与拒绝原因见 [`docs/new-version-issue-guide.md`](docs/new-version-issue-guide.md)。解析后随 `evidence` 输入透传。
+统一入口是 [`monitor_image_issues.yml`](.github/workflows/monitor_image_issues.yml)：扫描 `【镜像任务】` Issue，按正文 `Type` 路由，`upgrade-version` 交给 [`upgrade_upstream_versions.yml`](.github/workflows/upgrade_upstream_versions.yml)。旧入口 [`monitor_upgrade_issues.yml`](.github/workflows/monitor_upgrade_issues.yml) 继续扫 `【new-version】` 标题。正文用平铺字段描述上游证据（`软件名` / `源码仓库` / `软件版本` / `门禁路径` / `中游检查点` / `安装候选` 等，每行 `字段: 值`），旧的证据 JSON 块仍可识别；模板见 [`templates/image-issue.md`](templates/image-issue.md)，字段与拒绝原因见 [`docs/new-version-issue-guide.md`](docs/new-version-issue-guide.md)。解析后归一化成 `evidence` 输入透传。
 
 工作流也可手动触发：
 
@@ -396,7 +396,7 @@ create_new_images.yml  (operation = scenario_one)
 | `tag` | 手动指定版本对应的上游 tag（留空则不校验 tag） |
 | `source_url` | 手动指定上游仓库 HTTPS 地址（配合 `version`） |
 | `os_version` | 目标 openEuler 版本（Issue 触发时用于 conda 登记；留空则用各包最新段） |
-| `evidence` | Issue 正文的上游证据 JSON（由 `upgrade-issue-watch` 自动填写；手动触发留空） |
+| `evidence` | Issue 证据归一化后的 JSON（由 `issue-dispatch` / `upgrade-issue-watch` 自动填写；手动触发留空） |
 | `source_issue` | 来源 GitCode Issue 编号（由 `upgrade-issue-watch` 自动填写） |
 | `apps_file` | 本轮使用的软件清单（留空 = `config/upgrade-apps.yml`；可指向 `config/upgrade-apps-l5.yml` 等子集） |
 | `limit` | 本轮最多升级几个应用（`0` = 不限） |
@@ -483,8 +483,8 @@ clone 目标仓 → 确定性检查 → upgrade_auditor Agent → upgrade_fixer 
 
 升级证据来自触发 Issue 的正文：
 
-- Issue 正文是证据 JSON：`software`（`name` / `repo_url` / `version`）必填，`upstream_evidence`、`l3_evidence`、`install_candidates` 可省略；字段约束见 [`docs/new-version-issue-guide.md`](docs/new-version-issue-guide.md)；
-- [`parse_issue.py`](scripts/harness/parse_issue.py) 校验必填字段，并要求 `software.name` / `software.version` 与标题一致；[`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把它归一化为 `source=gitcode-issue` 的证据包，保留原始字段；
+- Issue 正文用平铺字段描述证据：`软件名` / `源码仓库` / `软件版本` 必填，`上游支持检查点`、`中游检查点`、`安装候选` 三组可整组省略；旧的 JSON 块仍可识别。字段约束见 [`docs/new-version-issue-guide.md`](docs/new-version-issue-guide.md)；
+- [`parse_issue.py`](scripts/harness/parse_issue.py) 把平铺字段组装成与旧 JSON 等价的结构并校验必填项，要求软件名 / 版本一致；[`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把它归一化为 `source=gitcode-issue` 的证据包，保留原始字段；
 - [`upgrade_scan.py`](scripts/harness/upgrade_scan.py) 只在应用同名时把该证据写入升级矩阵，其它条目仍回落到 `source=manual`；
 - 证据会出现在 PR 正文、Dockerfile 生成提示与测试生成提示里，**只作参考，不参与门禁**；上游版本是否真实可用，由 AI 生成与双架构构建/功能测试兜底验证。
 - `install_candidates` 是候选安装方式，最终由 Agent 按实际 Dockerfile 决定 `install_mode`；升级 PR 标题携带该方式对应的 `[kunpeng-install:<source|binary>]` 标记。
@@ -812,7 +812,7 @@ openeuler-docker-images-workflow/
 │   └── runbooks/                            # 运维手册
 ├── templates/
 │   ├── new-image-issue.md                   # 场景一 Issue 模板
-│   ├── new-version-issue.md                 # 场景二 Issue 模板（标题 + 上游证据 JSON）
+│   ├── new-version-issue.md                 # 场景二 Issue 模板（旧标题 + 上游证据字段）
 │   └── pr.md                                # PR 模板
 ├── tests/                                   # 本仓单元、契约与工作流回归测试
 ├── requirements.txt                         # 运行时依赖（requests）

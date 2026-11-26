@@ -32,7 +32,7 @@
 | 场景 | 触发源 | 执行内容 | 输出 |
 |---|---|---|---|
 | **① 新增应用镜像** | GitCode Issue（`【镜像任务】` + `Type: new-image`；旧 `【new-image】` 兼容） | 解析需求 → 生成镜像文件与测试 → 门禁 → 双架构构建测试 → 有界修复 | 单个应用的完整镜像目录 PR |
-| **② 应用自动升级** | GitCode Issue（`【镜像任务】` + `Type: upgrade-version`，正文带上游证据 JSON；旧 `【new-version】` 兼容）/ 手动 | 解析 Issue 证据 → 对比已有目录 → 缺新版本：补功能测试 + AI 依证据包生成 Dockerfile + 确定性目录/元数据落盘 + 双架构原生验证；已是最新：AI 审计后修复 Dockerfile 与 doc/image-info.yml | 一应用一 PR |
+| **② 应用自动升级** | GitCode Issue（`【镜像任务】` + `Type: upgrade-version`，正文带上游证据字段；旧 `【new-version】` 兼容）/ 手动 | 解析 Issue 证据 → 对比已有目录 → 缺新版本：补功能测试 + AI 依证据包生成 Dockerfile + 确定性目录/元数据落盘 + 双架构原生验证；已是最新：AI 审计后修复 Dockerfile 与 doc/image-info.yml | 一应用一 PR |
 | **③ openEuler 版本升级** | GitCode Issue（`【镜像任务】` + `Type: oe-upgrade`，正文给目标版本与 Scope；旧 `【oe-upgrade】` 兼容）/ 手动 | 控制器按 Issue 固定请求 → 单领域串行规划 → 一次派发一个任务（prepare → 4 轮双架构校验 → 封存 → PR）→ 回写 Issue 汇总 | 一任务一 PR，Issue 持续更新进度 |
 | **④ 功能测试脚本补齐** | 手动触发（指定软件名） | 定位该软件最新镜像目录 → AI 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮） | 一软件一 PR（含 Dockerfile 空行触发目标仓构建 + 功能测试） |
 

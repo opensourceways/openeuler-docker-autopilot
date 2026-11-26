@@ -15,6 +15,7 @@ from parse_issue import (
     parse_issue_body,
     parse_issue_request,
     parse_upgrade_issue_request,
+    parse_upgrade_request,
     validate,
 )
 
@@ -418,6 +419,109 @@ def test_parse_upgrade_issue_rejects_an_unknown_candidate_type():
     with pytest.raises(IssueParseError, match="source or binary"):
         parse_upgrade_issue_request(
             UPGRADE_ISSUE_TITLE, json.dumps(payload, ensure_ascii=False)
+        )
+
+
+FLAT_EVIDENCE = """软件名(software.name): grpc
+源码仓库(software.repo_url): `https://github.com/grpc/grpc`
+软件版本(software.version): 1.85.4
+上游支持检查点(upstream_evidence.check_id): kp.l1.arm_ci
+上游支持检查点地址(upstream_evidence.source_url): `https://ci.example.com/jobs/1`
+门禁路径(ci_workflows.workflow_path): .github/workflows/ci.yml
+门禁地址(ci_workflows.workflow_url): `https://github.com/grpc/grpc/blob/abc/.github/workflows/ci.yml`
+门禁运行地址(ci_workflows.workflow_run_url): `https://github.com/grpc/grpc/actions/runs/1`
+测试深度(test_depth): smoke
+中游检查点(l3_evidence.check_id): kp.l3.openeuler_image
+中游制品(l3_evidence.artifact): 1.85.4-oe2403sp4
+中游路径(l3_evidence.source_url): `https://gitcode.com/openeuler/openeuler-docker-images/tree/master/Others/grpc`
+安装候选(install_candidates.type): source
+候选包地址(install_candidates.url): `https://github.com/grpc/grpc/archive/v1.85.4.tar.gz`
+候选包制品(install_candidates.artifact): grpc-1.85.4.tar.gz
+"""
+
+
+def test_flat_evidence_block_parses_for_legacy_titles():
+    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, FLAT_EVIDENCE)
+
+    assert fields["app"] == "grpc"
+    assert fields["version"] == "1.85.4"
+    assert fields["os_version"] == "24.03-lts-sp4"
+    payload = fields["evidence"]
+    assert payload["software"] == {
+        "name": "grpc",
+        "repo_url": "https://github.com/grpc/grpc",
+        "version": "1.85.4",
+    }
+    evidence = payload["upstream_evidence"]["evidence"]
+    assert evidence["check_id"] == "kp.l1.arm_ci"
+    assert evidence["source_url"] == "https://ci.example.com/jobs/1"
+    assert evidence["ci_workflows"] == [
+        {
+            "workflow_path": ".github/workflows/ci.yml",
+            "workflow_url": (
+                "https://github.com/grpc/grpc/blob/abc/"
+                ".github/workflows/ci.yml"
+            ),
+            "workflow_run_url": "https://github.com/grpc/grpc/actions/runs/1",
+            "test_depth": "smoke",
+        }
+    ]
+    assert payload["l3_evidence"]["artifact"] == "1.85.4-oe2403sp4"
+    assert payload["install_candidates"] == [
+        {
+            "type": "source",
+            "url": "https://github.com/grpc/grpc/archive/v1.85.4.tar.gz",
+            "artifact": "grpc-1.85.4.tar.gz",
+        }
+    ]
+
+
+def test_flat_evidence_accepts_plain_labels_without_legacy_names():
+    body = (
+        "软件名: grpc\n"
+        "源码仓库: https://github.com/grpc/grpc\n"
+        "软件版本: 1.85.4\n"
+        "门禁路径: .github/workflows/ci.yml\n"
+        "测试深度: smoke\n"
+    )
+
+    fields = parse_upgrade_request("【镜像任务】升级 grpc 至 1.85.4", body)
+
+    assert fields["app"] == "grpc"
+    assert fields["version"] == "1.85.4"
+    assert fields["os_version"] == ""
+    assert fields["source_url"] == "https://github.com/grpc/grpc"
+    assert fields["evidence"]["upstream_evidence"]["evidence"][
+        "ci_workflows"
+    ] == [{"workflow_path": ".github/workflows/ci.yml", "test_depth": "smoke"}]
+
+
+def test_flat_evidence_groups_repeated_workflow_and_candidate_lines():
+    body = FLAT_EVIDENCE + (
+        "门禁路径(ci_workflows.workflow_path): .github/workflows/ci2.yml\n"
+        "测试深度(test_depth): full\n"
+        "安装候选(install_candidates.type): binary\n"
+        "候选包地址(install_candidates.url): https://example.com/x.tar.gz\n"
+    )
+
+    fields = parse_upgrade_issue_request(UPGRADE_ISSUE_TITLE, body)
+    payload = fields["evidence"]
+
+    assert [
+        entry["workflow_path"]
+        for entry in payload["upstream_evidence"]["evidence"]["ci_workflows"]
+    ] == [".github/workflows/ci.yml", ".github/workflows/ci2.yml"]
+    assert [item["type"] for item in payload["install_candidates"]] == [
+        "source",
+        "binary",
+    ]
+
+
+def test_flat_evidence_requires_the_software_group():
+    with pytest.raises(IssueParseError, match="upstream evidence fields"):
+        parse_upgrade_request(
+            "【镜像任务】升级 grpc 至 1.85.4",
+            "中游制品(l3_evidence.artifact): 1.85.4-oe2403sp4\n",
         )
 
 

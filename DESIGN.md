@@ -31,7 +31,7 @@
 | 场景 | 触发方式 | 输出 |
 |------|---------|------|
 | ① 新增应用镜像 | GitCode Issue（`【镜像任务】` + `Type: new-image`；旧 `【new-image】` 兼容） | PR：完整镜像目录 + 文档 + 测试 |
-| ② 应用上游版本升级 | GitCode Issue（`【镜像任务】` + `Type: upgrade-version`，正文带上游证据 JSON；旧 `【new-version】` 兼容）/ 手动 | PR：新版本镜像目录（或审计修复）+ conda 版本登记 |
+| ② 应用上游版本升级 | GitCode Issue（`【镜像任务】` + `Type: upgrade-version`，正文带上游证据字段；旧 `【new-version】` 兼容）/ 手动 | PR：新版本镜像目录（或审计修复）+ conda 版本登记 |
 | ③ openEuler 大版本升级 | GitCode Issue（`【镜像任务】` + `Type: oe-upgrade`；旧 `【oe-upgrade】` 兼容） | 一任务一 PR：应用新增 oe 版本子目录 |
 | ④ 存量补功能测试 | 手动指定软件名 | PR：`tests/test.sh` + Dockerfile 空行 |
 
@@ -292,7 +292,7 @@ GitCode Issue 创建 [new-image 标签]
 
 ### 3.3 场景二：应用上游版本自动升级
 
-正式入口是 GitCode `【镜像任务】`（`Type: upgrade-version`）Issue，旧标题 `【new-version】` 继续兼容：正文给出 `Software` / `Target Version` / `openEuler 版本` 与上游证据 JSON（`software` 必填，可附 `upstream_evidence` / `l3_evidence` / `install_candidates`）。手动触发时版本可由清单或参数兜底。
+正式入口是 GitCode `【镜像任务】`（`Type: upgrade-version`）Issue，旧标题 `【new-version】` 继续兼容：正文用平铺字段给出上游证据（`软件名` / `源码仓库` / `软件版本` 必填，可附 `上游支持检查点`、`中游检查点`、`安装候选`；旧的 JSON 块仍可识别），解析后归一化成 `software` / `upstream_evidence` / `l3_evidence` / `install_candidates`。手动触发时版本可由清单或参数兜底。
 
 ```
 【镜像任务】（Type: upgrade-version）/ 【new-version】Issue
@@ -936,7 +936,7 @@ openeuler-docker-images-workflow/
 │   └── ci-failure-patterns.md         # CI 修复组件：失败模式知识库（自动维护）
 ├── templates/
 │   ├── new-image-issue.md             # 场景一 Issue 模板
-│   ├── new-version-issue.md           # 场景二 Issue 模板（标题 + 上游证据 JSON）
+│   ├── new-version-issue.md           # 场景二 Issue 模板（旧标题 + 上游证据字段）
 │   └── pr.md                          # PR 模板
 ├── tests/                             # 本仓单元测试
 ├── DESIGN.md
