@@ -25,5 +25,5 @@ build_timeout_minutes: 240
 <!-- oe-app-note:auto:26.10.0.1/24.03-lts-sp4 -->
 ## 自动沉淀：26.10.0.1 / 24.03-lts-sp4
 
-MySQL 26.x 起不再依赖 Boost：cmake 的 -DDOWNLOAD_BOOST/-DWITH_BOOST 会被忽略并提示 unused（保留旧参数不影响构建）。26.x 的 update 版本（如 26.10.0.1）里 mysqld --version 只输出三位版本 26.10.0（MYSQL_SERVER_VERSION），第 4 段 update 号仅出现在 MYSQL_SERVER_VERSION_WITH_UPDATE 与包版本号中，属上游预期行为，非构建缺失。
+MySQL 从 26.x 起采用日历版本号（major=年份、minor=月份，如 26.10.0），并在 tag 上追加第四位 update 组件（如 mysql-26.10.0.1）。源码中 MYSQL_VERSION_UPDATE 只进入 MYSQL_SERVER_VERSION_WITH_UPDATE，而 `mysqld --version` 打印的 MYSQL_SERVER_VERSION 仍是三位（26.10.0）。因此功能测试对这类带第四位的版本必须做三位基版本匹配，不能要求四位完全相等。
 <!-- /oe-app-note:auto -->
