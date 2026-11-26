@@ -1,0 +1,137 @@
+name: Runner Disk Guard
+
+# 定时扫描自托管 Runner 的磁盘；剩余空间低于阈值时在**本机**就地清理。
+#
+# 每台 Runner 各跑一个 Job，不依赖 SSH。4 台构建机各有 2 个 runner 实例并共享
+# 同一块磁盘，因此只扫每台机器的主实例（oe-fix-* / oe-image-*）即可。
+#
+# 主调度：hwyx86 上的 runner-disk-guard.timer 每 30 分钟调用 workflow_dispatch；
+# GitHub cron 只作低频兜底，手动触发始终可用。
+#
+# 清理范围：BuildKit/buildx 缓存、停止的容器、未使用镜像、7 天前的 runner 临时文件。
+# 如果同机另一个实例正在构建（检测到运行中容器），则跳过 buildx/builder 全量清理，
+# 只清停止容器与悬空镜像，避免打断正在进行的构建。
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      min_free_gib:
+        description: "剩余空间低于该值（GiB）时清理"
+        required: false
+        default: "70"
+        type: string
+      dry_run:
+        description: "只报告，不执行清理"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-disk-guard
+  cancel-in-progress: false
+
+env:
+  MIN_FREE_GIB: ${{ inputs.min_free_gib || vars.RUNNER_DISK_MIN_FREE_GIB || '70' }}
+  DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+
+jobs:
+  guard:
+    name: "Disk guard (${{ matrix.name }})"
+    runs-on: ${{ fromJSON(matrix.labels) }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - name: oe-issue-poll
+            labels: '["self-hosted","Linux","X64","oe-issue-poll"]'
+          - name: oe-fix-amd64
+            labels: '["self-hosted","Linux","X64","oe-fix-amd64"]'
+          - name: oe-image-x86
+            labels: '["self-hosted","Linux","X64","oe-image-x86"]'
+          - name: oe-fix-arm64
+            labels: '["self-hosted","Linux","ARM64","oe-fix-arm64"]'
+          - name: oe-image-arm64
+            labels: '["self-hosted","Linux","ARM64","oe-image-arm64"]'
+    steps:
+      - name: Check and clean disk
+        run: |
+          set -u
+
+          free_gib() {
+            local target="/var/lib/docker"
+            [ -d "${target}" ] || target="/"
+            df -Pk "${target}" | awk 'NR==2 {printf "%d", $4/1048576}'
+          }
+
+          summary() {
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              printf '%s\n' "$*" >> "${GITHUB_STEP_SUMMARY}"
+            fi
+          }
+
+          runner="${RUNNER_NAME:-unknown}"
+          before="$(free_gib)"
+          echo "runner=${runner} free_before=${before}GiB threshold=${MIN_FREE_GIB}GiB"
+          summary "### Runner disk guard: ${runner}"
+          summary ""
+          summary "- free before: ${before} GiB"
+          summary "- threshold: ${MIN_FREE_GIB} GiB"
+
+          if [ "${before}" -ge "${MIN_FREE_GIB}" ]; then
+            echo "free ${before}GiB >= ${MIN_FREE_GIB}GiB, skip cleanup"
+            summary "- action: skip"
+            exit 0
+          fi
+
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "dry-run: free ${before}GiB < ${MIN_FREE_GIB}GiB, cleanup skipped"
+            summary "- action: dry-run (would clean)"
+            exit 0
+          fi
+
+          busy=false
+          if [ -n "$(docker ps -q 2>/dev/null || true)" ]; then
+            busy=true
+          fi
+
+          if [ "${busy}" = "true" ]; then
+            echo "running containers detected; skip buildx/builder full prune"
+            summary "- running containers: yes (cache prune skipped)"
+            docker container prune -f || true
+            docker image prune -f || true
+          else
+            docker buildx prune -af || true
+            docker builder prune -af || true
+            docker container prune -f || true
+            docker image prune -af || true
+          fi
+
+          # 7 天前的 runner 临时文件与诊断日志。
+          temp_dir="${RUNNER_TEMP:-}"
+          if [ -n "${temp_dir}" ] && [ -d "${temp_dir}" ]; then
+            find "${temp_dir}" -mindepth 1 -maxdepth 1 -mtime +7 \
+              -exec rm -rf {} + 2>/dev/null || true
+          fi
+          runner_root=""
+          if [ -n "${temp_dir}" ]; then
+            runner_root="$(dirname "$(dirname "${temp_dir}")")"
+          fi
+          if [ -n "${runner_root}" ] && [ -d "${runner_root}/_diag" ]; then
+            find "${runner_root}/_diag" -mindepth 1 -maxdepth 1 -mtime +7 \
+              -exec rm -rf {} + 2>/dev/null || true
+          fi
+
+          after="$(free_gib)"
+          echo "runner=${runner} free_after=${after}GiB"
+          summary "- free after: ${after} GiB"
+          summary "- action: cleaned"
+          if [ "${after}" -lt "${MIN_FREE_GIB}" ]; then
+            echo "::warning::${runner} free space ${after}GiB is still below ${MIN_FREE_GIB}GiB after cleanup"
+          fi
