@@ -1,10 +1,10 @@
-# 看板鲲鹏域 level_auto=L5 的软件（上游原生/中游/下游支持等级均不成立）。
-# 版本由看板快照（2026-11-19）手动补入 config/upgrade-apps-l5.yml：
-# auto-upgrade 不查询看板，只读这里的 version / source_url。
+# 上游支持等级 L5 的软件（上游原生/中游/下游支持等级均不成立）。
+# 版本按上游快照（2026-11-19）手动补入 config/upgrade-apps-l5.yml：
+# auto-upgrade 不查询外部版本服务，只读这里的 version / source_url。
 #
 # 说明：
 # - source_url 以目标仓 doc/image-info.yml 的 upstream 为准；
-#   看板 repo_url 与实际镜像上游不一致时（drbd、grpc-server、parquet）已修正。
+#   上游地址与实际镜像不一致时（drbd、grpc-server、parquet）已修正。
 # - DRBD 镜像应构建 LINBIT/drbd 内核模块；仓库现有 9.31.0 实际构建的是
 #   drbd-utils（版本线不同），因此清单改用内核模块版本 9.3.5，并用
 #   allow_downgrade 跳过「9.3.5 < 9.31.0」的降级保护。

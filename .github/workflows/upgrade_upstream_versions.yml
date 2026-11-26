@@ -10,7 +10,7 @@ name: App Version Upgrade
 #     - openeuler/conda-ecopkgs：supported-versions.yml 未登记 → 追加版本并开 PR。
 #   清单里同一个软件两个仓都有时两边都会升级；只有一边存在时只升级那一边。
 #
-# 自动升级**不查询 upstream-dashboard**；Issue 驱动时版本与上游证据都来自 Issue，
+# 自动升级不查询外部版本服务；Issue 驱动时版本与上游证据都来自 Issue，
 # 手动触发时必须显式给 version（或由清单兜底）。两者都缺时跳过并记录原因；没有
 # Issue 证据时才回落到 source=manual 的最小证据。
 #
@@ -99,7 +99,7 @@ env:
   TARGET_BRANCH: master
 
 concurrency:
-  # 按 app 隔离：看板逐 app 派发时不同应用可并行，同一应用串行避免双开；
+  # 按 app 隔离：Issue 逐 app 派发时不同应用可并行，同一应用串行避免双开；
   # 批量扫描（app 为空）仍按 ref 串行。固定 group 会导致排队 run 互相顶掉丢请求。
   group: app-version-upgrade-${{ inputs.app || github.ref }}
   cancel-in-progress: false

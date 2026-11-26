@@ -4,7 +4,7 @@ Stage: 场景四 —— 指定软件的目标镜像解析（testgen_resolve）
 
 手动触发场景：给定一个软件名，在目标仓克隆里定位它的最新镜像目录
 `{domain}/{app}/{version}/{os_version}/Dockerfile`，产出 testgen_generate
-需要的一条 item。看板爬取已下线，本阶段只读本地克隆，不发任何网络请求。
+需要的一条 item。本阶段只读本地克隆，不发任何网络请求。
 
 输入: --app <应用名>（必填）、--domain <域目录>（可选，同名跨域时消歧）、
       --source-url <上游仓库链接>（可选，仅作为生成提示）、

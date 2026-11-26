@@ -19,11 +19,11 @@
 `openeuler/openeuler-docker-images` 维护着一批应用容器镜像，其中四类变更高度重复：
 
 1. **社区希望新增一个应用镜像**（场景一）——需要研究上游构建方式，按仓库规范写 Dockerfile、`meta.yml`、README、`doc/image-info.yml`，还要补一套能证明镜像真的可用的功能测试；
-2. **应用上游发布了新版本**（场景二）——需要为存量应用补一个新版本镜像目录：复制上一版、替换版本串、补 `meta.yml` 与功能测试，机械但量大；版本号与上游证据由 GitCode `【new-version】` Issue 提供；
+2. **应用上游发布了新版本**（场景二）——需要为存量应用补一个新版本镜像目录：复制目录骨架、按上游版本与证据重新生成 Dockerfile、补 `meta.yml` 与功能测试，机械但量大；版本号与上游证据由 GitCode `【new-version】` Issue 提供；
 3. **openEuler 发布新版本**（场景三）——所有存量应用都要补齐新 openEuler 版本的镜像，批量且机械；
 4. **存量镜像缺功能测试脚本**（场景四）——目标仓已把功能测试与 CI 构建绑定（Dockerfile 变更即构建，成功后按 `{app}/tests/test.sh` 执行功能测试），但多数应用没有测试脚本，需要按 [KunpengTest 规范](https://github.com/opensourceways/upstream-dashboard/blob/KunpengTest/README.md)批量补齐；
 
-场景一、三共享同一批固定规范，但也都夹着不确定的部分：上游依赖怎么装、服务怎么起、构建失败怎么修。前者适合代码，后者适合 Agent。场景二处理版本升级——目标版本与上游证据由触发 Issue 提供，扫描阶段只负责定位目标仓目录，Dockerfile 由 AI 依证据与固定上游源码重新生成，目录复制与元数据登记由确定性代码承担。场景四与场景一共享「Agent 生成 + 静态校验」的质量机制，但脚本规范遵循目标仓 CI 的 KunpengTest 约定（禁 `set -e`、脚本内自拉服务、注入五个环境变量），走独立的「手动指定软件 → 定位镜像 → 生成 → 校验 → 提 PR」链路。PR CI 失败修复（原场景二能力）抽成手动组件 `_ci_repair.yml`，升级 PR 的 CI 失败时由人工决定是否触发。
+场景一、三共享同一批固定规范，但也都夹着不确定的部分：上游依赖怎么装、服务怎么起、构建失败怎么修。前者适合代码，后者适合 Agent。场景二处理版本升级——目标版本与上游证据由触发 Issue 提供，扫描阶段只负责定位目标仓目录，Dockerfile 由 AI 依证据与固定上游源码重新生成，目录复制与元数据登记由确定性代码承担。场景四与场景一共享「Agent 生成 + 静态校验」的质量机制，但脚本规范遵循目标仓 CI 的 KunpengTest 约定（禁 `set -e`、脚本内自拉服务、注入五个环境变量），走独立的「手动指定软件 → 定位镜像 → 生成 → 校验 → 提 PR」链路。PR CI 失败修复抽成独立手动组件 `_ci_repair.yml`，升级 PR 的 CI 失败时由人工决定是否触发。
 
 ---
 
@@ -33,10 +33,10 @@
 |---|---|---|---|
 | **① 新增应用镜像** | GitCode Issue（标题含 `【new-image】`） | 解析需求 → 生成镜像文件与测试 → 门禁 → 双架构构建测试 → 有界修复 | 单个应用的完整镜像目录 PR |
 | **② 应用自动升级** | GitCode Issue（`【new-version】`，正文带上游证据 JSON）/ 手动 | 解析 Issue 证据 → 对比已有目录 → 缺新版本：补功能测试 + AI 依证据包生成 Dockerfile + 确定性目录/元数据落盘 + 双架构原生验证；已是最新：AI 审计后修复 Dockerfile 与 doc/image-info.yml | 一应用一 PR |
-| **③ openEuler 版本升级** | `oe-new-version` 事件或手动 | 枚举全部应用 → Matrix 并行补齐缺失的 oe 版本 | 批量 PR + 失败应用报告 |
+| **③ openEuler 版本升级** | GitCode Issue（标题含 `【oe-upgrade】`，正文给目标版本与 Scope）/ 手动 | 控制器按 Issue 固定请求 → 单领域串行规划 → 一次派发一个任务（prepare → 4 轮双架构校验 → 封存 → PR）→ 回写 Issue 汇总 | 一任务一 PR，Issue 持续更新进度 |
 | **④ 功能测试脚本补齐** | 手动触发（指定软件名） | 定位该软件最新镜像目录 → AI 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮） | 一软件一 PR（含 Dockerfile 空行触发目标仓构建 + 功能测试） |
 
-场景 ①/③ 共享同一套「生成 → 门禁 → 双架构验证 → 交付」能力，差异只在触发输入与调度；场景 ② 由 GitCode Issue 提供版本与上游证据，扫描阶段只对比目标仓已有目录，Dockerfile 由 AI 结合证据包重新生成（不做版本串机械替换），补测试也调用 AI，目录复制与元数据登记由确定性代码承担；已是最新版本的应用不跳过，审计后由修复 Agent 更新 Dockerfile 与 `doc/image-info.yml` 并开 PR。场景 ④ 走独立的「手动指定软件 → 定位镜像 → 生成 → 静态校验 → 提 PR」链路，一次运行只处理一个应用。
+场景 ①/③ 共享同一套「生成 → 门禁 → 双架构验证 → 交付」能力，差异只在触发输入与调度；场景 ③ 由 `【oe-upgrade】` Issue 驱动，控制器固定请求与 `base_sha`，一次只推进一个任务，避免整批并发抢占构建机。场景 ② 由 GitCode Issue 提供版本与上游证据，扫描阶段只对比目标仓已有目录，Dockerfile 由 AI 结合证据包重新生成（不做版本串机械替换），补测试也调用 AI，目录复制与元数据登记由确定性代码承担；已是最新版本的应用不跳过，审计后由修复 Agent 更新 Dockerfile 与 `doc/image-info.yml` 并开 PR。场景 ④ 走独立的「手动指定软件 → 定位镜像 → 生成 → 静态校验 → 提 PR」链路，一次运行只处理一个应用。
 
 ---
 
@@ -49,7 +49,7 @@
 | 生产直推模式 | `direct_branch_pr` 已在 `DeliveryConfig` 中定义，但未接入任何 workflow，需显式开启 |
 | 场景二升级落点 | 分支 `auto/version-update/<app>/<version>-<oe_tag>`，推送到 `GITCODE_FORK_REPO`（留空则直推目标仓）后提跨仓 PR |
 | CI 修复组件落点 | 源仓库分支 `fix/<pr_number>` 与 `fix:` 前缀的 Fix PR；可用 `GITCODE_FORK_REPO` 改为推 fork |
-| 监控范围 | 仅 CI 修复组件的 `config/watchlist.json`（`openeuler/openeuler-docker-images`，标签 `ci_failed`），**手动扫描**；场景二由 GitCode `【new-version】` Issue 驱动，不再轮询 upstream-dashboard |
+| 监控范围 | 仅 CI 修复组件的 `config/watchlist.json`（`openeuler/openeuler-docker-images`，标签 `ci_failed`），**手动扫描**；各场景的正式入口是 GitCode Issue，不轮询外部版本服务 |
 | 写权限边界 | Agent 在生成/升级/修复阶段无任何仓库写能力；git 与平台写操作集中在验证通过之后的确定性交付代码里 |
 
 **生成类场景只增不改**：场景一 / 三 / 四的存量镜像目录视为只读，由四层机制保证——`git diff` 差分检查、`meta.yml`/`README.md` 仅允许末尾追加、`<app-ver, oe-ver>` 幂等检查、提 PR 前按标题去重。场景二只新增版本目录并追加 `meta.yml`，不修改存量版本目录。
@@ -64,6 +64,7 @@
 |---|---|---|---|---|
 | ① 新增镜像 | 生成 | `image-creator.md` | Issue 解析出的 TaskSpec、上游源码、目标仓规范 | Dockerfile、`meta.yml`、README、`doc/image-info.yml` |
 | ① 新增镜像 | 测试 | `testcase-creator.md` ⇄ `testcase-qa.md` | 已生成的镜像与规范 | 共享测试入口 `tests/test.sh`（Creator 生成、QA 对抗复核，最多 2 轮） |
+| ③ 版本升级 | 补测试 | `testcase-creator.md` ⇄ `testcase-qa.md` | 目标仓应用目录、KunpengTest 契约 | 已有 `tests/test.sh` 且通过运行时契约则直接复用；缺失时生成并经 QA 复核 |
 | ①③ | 有界修复 | `code-fixer.md` | 双架构失败证据（构建/测试报告） | 白名单范围内的最小修复 |
 | ② 应用升级 | 生成 Dockerfile | `upgrade-creator.md` | 旧版本 Dockerfile、目标版本、Issue 上游证据（`support_level`、`check_id`、`test_depth`、`ci_workflows`、`install_candidates`） | 新版本完整 Dockerfile（不做版本串机械替换；缺目标版本号/`FROM` 即重写或失败） |
 | ② 已是最新 | 审计 + 修复 | `upgrade-auditor.md` → `upgrade-fixer.md` | 现有 Dockerfile、meta.yml、测试脚本、image-info、Issue 上游证据与 tag/commit | 审计报告 + 修复 PR（Dockerfile 与 doc/image-info.yml 按测试脚本同步） |

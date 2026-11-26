@@ -5,8 +5,8 @@ name: Generate Test Scripts
 # （PR 同时给该软件最新 Dockerfile 追加一个空行，触发目标仓绑定在
 # Dockerfile 变更上的构建 + 功能测试 CI）。
 #
-# 触发：仅 workflow_dispatch。原先「每日爬 Kunpeng 看板找缺失应用」的巡检已下线，
-# 现在由人指定 app（必要时用 domain 消歧），一次运行只处理这一个软件。
+# 触发：仅 workflow_dispatch。由人指定 app（必要时用 domain 消歧），
+# 一次运行只处理这一个软件，不轮询外部服务，也不批量扫描。
 #
 # 解析规则：在目标仓克隆里按目录名定位应用（大小写/分隔符不敏感），取版本号
 # 最高的 `{domain}/{app}/{version}/{os_version}/Dockerfile`；应用不存在、同名跨域、

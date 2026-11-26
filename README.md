@@ -58,7 +58,7 @@ openEuler 社区维护着一批应用容器镜像。系统覆盖四个场景，�
 |------|--------|----------|------|
 | **① 新增应用镜像** | GitCode Issue（标题含 `【new-image】`） | 解析需求 → 生成镜像文件与测试 → 门禁 → 双架构构建测试 → 有界修复 | 单个应用的完整镜像目录 PR |
 | **② 应用自动升级** | GitCode Issue（标题含 `【new-version】`，正文带上游证据 JSON）/ 手动触发 | 解析 Issue 证据 → 对比目标仓已有目录 → 缺新版本：补测试 + AI 依证据生成 Dockerfile + 元数据落盘 + 双架构验证；已是最新：AI 审计并修复 Dockerfile 与 doc/image-info.yml | 一应用一 PR |
-| **③ openEuler 版本升级** | `oe-new-version` 事件或手动 | 枚举全部应用 → Matrix 并行补齐缺失的 oe 版本 | 批量 PR + 失败应用报告 |
+| **③ openEuler 版本升级** | GitCode Issue（标题含 `【oe-upgrade】`，正文给目标版本与 Scope）/ 手动 | 控制器按 Issue 固定请求 → 单领域串行规划 → 一次派发一个任务（准备候选 → 4 轮双架构校验 → 封存 → PR）→ 回写 Issue 汇总 | 一任务一 PR，Issue 持续更新进度 |
 | **④ 功能测试脚本补齐** | 手动触发（指定软件名） | 定位该软件最新镜像目录 → AI 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮） | 一软件一 PR（含 Dockerfile 空行触发目标仓构建 + 功能测试） |
 
 场景一 / 三的共同骨架：
@@ -127,7 +127,7 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 | **双架构原生验证** | x86_64 与 aarch64 各自独立产出构建与测试结论，一个架构通过不代表整体通过 |
 | **健康驱动的就绪判定** | 有 `HEALTHCHECK` 时等待 `healthy`，没有时完整观察 120 秒容器行为；`EXPOSE` 端口不参与就绪调度 |
 | **有界自动修复** | Fixer 依据结构化失败证据做最小范围修复，超出轮次上限即停止并保留证据 |
-| **升级候选发现** | GitCode `【new-version】` Issue 提供目标版本与上游证据，扫描阶段只与目标仓已有目录对比（**不查询看板**）；缺字段 / 已有 open PR 跳过，目标版本目录已存在转审计；手动触发可用清单兜底 |
+| **升级候选发现** | GitCode `【new-version】` Issue 提供目标版本与上游证据，扫描阶段只与目标仓已有目录对比；缺字段 / 已有 open PR 跳过，目标版本目录已存在转审计；手动触发可用清单兜底 |
 | **确定性版本升级** | 复制最新版本目录，Dockerfile 由 AI 依据 Issue 证据与上游源码重新生成（禁止机械替换版本号）；README / `doc/image-info.yml` 更新版本、追加 `meta.yml`；生成内容缺目标版本号即失败交人工 |
 | **目标版本已存在的审计与修复** | 目标版本目录已在目标仓时不跳过：确定性检查版本/tag/meta/测试脚本/image-info，AI 审计后由修复 Agent 更新 Dockerfile 与 doc/image-info.yml，推分支并先过双架构原生校验，通过后再开 PR |
 | **升级证据** | 由触发 Issue 提供证据包（`source=gitcode-issue`，含 L1 证据、`l3_evidence`、`install_candidates`），作为镜像构建、测试生成与 PR 留痕的参考，不参与门禁；手动路径回落最小 `source=manual` 证据 |
@@ -145,10 +145,10 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 |------|------|------|
 | 一 | 场景一：新增应用镜像 | **已打通**。完整走通「Issue 认领 → 生成 → 门禁 → 4 轮双架构验证 → 候选封存 → fork 分支 → 跨仓 PR」 |
 | 二 | 场景二：应用自动升级 | **已打通**。GitCode Issue 提供版本与上游证据 → 对比目标仓已有目录 → 缺测试则补 → 确定性复制 + Dockerfile 由 AI 依证据生成 + `meta.yml` → 双架构原生验证 → 一应用一 PR（`monitor_upgrade_issues.yml` → `upgrade_upstream_versions.yml`）。原 PR CI 修复链路保留为手动组件 `_ci_repair.yml` |
-| 三 | 场景三：openEuler 版本升级 | 工作流骨架已就位（检测新 oe 版本 → Matrix 并行补齐 → 批量 PR），仍走 legacy `run.py` 链路，尚未接入阶段一的候选包 / 门禁 / 证据体系 |
-| 四 | 场景四：功能测试脚本补齐 | **已打通（手动触发）**。指定软件名 → 定位目标仓最新镜像目录 → Agent 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮）→ 一软件一 PR（`generate_test_scripts.yml`）；看板爬取已下线，需配置 `GITCODE_FORK_REPO` 与 `TESTGEN_RUNNER_LABELS` |
+| 三 | 场景三：openEuler 版本升级 | **已打通**。GitCode `【oe-upgrade】` Issue 驱动：控制器按 Issue 生成固定请求 → 单领域串行规划 → 每个任务派生 worker 完成 Prepare / 双架构校验 / 封存 / PR → 回写活动汇总（`monitor_oe_upgrade_issues.yml` → `oe_upgrade_worker.yml`） |
+| 四 | 场景四：功能测试脚本补齐 | **已打通（手动触发）**。指定软件名 → 定位目标仓最新镜像目录 → Agent 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮）→ 一软件一 PR（`generate_test_scripts.yml`）；需配置 `GITCODE_FORK_REPO` 与 `TESTGEN_RUNNER_LABELS` |
 
-> 升级版本与上游证据由 GitCode `【new-version】` Issue 提供，手动触发时可由软件清单兜底；不再依赖 anitya / upstream-dashboard 做版本发现。PR CI 失败修复不再自动轮询，改为手动 / 显式调用（见 [4.6](#46-pr-ci-修复组件手动)）。
+> 升级版本与上游证据由 GitCode `【new-version】` Issue 提供，手动触发时可由软件清单兜底；版本发现只读 Issue 与本地清单，不发起外部版本查询。PR CI 失败修复不再自动轮询，改为手动 / 显式调用（见 [4.6](#46-pr-ci-修复组件手动)）。
 
 **写入目标分级：** 阶段一的交付固定为测试模式——推送到配置的 fork 仓库，再向 `openeuler/openeuler-docker-images` 提跨仓 PR。生产直推模式（`direct_branch_pr`）已在 `DeliveryConfig` 中定义但**尚未接入任何 workflow**，需要显式开启；配置缺失或错误时一律解析为测试模式，任何情况下都不回退到生产仓。
 
@@ -213,13 +213,17 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 
 | Runner 标签 | 用途 |
 |------------|------|
-| `[self-hosted, Linux, X64, oe-image-x86]` | x86_64 原生构建与测试（场景一 / 二 / 三；CI 修复组件的 amd64 修复） |
-| `[self-hosted, Linux, ARM64, oe-image-arm64]` | aarch64 原生构建与测试（场景一 / 二 / 三；CI 修复组件的 arm64 修复与复验） |
+| `[self-hosted, Linux, X64, oe-upgrade-x64]` | x86_64 原生构建与测试（场景一 / 三的 round 校验，场景二的 validate-x86_64） |
+| `[self-hosted, Linux, ARM64, oe-upgrade-arm64]` | aarch64 原生构建与测试（场景一 / 三的 round 校验，场景二的 validate-aarch64） |
+| `[self-hosted, Linux, X64, oe-image-x86]` | 需要固定镜像构建机的收尾 Job：场景一 / 三的 decide、候选封存与交付，场景二的 create-image |
+| `[self-hosted, Linux, ARM64, oe-image-arm64]` | 需要固定镜像构建机的收尾 Job：场景三的 aarch64 环境清理 |
 | `[self-hosted, Linux, oe-any]` | 架构无关 Job（场景二的 discover / prepare / open-pr / audit / summary / finalize / plan-repairs / conda 登记），X64 与 ARM64 都可承接 |
 | `[self-hosted, Linux, X64]` | 监控、查询等轻量 Job（场景三） |
 | `[self-hosted, Linux, X64, oe-issue-poll]` | 三个场景的 Issue 轮询 Job（hwyx86 专用轮询机，与镜像构建机隔离） |
 
 Runner 需预装 **Docker 与 buildx**。能力由 Job 启动时的 `scripts/runner_preflight.py` 自检把关——**缺失即失败，不做临时安装**。同一 Runner 上会有并发 Job，镜像 tag 与容器名均携带唯一标识，避免互相覆盖。
+
+> 校验 Job 使用通用的 `oe-upgrade-x64` / `oe-upgrade-arm64`，四台构建机上的实例都能承接，避免被单台 `oe-image-*` 机器占用时长时间排队；只有 `decide`、候选封存与交付这类需要固定镜像构建机的步骤仍锁 `oe-image-*`。
 
 Issue 轮询的主调度在 hwyx86 上，跑在专用 `oe-issue-poll` Runner 上（与镜像构建机隔离，不会被长任务卡住）：场景二 `monitor_upgrade_issues.yml` 由 `oe-issue-poll.timer` 每 5 分钟派发；场景一 `monitor_new_image_issues.yml` 由 `oe-new-image-poll.timer` 每 30 分钟派发；场景三 `monitor_oe_upgrade_issues.yml` 暂未纳入定时派发，只靠 GitHub cron 每 30 分钟兜底（端到端验证通过后再挂）。GitHub 自带 cron 只作低频兜底，因为其 schedule 属于 best-effort，可能长期延迟或丢跑；需要换机器时设置 Variable `ISSUE_POLL_RUNNER_LABELS`。
 
@@ -232,8 +236,8 @@ Issue 轮询的主调度在 hwyx86 上，跑在专用 `oe-issue-poll` Runner 上
 | `discover` / `prepare` / `open-pr` / `audit` / `summary` / `finalize-issue` / `plan-repairs`（架构无关） | `["self-hosted","Linux","oe-any"]` | 输入 `runner_labels`，Variable `UPGRADE_NEUTRAL_RUNNER_LABELS` |
 | `conda` 登记（架构无关） | `["self-hosted","Linux","oe-any"]` | `conda_ecopkgs_pr.yml` 的输入 `runner_arch=any`（也可强制 `x64` / `arm64`） |
 | `create-image`（只调用 `gh workflow run`，依赖 x64 上的 gh） | `["self-hosted","Linux","X64","oe-image-x86"]` | 输入 `runner_labels`，Variable `UPGRADE_RUNNER_LABELS` |
-| `validate-x86_64` | `["self-hosted","Linux","X64","oe-image-x86"]` | `_upgrade_app.yml` 的输入 `x64_runner_labels` |
-| `validate-aarch64`（**必须 arm64**） | `["self-hosted","Linux","ARM64","oe-image-arm64"]` | `_upgrade_app.yml` 的输入 `arm64_runner_labels` |
+| `validate-x86_64` | `["self-hosted","Linux","X64","oe-upgrade-x64"]` | `_upgrade_app.yml` 的输入 `x64_runner_labels` |
+| `validate-aarch64`（**必须 arm64**） | `["self-hosted","Linux","ARM64","oe-upgrade-arm64"]` | `_upgrade_app.yml` 的输入 `arm64_runner_labels` |
 | CI 修复组件（`_ci_repair.yml`） | 轻量 `oe-image-x86`；amd64 `oe-fix-amd64`；arm64 `oe-fix-arm64` | 输入 `x64_runner_labels` / `amd64_runner_labels` / `arm64_runner_labels`，Variables `CI_FIX_*_RUNNER_LABELS` |
 
 **arm64 复验使用持久 BuildKit 层缓存。** 复验是对 derived Dockerfile 的从零 `docker build`，重型镜像（例如 bolt：conan 从源码编 34 个依赖，x86_64 上实测单个编译层就要 4427.6s）每次都从头编，很容易撞 `BUILD_DOCKER_TIMEOUT`（默认 7200s）。因此 `verify-arm` 会带 `CI_FIX_BUILD_CACHE_DIR` 走 `buildx --load` + `type=local, mode=max` 把层缓存留在自托管机器上：同一 PR 下一轮 / 下一天复验同一份 derived Dockerfile 时前缀层直接命中，不同 PR 之间同 base、同版本的层也能复用。缓存目录默认在 `<runner.workspace>/ci-fix-buildkit-cache`（checkout 之外，不会被清理）；builder 不存在时会自动创建一个 docker-container builder，创建/启动失败则**自动退回普通 `docker build`**（缓存是加速手段，不能让它在环境不满足时把构建弄失败）。磁盘占用按需清理：`docker buildx prune -f --filter until=168h`，或直接删缓存目录。
@@ -265,7 +269,6 @@ Issue 轮询的主调度在 hwyx86 上，跑在专用 `oe-issue-poll` Runner 上
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `MAX_PARALLEL_IMAGES` | 场景三 Matrix 并行的镜像数上限 | `4` |
 | `MAX_PARALLEL_UPGRADES` | 场景二同一轮并发升级的应用数上限 | `2` |
 | `UPGRADE_NEUTRAL_RUNNER_LABELS` | 场景二架构无关 Job（discover / prepare / open-pr / audit / summary / finalize / plan-repairs / conda 登记）的 runner 标签，JSON 数组 | `["self-hosted","Linux","oe-any"]` |
 | `UPGRADE_RUNNER_LABELS` | 场景二 `create-image` 派发 Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
@@ -290,7 +293,7 @@ Issue 轮询的主调度在 hwyx86 上，跑在专用 `oe-issue-poll` Runner 上
 | `TESTGEN_RUNNER_LABELS` | 场景四 generate Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-image-x86"]` |
 | `ISSUE_POLL_RUNNER_LABELS` | Issue 轮询 Job 的 runner 标签，JSON 数组 | `["self-hosted","Linux","X64","oe-issue-poll"]` |
 
-场景四复用场景一的 Agent 栈（`gateway/deepseek-v4-pro` + 网关 provider 注入），跨仓 PR 与场景二共用 `GITCODE_FORK_REPO`。看板爬取已下线，不再有跨轮 done / exhausted 状态。
+场景四复用场景一的 Agent 栈（`gateway/deepseek-v4-pro` + 网关 provider 注入），跨仓 PR 与场景二共用 `GITCODE_FORK_REPO`。
 
 **所有场景共用一套服务商配置**，唯一事实来源是 [`scripts/lib/ai_provider.py`](scripts/lib/ai_provider.py)：模型、provider id、baseURL、API Key 与超时都从同一组环境变量解析。最少只需配置 `AI_API_KEY`（或兼容的 `DEEPSEEK_API_KEY`），其余参数都有默认值。
 
@@ -306,7 +309,7 @@ Issue 轮询的主调度在 hwyx86 上，跑在专用 `oe-issue-poll` Runner 上
 
 部署完成后，从 Actions 页面手动运行 **Create New Images**，`operation` 选 `pipeline_smoke`：它跑完整编排链路，但不调用 AI、不做任何 GitCode 写操作，用于确认 Runner、工具链与编排本身健康。
 
-场景二的正式入口是 GitCode **`【new-version】` Issue**：标题给出应用名、目标版本与 openEuler 版本，正文给出上游看板返回的完整证据 JSON。运行 `monitor_upgrade_issues.yml` 认领待处理 Issue 后，把 `app` / `version` / `os_version` / `evidence` / `source_issue` 派发给 **App Version Upgrade**，流程口径是：Issue 证据 → 对比两个目标仓已有目录 → 驱动镜像构建与测试生成，最终是否通过由双架构构建与功能测试决定。也可手动触发该工作流，用 `app` 指定单个应用并给 `version` / `source_url`；手动路径不带证据时回落到最小 manual 证据，不传 `app` 即按清单全量扫描。`limit` 控制单轮最多升级几个应用。并发组按 `app` 隔离（`app-version-upgrade-<app>`，app 为空时按 ref）：逐 app 派发时不同应用并行、同一应用串行，避免固定并发组下排队 run 互相顶掉丢请求。
+场景二的正式入口是 GitCode **`【new-version】` Issue**：标题给出应用名、目标版本与 openEuler 版本，正文给出上游证据 JSON。运行 `monitor_upgrade_issues.yml` 认领待处理 Issue 后，把 `app` / `version` / `os_version` / `evidence` / `source_issue` 派发给 **App Version Upgrade**，流程口径是：Issue 证据 → 对比两个目标仓已有目录 → 驱动镜像构建与测试生成，最终是否通过由双架构构建与功能测试决定。也可手动触发该工作流，用 `app` 指定单个应用并给 `version` / `source_url`；手动路径不带证据时回落到最小 manual 证据，不传 `app` 即按清单全量扫描。`limit` 控制单轮最多升级几个应用。并发组按 `app` 隔离（`app-version-upgrade-<app>`，app 为空时按 ref）：逐 app 派发时不同应用并行、同一应用串行，避免固定并发组下排队 run 互相顶掉丢请求。
 
 CI 修复组件（**Fix PR CI failures**）只保留手动 / 显式调用：`workflow_dispatch` 指定 `source_repo` / `pr_number` / `source_platform` 触发一次完整修复链（会真实写 fix 分支与 Fix PR），可用 `x64_runner_labels` / `amd64_runner_labels` / `arm64_runner_labels` 临时指定机器。**Watch CI failed PRs** 也只保留手动触发，不再有 cron。
 
@@ -367,11 +370,11 @@ create_new_images.yml  (operation = scenario_one)
 
 ## 4. 场景二：应用自动升级
 
-> 取代社区 anitya + easysoftware-autoupgrade 的升级链路。正式入口是 GitCode `【new-version】` Issue：目标版本与上游证据都由 Issue 提供，自动升级**不查询 upstream-dashboard**；Dockerfile 由 AI 按 Issue 证据与上游源码生成，不做版本串机械替换。手动触发时版本由清单或参数手动维护。
+> 取代社区 anitya + easysoftware-autoupgrade 的升级链路。正式入口是 GitCode `【new-version】` Issue：目标版本与上游证据都由 Issue 提供；Dockerfile 由 AI 按 Issue 证据与上游源码生成，不做版本串机械替换。手动触发时版本由清单或参数手动维护。
 
 ### 4.1 触发与候选发现
 
-正式入口是 [`monitor_upgrade_issues.yml`](.github/workflows/monitor_upgrade_issues.yml) 扫描 GitCode `【new-version】` Issue，认领后调用 [`upgrade_upstream_versions.yml`](.github/workflows/upgrade_upstream_versions.yml)。Issue 标题格式 `【new-version】upgrade <app> to <version> on openEuler <os>`；正文必须是上游看板返回的完整证据 JSON（`software` / `version` / `upstream_evidence` / `l3_evidence` / `install_candidates`），模板见 [`templates/new-version-issue.md`](templates/new-version-issue.md)，字段与拒绝原因见 [`docs/new-version-issue-guide.md`](docs/new-version-issue-guide.md)。解析后随 `evidence` 输入透传。
+正式入口是 [`monitor_upgrade_issues.yml`](.github/workflows/monitor_upgrade_issues.yml) 扫描 GitCode `【new-version】` Issue，认领后调用 [`upgrade_upstream_versions.yml`](.github/workflows/upgrade_upstream_versions.yml)。Issue 标题格式 `【new-version】upgrade <app> to <version> on openEuler <os>`；正文必须粘贴上游证据 JSON（`software` / `version` / `upstream_evidence` / `l3_evidence` / `install_candidates`，可人工整理），模板见 [`templates/new-version-issue.md`](templates/new-version-issue.md)，字段与拒绝原因见 [`docs/new-version-issue-guide.md`](docs/new-version-issue-guide.md)。解析后随 `evidence` 输入透传。
 
 工作流也可手动触发：
 
@@ -394,7 +397,7 @@ create_new_images.yml  (operation = scenario_one)
 
 > 升级验证用统一标签 `oe-upgrade-x64` / `oe-upgrade-arm64` 圈定本仓的 4 台构建机（每台 2 个 runner 实例），避免误调度到其他仓库共用 `self-hosted,Linux,X64` 的临时 Runner；这 8 个实例额外带 `oe-any`，供架构无关 Job 跨架构抢空闲机器。一台 Runner 同时只跑一个 Job，`max_parallel` 与实例总数对齐即可吃满机器。
 
-`discover` job 浅克隆目标仓后调用 [`upgrade_scan.py`](scripts/harness/upgrade_scan.py)，**不查询 upstream-dashboard**：
+`discover` job 浅克隆目标仓后调用 [`upgrade_scan.py`](scripts/harness/upgrade_scan.py)，只做本地目录对比，不访问外部版本服务：
 
 - Issue 驱动时，版本来自 Issue 标题、证据来自 Issue 正文（`--evidence`），扫描阶段只负责定位两个目标仓里的目录、判断目标版本是否已存在；证据只作用于同名应用；
 - 手动触发时，软件清单来自 [`config/upgrade-apps.yml`](config/upgrade-apps.yml)（人工维护，**不遍历目标仓**）；清单项包含 `name`（软件名）、`app`（目标仓目录名）、`domain`（目标仓一级目录），以及手动维护的 `version`（目标版本）、`source_url`（上游仓库 HTTPS 地址）和可选的 `tag`；
@@ -467,7 +470,7 @@ clone 目标仓 → 确定性检查 → upgrade_auditor Agent → upgrade_fixer 
 
 ### 4.5 升级证据
 
-升级证据来自触发 Issue 的正文，自动升级不再抓取 upstream-dashboard：
+升级证据来自触发 Issue 的正文：
 
 - Issue 正文是证据 JSON：`software`（`name` / `repo_url` / `version`）必填，`upstream_evidence`、`l3_evidence`、`install_candidates` 可省略；字段约束见 [`docs/new-version-issue-guide.md`](docs/new-version-issue-guide.md)；
 - [`parse_issue.py`](scripts/harness/parse_issue.py) 校验必填字段，并要求 `software.name` / `software.version` 与标题一致；[`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把它归一化为 `source=gitcode-issue` 的证据包，保留原始字段；
@@ -541,15 +544,36 @@ python -m pytest tests/test_ci_fix_workflow.py tests/test_ci_gitcode_api.py \
 
 ## 5. 场景三：openEuler 版本升级
 
-上游应用版本升级由[场景二](#4-场景二应用自动升级)承接。场景三只保留 openEuler 大版本升级链路，验证组件 [`_upgrade_versions.yml`](.github/workflows/_upgrade_versions.yml) 负责：生成候选 → 双架构构建 → 运行既有测试套件；重试时跳过生成，只重跑构建与测试（Fixer 的改动已落盘）。
+上游应用版本升级由[场景二](#4-场景二应用自动升级)承接。场景三只处理「存量应用补齐新 openEuler 版本」：在既有应用下新增 `<app-ver>/<oe-ver>/Dockerfile` 目录并追加 `meta.yml`，测试复用应用级共享入口。
 
-| 工作流 | 触发 | 流程 |
+**触发：GitCode `【oe-upgrade】` Issue。** 标题必须含 `【oe-upgrade】` 并以 `openEuler <版本>` 结尾；正文给出目标版本与作用域：
+
+```markdown
+标题：【oe-upgrade】补齐 openEuler 24.03-LTS-SP4 镜像
+
+正文：
+**openEuler 目标版本（Target openEuler Version）：** 24.03-lts-sp4
+**Scope：** HPC
+```
+
+`Scope` 只接受 `AI` / `Bigdata` / `Cloud` / `Database` / `Distroless` / `HPC` / `Others` / `Storage`，多个领域用逗号分隔，留空或 `all` 表示全部。标题与正文的版本必须一致，否则 Issue 被拒绝并回帖原因。
+
+| 工作流 | 触发 | 职责 |
 |--------|------|------|
-| [`upgrade_openeuler_versions.yml`](.github/workflows/upgrade_openeuler_versions.yml) | `repository_dispatch: oe-new-version` / 手动 | 检测新 oe 版本 → 枚举全部应用 Matrix 并行（`fail-fast: false`）→ 成功者汇总批量 PR，失败者出报告 |
+| [`monitor_oe_upgrade_issues.yml`](.github/workflows/monitor_oe_upgrade_issues.yml) | cron 每 30 分钟 / 手动（`mode=plan` 或 `deliver`） | 控制器：认领 `【oe-upgrade】` Issue → 生成固定请求（`request_key`）→ 在固定 `base_sha` 上全量扫描目标仓、按领域串行排任务 → 同一活动同一时刻只派发一个未完成任务 → worker 结束后回写 Issue 活动汇总 |
+| [`oe_upgrade_worker.yml`](.github/workflows/oe_upgrade_worker.yml) | 由控制器 `workflow_dispatch` | 单任务执行：prepare（复用或生成共享测试 → 确定性生成候选 → 门禁）→ round-1..4 双架构校验与有界修复 → package-candidate 封存 → deliver 推分支开 PR → finalize 回写结果并唤醒控制器 |
 
-**升级版本**由 GitCode `【new-version】` Issue 提供（正文带上游证据），手动触发时也可用软件清单维护 `version` / `source_url`（可选 `tag`）；清单项缺字段时跳过并记录原因，也可用场景二手动入口指定 `app` + `version` + `source_url` 完成单个应用升级。
+**一次只推进一个任务。** 控制器按固定顺序找出第一个尚未完成的任务派发；worker 的并发组按 `request_key` 串行，任务结束后由 finalize 唤醒控制器继续下一个。这样避免整批并发抢占构建机，也避免同一应用重复开 PR。
 
-**PR 去重**：场景一 / 三 / 四按标题精确匹配；场景二按升级分支 `auto/version-update/<app>/<version>-<oe_tag>` 判断目标仓是否已有 open PR。
+**请求在活动期间保持稳定。** 首次规划固定目标仓 `base_sha`，后续 worker 都克隆同一个 SHA；`request_key = sha256("oe-upgrade\0{issue}\0{oe_version}")[:16]`、`task_key = sha256("oe-upgrade\0{mdu_path}\0{version}\0{os_version}")[:16]`，共同构成 run 名称与任务命名空间。
+
+**测试脚本优先复用。** 目标仓已有 `<mdu>/tests/test.sh` 且通过运行时契约校验时直接复用；缺失时才调用 Testcase Creator 生成，随后仍走 QA 与门禁（需要 AI 凭据）。
+
+**双架构与修复。** 每个 round 在 `oe-upgrade-x64` / `oe-upgrade-arm64` 上原生构建并运行共享测试，同一候选在两个架构都通过才算收敛；失败由 Fixer 有界修复，最多 4 轮后停止并保留证据。
+
+**失败与跳过。** 单个任务失败会写 Issue 评论并记录，活动继续推进后续任务；目标分支已有同名 PR 的任务跳过；规划阶段缺少可用源版本、版本号不可比较等计入 plan summary，不阻塞其他任务。全部任务结束后控制器写活动汇总并把 Issue 置为「已挂起」，等待维护者审核 PR。
+
+> 旧的批量入口 [`upgrade_openeuler_versions.yml`](.github/workflows/upgrade_openeuler_versions.yml) 已禁用，只保留提示。
 
 ---
 
@@ -714,8 +738,12 @@ openeuler-docker-images-workflow/
 │   │   └── phase1-emit-patch/               # 候选补丁产出
 │   ├── agents/
 │   │   ├── image-creator.md                 # ① 镜像生成者
-│   │   ├── testcase-creator.md              # ①④ 测试生成者
-│   │   ├── testcase-qa.md                   # ①④ 测试挑战者
+│   │   ├── testcase-creator.md              # ①③④ 测试生成者
+│   │   ├── testcase-qa.md                   # ①③④ 测试挑战者
+│   │   ├── upgrade-creator.md               # ② 升级 Dockerfile 生成者
+│   │   ├── upgrade-auditor.md               # ② 已是最新版本的审计者
+│   │   ├── upgrade-fixer.md                 # ② 审计后修复者
+│   │   ├── testgen-creator.md               # ④ KunpengTest 测试脚本生成者
 │   │   ├── ci-failure-analyst.md            # CI 修复组件：失败诊断师
 │   │   ├── dockerfile-builder.md            # CI 修复组件：容器构建修复工程师
 │   │   └── code-fixer.md                    # ①③ 修复者（内置故障诊断）
@@ -723,26 +751,28 @@ openeuler-docker-images-workflow/
 │   │   ├── monitor_new_image_issues.yml     # ① Issue 扫描与认领（cron */5）
 │   │   ├── create_new_images.yml            # ① 主编排（prepare → 4 轮 → 交付）
 │   │   ├── _create_new_image_rounds.yml     # ① 单轮验证-修复-决策组件
-│   │   ├── upgrade_upstream_versions.yml    # ② 应用自动升级主编排（手动；定时测试期关闭）
+│   │   ├── monitor_upgrade_issues.yml       # ② 【new-version】 Issue 扫描
+│   │   ├── upgrade_upstream_versions.yml    # ② 应用自动升级主编排（Issue 驱动 / 手动）
 │   │   ├── _upgrade_app.yml                 # ② 单应用升级组件（prepare → x64/arm64 容器重放 → 双架构验证 → PR）
 │   │   ├── generate_test_scripts.yml        # ④ 存量补功能测试（手动单应用）
 │   │   ├── monitor_ci_failed_prs.yml        # CI 修复组件：扫 ci_failed PR（仅手动）
 │   │   ├── ci_fix_pipeline.yml              # CI 修复组件入口薄壳（手动 / repository_dispatch）
 │   │   ├── _ci_repair.yml                   # CI 修复组件（prepare → 分析 → 3 轮修复 → 落回）
 │   │   ├── _ci_fix_round.yml                # CI 修复组件：单轮修复（arm64 首修 → amd64 → arm64 复验）
-│   │   ├── upgrade_openeuler_versions.yml   # ③ openEuler 版本升级
-│   │   ├── _upgrade_versions.yml            # ③ 共享验证组件
+│   │   ├── monitor_oe_upgrade_issues.yml    # ③ Issue 驱动控制器（plan / deliver）
+│   │   ├── oe_upgrade_worker.yml            # ③ 单任务 worker（prepare → 4 轮 → 封存 → PR → 收口）
+│   │   ├── upgrade_openeuler_versions.yml   # ③ 旧批量入口（已禁用）
 │   │   ├── issue_contract_test.yml          # GitCode Issue API 契约冒烟
 │   │   └── test-e2e.yml                     # 开发自测（不创建真实 PR）
 │   ├── toolchain.lock.yml                   # 工具链版本 + SHA256 锁
 │   └── python-phase1.lock.txt               # Python 依赖锁
 ├── config/
-│   ├── watchlist.json                       # CI 修复组件的仓库列表与轮询参数（仅手动扫描使用）
+│   ├── watchlist.json                       # CI 修复组件的仓库列表与扫描参数（仅手动使用）
 │   └── upgrade-apps.yml                     # ② 场景二软件清单（人工维护，不遍历目标仓）
 ├── scripts/
 │   ├── harness/
 │   │   ├── flow.py                          # 阶段一确定性编排入口
-│   │   ├── run.py                           # 场景③ legacy Agent/测试入口
+│   │   ├── run.py                           # legacy Agent/测试入口
 │   │   ├── parse_issue.py                   # Issue 解析与领域映射
 │   │   ├── query_version.py                 # 上游 / oe 版本对比查询
 │   │   ├── validate_meta.py                 # meta.yml schema 校验
@@ -824,18 +854,29 @@ openeuler-docker-images-workflow/
 
 | 模块 | 职责 |
 |------|------|
-| [`scripts/lib/upstream_dashboard.py`](scripts/lib/upstream_dashboard.py) | 独立的 upstream-dashboard 客户端（`version/resolve` + 证据抓取），仅供工具/历史脚本使用；场景二自动升级**不再调用** |
 | [`scripts/lib/upstream_evidence.py`](scripts/lib/upstream_evidence.py) | 证据适配与 PR / 提示词渲染：把 Issue 上游证据归一化为 `source=gitcode-issue`（保留 L1 证据、`l3_evidence`、`install_candidates`），也支持手动 `source=manual` 证据，生成 PR 正文与提示词片段 |
 | [`scripts/lib/app_notes.py`](scripts/lib/app_notes.py) | 应用注意点：读取 `config/app-notes/<app>.md` 注入提示与构建预算；把 Agent 返回的 `app_note` 合并为按版本隔离的「自动沉淀」章节，保留人工内容 |
 | [`scripts/harness/publish_app_note.py`](scripts/harness/publish_app_note.py) | 把 Agent 总结的 app note 推到 `auto/app-note/<app>` 分支并向本仓开独立 notes PR |
 | [`scripts/harness/upgrade_scan.py`](scripts/harness/upgrade_scan.py) | 版本发现：Issue 证据 / 清单手动 `version` / `source_url` × 目标仓已有版本 → 升级矩阵 + 目标版本已存在的审计矩阵 |
 | [`scripts/harness/upgrade_audit.py`](scripts/harness/upgrade_audit.py) | 目标版本已存在的审计与修复：确定性检查版本/tag/meta/测试脚本/image-info，AI 审计后调修复 Agent，更新 Dockerfile 与 doc/image-info.yml，推修复分支，双架构原生校验通过后开 PR |
-| [`scripts/utils/scrape_upgrade_apps.py`](scripts/utils/scrape_upgrade_apps.py) | 一次性工具：从看板拉软件列表（`--domain kunpeng` / `ascend`），匹配目标仓目录，生成初始 `config/upgrade-apps.yml` |
 | [`scripts/lib/version_upgrade.py`](scripts/lib/version_upgrade.py) | 确定性落盘：复制版本目录、写入 AI 生成的 Dockerfile、更新 README/doc 版本号、追加 `meta.yml`；生成内容不符合目标版本即失败并清理 |
 | [`scripts/harness/upgrade_apply.py`](scripts/harness/upgrade_apply.py) | 单应用升级：切分支、AI 依 Issue 证据 / 清单版本与上游源码生成 Dockerfile、缺测试则补、确定性落盘、commit、推送，并产出 `task-spec.json` |
 | [`scripts/harness/upgrade_open_pr.py`](scripts/harness/upgrade_open_pr.py) | 升级 PR 正文（变更 + 功能测试状态 + 升级证据）与跨仓 PR 创建 |
 
-### 10.6 CI 修复组件（手动，独立子系统）
+### 10.6 场景三：openEuler 版本升级
+
+| 模块 | 职责 |
+|------|------|
+| [`scripts/lib/oe_upgrade_contract.py`](scripts/lib/oe_upgrade_contract.py) | Issue 请求契约：解析标题与正文（目标版本必须与标题一致，`Scope` 取领域列表）、生成固定 `UpgradeRequest` 与 `request_key` |
+| [`scripts/lib/oe_upgrade_planner.py`](scripts/lib/oe_upgrade_planner.py) | 确定性规划：按 Scope 扫描目标仓 MDU，对比已有版本，产出任务清单、规划失败与告警 |
+| [`scripts/lib/oe_upgrade_controller.py`](scripts/lib/oe_upgrade_controller.py) | 一次性控制器：写入活动汇总评论、核对 worker 运行、按顺序派发下一个任务、收口后把 Issue 置为「已挂起」 |
+| [`scripts/lib/oe_upgrade_advance.py`](scripts/lib/oe_upgrade_advance.py) | 纯状态投影：根据目标仓目录状态、已有 PR、worker 运行与失败标记判断下一步（等待 / 派发 / 完结） |
+| [`scripts/lib/oe_upgrade_candidate.py`](scripts/lib/oe_upgrade_candidate.py) | 确定性派生候选：复制既有版本目录、生成目标 oe 目录与 `meta.yml` 追加 |
+| [`scripts/lib/oe_upgrade_test_prep.py`](scripts/lib/oe_upgrade_test_prep.py) | 共享测试准备：已有 `tests/test.sh` 且通过契约则复用，缺失时调用 Testcase Creator 并走 QA |
+| [`scripts/lib/oe_upgrade_sanitizer.py`](scripts/lib/oe_upgrade_sanitizer.py) | Agent 改动的检查点与白名单清洗 |
+| [`scripts/lib/oe_upgrade_activity.py`](scripts/lib/oe_upgrade_activity.py) | 活动评论标记、请求评论解析、失败/汇总评论渲染 |
+
+### 10.7 CI 修复组件（手动，独立子系统）
 
 CI 修复组件自带一套平台与 AI 调用层（`ci_*` 与 `ai_runner` / `opencode_run`），与场景一的 `gitcode_client.py` / `agent_runtime.py` 并存且互不依赖——它面向的是"修复别人仓库里已有的 PR"，与场景一的生成交付链路没有共享状态。
 

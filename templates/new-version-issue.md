@@ -6,7 +6,7 @@
 
 **上游证据（Upstream Evidence，必填）：**
 
-> 粘贴上游看板返回的证据 JSON。仅 `software` 必填，`software.name`、`software.version`
+> 粘贴上游证据 JSON（可人工整理）。仅 `software` 必填，`software.name`、`software.version`
 > 必须与标题一致；其余字段可以省略。字段说明见 `docs/new-version-issue-guide.md`。
 
 ```json

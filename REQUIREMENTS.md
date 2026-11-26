@@ -23,35 +23,49 @@ openEuler社区有如下两种分类：
 
 ## 目标
 
-系统只建设四个场景：新增应用镜像（场景一）、PR CI 失败自动修复（场景二）、openEuler 大版本升级（场景三）、存量镜像功能测试脚本补齐（场景四）。
+系统只建设四个场景：新增应用镜像（场景一）、应用上游版本自动升级（场景二）、openEuler 大版本升级（场景三）、存量镜像功能测试脚本补齐（场景四）；PR CI 失败修复抽成可复用的手动组件。
 
-> 应用上游版本升级（原目标二）已由社区运行中的服务承接——anitya 负责版本监控，easysoftware-autoupgrade 负责生成与提 PR——因此本系统不再建设该场景，只接管它产生的 PR 的 CI 失败（场景二）。
+> 应用上游版本升级（场景二）由 GitCode `【new-version】` Issue 提供目标版本与上游证据，流水线负责生成 Dockerfile、双架构验证与 PR。PR CI 失败修复不再自动轮询，改为手动 / 显式调用 `_ci_repair.yml`。
 
 ### 场景一：新增应用镜像
 
 1. 用户可以根据Issue描述需求，新增应用镜像，我希望能够自动提交一个PR来完成，创建一个新的镜像目录，并且符合仓库README.md约束的规范存放、生成所有要求的文档等
 
-### 场景二：PR CI 失败自动修复
+### 场景二：应用上游版本自动升级
 
-已经提出的版本升级 PR 常因构建环境、依赖、编译参数变化导致 CI 失败，需要维护者人工翻日志、定位根因、修改 Dockerfile 再重提，单条 PR 平均 15–30 分钟。这是本系统要接管的高频重复劳动：
+应用上游发布新版本时，需要为存量应用补一个新版本镜像目录，还要判断已有最新版本的 Dockerfile 是否可信：
 
-1. 目标仓 PR 被打上 `ci_failed` 标签后，自动抓取**实际失败架构**的 CI 日志与 PR diff，由 AI 产出结构化诊断报告（日志与状态矛盾时标记"证据不足"，不猜根因）；
+1. 版本与上游证据由 GitCode `【new-version】` Issue 提供（`software` 必填，可附 `upstream_evidence` / `l3_evidence` / `install_candidates`），扫描阶段只对比目标仓已有目录；
+2. 缺新版本 → 补功能测试 + AI 依证据与固定上游源码生成 Dockerfile + 确定性目录/元数据落盘 + 双架构原生验证 → 一应用一 PR；
+3. 目标版本目录已存在 → AI 审计并修复 Dockerfile 与 `doc/image-info.yml`，双架构通过后开 PR；
+4. conda 仓同名软件同步在 `packages/<包名>/supported-versions.yml` 登记，登记前校验上游产物。
+
+### PR CI 失败修复（手动组件）
+
+已经提出的版本升级 PR 常因构建环境、依赖、编译参数变化导致 CI 失败，需要维护者人工翻日志、定位根因、修改 Dockerfile 再重提，单条 PR 平均 15–30 分钟。手动触发后，组件接管这部分劳动：
+
+1. 目标仓 PR 被指定修复时，抓取**实际失败架构**的 CI 日志与 PR diff，由 AI 产出结构化诊断报告（日志与状态矛盾时标记"证据不足"，不猜根因）；
 2. 修复不依赖文本盲改：在自托管 Runner 的容器内逐条执行 Dockerfile 指令、失败即修，跑通后反推 Dockerfile 并用 `docker build` 验证；
 3. 反推出的 Dockerfile 回到 arm64 做确定性复验，再以最小 diff 落回源码，提交或复用 Fix PR；
 4. Fix PR 的 CI 若再次失败，自动追加 commit 重试（最多 6 次），超限关闭 Fix PR 并通知人工介入；
 5. 每次修复通过 CI 后，把失败模式沉淀进知识库（`docs/ci-failure-patterns.md`），供后续诊断参考。
 
-实现移植自 [docker-images-workflow](https://github.com/FdeCad/docker-images-workflow)，仅适配本仓的 Runner 标签、锁定工具链与凭据约定。默认**不启用**（`config/watchlist.json` 的 `enabled: false`），需显式开启后才会对目标仓 PR 动手。
+实现移植自 [docker-images-workflow](https://github.com/FdeCad/docker-images-workflow)，仅适配本仓的 Runner 标签、锁定工具链与凭据约定。组件只保留手动 / 显式 dispatch 入口，不再自动轮询（`config/watchlist.json` 的 `enabled` 默认关闭）。
 
 ### 场景三：openEuler 大版本升级
 
-当 openEuler 发布新版本时，我希望你能够基于新的 openEuler 版本更新所有已有的应用容器镜像，你只能按规则新增一个目录，而不是修改已有镜像目录文件
+当 openEuler 发布新版本时，需要基于新的 openEuler 版本更新所有已有的应用容器镜像，只能按规则新增一个目录，而不是修改已有镜像目录文件：
+
+1. 由 GitCode `【oe-upgrade】` Issue 驱动，标题给出目标版本，正文给出 `Target openEuler Version` 与 `Scope`（领域列表或 `all`）；
+2. 控制器按 Scope 全量扫描目标仓并固定 `base_sha`，一次只派发一个未完成任务；
+3. worker 完成 prepare → 4 轮双架构校验与有界修复 → 候选封存 → 分支推送与 PR → 回写 Issue；
+4. 单个任务失败写 Issue 评论但不阻塞后续任务；全部任务结束后写活动汇总。
 
 ### 场景四：存量镜像功能测试脚本补齐
 
 目标仓库已把功能测试与 CI 构建互相绑定：新提交触发门禁，构建成功后按该应用提供的 `tests/test.sh` 执行功能测试。但仓库里大量软件没有功能测试脚本。我希望能自动为指定软件生成功能测试脚本：
 
-1. 每日定时爬取 Kunpeng 上游看板（`upstream-dashboard.test.osinfra.cn`）获取软件目录，与目标仓库对比找出缺测试脚本的软件，每轮限量分批生成；
+1. 由维护者手动指定软件名，定位目标仓该软件的最新镜像目录，为该应用生成功能测试脚本；
 2. 生成的 `tests/test.sh` 必须满足 KunpengTest 规范（`https://github.com/opensourceways/upstream-dashboard/blob/KunpengTest/README.md`）：CI 以 `docker run --entrypoint bash` 只读挂载执行，注入 `EXPECTED_VERSION` 等五个环境变量，禁用 `set -e`，服务型软件须在脚本内自行拉起服务并等待就绪，输出 PASS/FAIL 行约定；
 3. 生成后做静态校验（语法、规范符合性），失败则带报告重试（最多 2 轮），仍失败转人工；
 4. 一软件一 PR，PR 同时给该软件最新版本目录的 Dockerfile 追加一个空行，用于触发目标仓绑定的构建 + 功能测试 CI。
