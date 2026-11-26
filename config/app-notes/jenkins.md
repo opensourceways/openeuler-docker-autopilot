@@ -17,3 +17,9 @@ app: jenkins
 
 ## 验证
 - `java -jar jenkins.war --version`；tests/test.sh 存在时以其为准。
+
+<!-- oe-app-note:auto:2.592/24.03-lts-sp4 -->
+## 自动沉淀：2.592 / 24.03-lts-sp4
+
+aarch64 上 `mvn clean install -Dmaven.test.skip=true` 全量构建约 13 分钟（16 核/31GB），`mvn spotless:apply` 约 2.5 分钟；产物为 `/jenkins/war/target/jenkins.war`（约 53MB，最终名即 jenkins.war，无需改名）。运行阶段仅需 `java-21-openjdk`（无 devel）即可 `java -jar ./jenkins.war --version` 输出 2.592。
+<!-- /oe-app-note:auto -->
