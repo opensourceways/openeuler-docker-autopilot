@@ -1,0 +1,26 @@
+name: Install disk guard timer (one-off)
+
+# 一次性部署：在轮询机上安装 runner-disk-guard.timer，跑完即删分支。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ["self-hosted", "Linux", "X64", "oe-issue-poll"]
+    timeout-minutes: 10
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install timer
+        run: |
+          bash deploy/runner-disk-guard/install.sh
+
+      - name: Verify
+        run: |
+          systemctl list-timers --all runner-disk-guard.timer
+          systemctl status runner-disk-guard.timer --no-pager
+          grep -E 'TOKEN_FILE|REPO=|WORKFLOW=|REF=' /usr/local/bin/runner-disk-guard.sh
