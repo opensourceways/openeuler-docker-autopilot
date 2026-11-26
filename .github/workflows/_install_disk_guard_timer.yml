@@ -19,6 +19,9 @@ jobs:
         run: |
           bash deploy/runner-disk-guard/install.sh
 
+      - name: Remove staging copy
+        run: rm -rf /opt/runner-disk-guard
+
       - name: Verify
         run: |
           date
