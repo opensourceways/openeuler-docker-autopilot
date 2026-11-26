@@ -5,7 +5,7 @@ Stage: 场景二单应用升级（upgrade_apply）
 在目标仓完整克隆上，对一个应用执行：
 
 1. 切出升级分支 ``auto/version-update/<app>/<ver>-<oe_tag>``；
-2. AI 结合看板证据包与上游源码生成新版本 Dockerfile（**不做版本串机械替换**），
+2. AI 结合上游证据包与上游源码生成新版本 Dockerfile（**不做版本串机械替换**），
    并在真实容器里逐条重放、失败当场修，返回「实际跑通」的版本
    （与 CI 失败修复链路的 dockerfile-builder 同一套做法）；
 3. 若该应用缺功能测试脚本，复用场景四的 ``generate_test_script`` 生成
