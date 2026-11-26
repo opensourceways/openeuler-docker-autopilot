@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from scripts.lib.gitcode_client import GitCodeResource
+from scripts.lib.issue_router import (
+    LEGACY_TITLE_PREFIXES,
+    SCENARIO_UPGRADE,
+    UNIFIED_TITLE_PREFIX,
+)
 from scripts.lib.task_spec import TaskSpec
 
 
@@ -59,6 +64,16 @@ class ClaimedUpgradeIssue:
     number: int
     url: str
     request: UpgradeRequest
+
+
+@dataclass(frozen=True)
+class ClaimedRoutedIssue:
+    """One claimed ``【镜像任务】`` Issue and the scenario chosen for it."""
+
+    number: int
+    url: str
+    scenario: str
+    payload: Any
 
 
 @dataclass(frozen=True)
@@ -376,7 +391,10 @@ def render_needs_human_summary(evidence_dir: Path) -> str:
     )
 
 
-def _workflow_inputs(task: TaskSpec, issue_number: int) -> dict[str, str]:
+def scenario_one_workflow_inputs(
+    task: TaskSpec,
+    issue_number: int,
+) -> dict[str, str]:
     return {
         "operation": "scenario_one",
         "app": task.app,
@@ -388,7 +406,7 @@ def _workflow_inputs(task: TaskSpec, issue_number: int) -> dict[str, str]:
     }
 
 
-def _upgrade_workflow_inputs(
+def upgrade_workflow_inputs(
     request: UpgradeRequest,
     issue_number: int,
 ) -> dict[str, str]:
@@ -582,7 +600,7 @@ def claim_new_image_issue(
         title_prefix=_NEW_IMAGE_TITLE,
         select_issue=lambda issues: _select_new_issue(issues, _NEW_IMAGE_TITLE),
         parse_task=parse_task,
-        build_inputs=_workflow_inputs,
+        build_inputs=scenario_one_workflow_inputs,
         dispatch=dispatch,
         accepted_comment="该请求已接纳，自动镜像流水线已经触发。",
     )
@@ -609,7 +627,7 @@ def claim_upgrade_issue(
         title_prefix=_UPGRADE_TITLE,
         select_issue=_select_queued_upgrade_issue,
         parse_task=parse_task,
-        build_inputs=_upgrade_workflow_inputs,
+        build_inputs=upgrade_workflow_inputs,
         dispatch=dispatch,
         accepted_comment="该升级请求已接纳，自动升级流水线已经触发。",
     )
@@ -617,6 +635,126 @@ def claim_upgrade_issue(
         return None
     number, url, request = result
     return ClaimedUpgradeIssue(number=number, url=url, request=request)
+
+
+def _select_routed_issue(
+    issues: list[Mapping[str, object]],
+    route: Callable[[Mapping[str, object]], tuple[str, Any]],
+) -> Mapping[str, object] | None:
+    """Pick the first claimable routed Issue, honouring same-app upgrade queueing."""
+
+    busy_apps = set()
+    for issue in issues:
+        if _issue_status(issue) not in _CLAIMED_ISSUE_STATUSES:
+            continue
+        try:
+            scenario, payload = route(issue)
+        except ValueError:
+            continue
+        app = getattr(payload, "app", None)
+        if scenario == SCENARIO_UPGRADE and app:
+            busy_apps.add(app)
+    for issue in issues:
+        if not _is_claimable(issue):
+            continue
+        # 旧标题由各自的 monitor 认领，避免同一 Issue 被两条路径同时认领。
+        if any(
+            _title_has_prefix(issue, prefix)
+            for prefix in LEGACY_TITLE_PREFIXES.values()
+        ):
+            continue
+        try:
+            scenario, payload = route(issue)
+        except ValueError:
+            # 无法路由的 Issue 也要认领，交给认领流程回帖说明原因。
+            return issue
+        if (
+            scenario == SCENARIO_UPGRADE
+            and getattr(payload, "app", None) in busy_apps
+        ):
+            continue
+        return issue
+    return None
+
+
+def claim_routed_issue(
+    *,
+    client: Any,
+    target_repo: str,
+    issue_number: int | None,
+    route: Callable[[Mapping[str, object]], tuple[str, Any]],
+    dispatch: Callable[[str, Any, int], None],
+    accepted_comments: Mapping[str, str],
+) -> ClaimedRoutedIssue | None:
+    """Claim one ``【镜像任务】`` Issue and dispatch the scenario named in its body."""
+
+    if issue_number is None:
+        issues = client.list_issues(
+            target_repo=target_repo,
+            state="open",
+            search=UNIFIED_TITLE_PREFIX,
+        )
+        issue = _select_routed_issue(issues, route)
+        if issue is None:
+            return None
+    else:
+        issue = client.get_issue(
+            target_repo=target_repo,
+            number=issue_number,
+        )
+    if str(issue.get("state", "")).lower() not in {"open", "opened"}:
+        return None
+    if not _is_claimable(issue):
+        return None
+
+    number = _issue_number(issue)
+    original_status = _issue_status(issue)
+    try:
+        scenario, payload = route(issue)
+    except ValueError as error:
+        _reject_issue(
+            client=client,
+            target_repo=target_repo,
+            issue=issue,
+            reason=str(error),
+        )
+        return None
+
+    _update_source_issue(
+        client=client,
+        target_repo=target_repo,
+        issue=issue,
+        issue_status=_claimed_status(issue),
+        state="open",
+    )
+    try:
+        dispatch(scenario, payload, number)
+    except Exception as error:
+        try:
+            _update_source_issue(
+                client=client,
+                target_repo=target_repo,
+                issue=issue,
+                issue_status=original_status,
+                state="open",
+            )
+        except Exception as rollback_error:
+            raise IssueLifecycleError(
+                "workflow dispatch and Issue claim rollback both failed"
+            ) from rollback_error
+        raise IssueLifecycleError(f"workflow dispatch failed: {error}") from error
+
+    client.create_issue_comment(
+        target_repo=target_repo,
+        number=number,
+        body=accepted_comments[scenario],
+    )
+    return ClaimedRoutedIssue(
+        number=number,
+        url=_issue_url(issue),
+        scenario=scenario,
+        payload=payload,
+    )
 
 
 def _finalize_issue(

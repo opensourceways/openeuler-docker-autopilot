@@ -42,15 +42,19 @@ from scripts.lib.gitcode_client import (
 )
 from scripts.lib.issue_lifecycle import (
     ClaimedIssue,
+    ClaimedRoutedIssue,
     ClaimedUpgradeIssue,
     IssueLifecycleError,
     UpgradeRequest as IssueUpgradeRequest,
     claim_new_image_issue,
+    claim_routed_issue,
     claim_upgrade_issue,
     dispatch_github_workflow,
     finalize_new_image_issue,
     finalize_upgrade_issue,
     run_controlled_issue_probe,
+    scenario_one_workflow_inputs,
+    upgrade_workflow_inputs,
 )
 from scripts.lib.native_repair import (
     NativeRepairError,
@@ -122,7 +126,15 @@ from scripts.lib.target_contract import (
 from scripts.lib.upstream_format_check import run_upstream_format_check
 from scripts.harness.parse_issue import (
     parse_issue_request,
+    parse_new_image_request,
     parse_upgrade_issue_request,
+    parse_upgrade_request,
+)
+from scripts.lib.issue_router import (
+    SCENARIO_NEW_IMAGE,
+    SCENARIO_OE_UPGRADE,
+    SCENARIO_UPGRADE,
+    route_issue,
 )
 
 
@@ -792,6 +804,108 @@ def _upgrade_issue_watch(args: argparse.Namespace) -> None:
     )
 
 
+def _issue_dispatch(args: argparse.Namespace) -> None:
+    """Claim one 【镜像任务】 Issue and dispatch the scenario named in its body."""
+
+    gitcode_token = _issue_token()
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    if not gitcode_token:
+        raise IssueLifecycleError(
+            "GITCODE_ISSUE_TOKEN or GITCODE_TOKEN is required"
+        )
+    if not github_token:
+        raise IssueLifecycleError("GITHUB_TOKEN is required")
+
+    workflows = {
+        SCENARIO_NEW_IMAGE: args.new_image_workflow,
+        SCENARIO_UPGRADE: args.upgrade_workflow,
+        SCENARIO_OE_UPGRADE: args.oe_upgrade_workflow,
+    }
+    accepted_comments = {
+        SCENARIO_NEW_IMAGE: "该请求已接纳，自动镜像流水线已经触发。",
+        SCENARIO_UPGRADE: "该升级请求已接纳，自动升级流水线已经触发。",
+        SCENARIO_OE_UPGRADE: (
+            "该 openEuler 版本升级请求已接纳，控制器将开始规划。"
+        ),
+    }
+
+    def route(issue: Mapping[str, object]) -> tuple[str, object]:
+        title = str(issue.get("title", ""))
+        body = str(issue.get("body", "") or "")
+        scenario = route_issue(title, body)
+        if scenario == SCENARIO_NEW_IMAGE:
+            fields = parse_new_image_request(title, body)
+            return scenario, TaskSpec.from_workflow_dispatch(
+                {
+                    "app": fields["package_name"],
+                    "version": fields["app_version"],
+                    "os_version": fields["os_version"],
+                    "domain": fields["domain"],
+                    "source_url": fields["source_repo_url"],
+                }
+            )
+        if scenario == SCENARIO_UPGRADE:
+            fields = parse_upgrade_request(title, body)
+            return scenario, IssueUpgradeRequest(
+                app=fields["app"],
+                version=fields["version"],
+                os_version=fields["os_version"],
+                source_url=fields["source_url"],
+                evidence=upstream_evidence.from_issue_payload(fields["evidence"]),
+            )
+        number = int(issue.get("number", issue.get("iid", 0)))
+        return scenario, parse_upgrade_issue(number, title, body, mode="plan")
+
+    def dispatch(scenario: str, payload: object, issue_number: int) -> None:
+        if scenario == SCENARIO_NEW_IMAGE:
+            inputs = scenario_one_workflow_inputs(payload, issue_number)
+        elif scenario == SCENARIO_UPGRADE:
+            inputs = upgrade_workflow_inputs(payload, issue_number)
+        else:
+            # 目标版本与 Scope 由控制器从 Issue 正文重新解析，这里只锁定编号。
+            inputs = {
+                "tracking_issue_number": str(issue_number),
+                "mode": "plan",
+            }
+        dispatch_github_workflow(
+            github_token=github_token,
+            github_repository=args.github_repository,
+            workflow=workflows[scenario],
+            ref=args.github_ref,
+            inputs=inputs,
+        )
+
+    if args.issue_number is None and args.max_issues < 1:
+        raise IssueLifecycleError("--max-issues must be a positive integer")
+    limit = args.max_issues if args.issue_number is None else 1
+    claimed: list[ClaimedRoutedIssue] = []
+    for _ in range(limit):
+        result = claim_routed_issue(
+            client=GitCodeClient(token=gitcode_token),
+            target_repo=args.target_repo,
+            issue_number=args.issue_number,
+            route=route,
+            dispatch=dispatch,
+            accepted_comments=accepted_comments,
+        )
+        if result is None:
+            break
+        claimed.append(result)
+    _print_json(
+        {
+            "dispatched": bool(claimed),
+            "issues": [
+                {
+                    "issue_number": item.number,
+                    "issue_url": item.url,
+                    "scenario": item.scenario,
+                }
+                for item in claimed
+            ],
+        }
+    )
+
+
 def _upgrade_issue_finalize(args: argparse.Namespace) -> None:
     token = _issue_token()
     if not token:
@@ -1390,6 +1504,41 @@ def _add_delivery_commands(commands: argparse._SubParsersAction) -> None:
         default="upgrade_upstream_versions.yml",
     )
     upgrade_watch.set_defaults(handler=_upgrade_issue_watch)
+
+    issue_dispatch = commands.add_parser(
+        "issue-dispatch",
+        description=(
+            "Claim one 【镜像任务】 Issue and dispatch the scenario declared by "
+            "its body Type; legacy 【new-image】/【new-version】/【oe-upgrade】 "
+            "titles keep working."
+        ),
+    )
+    issue_dispatch.add_argument("--target-repo", required=True)
+    issue_dispatch.add_argument("--issue-number", type=int)
+    issue_dispatch.add_argument(
+        "--max-issues",
+        type=int,
+        default=1,
+        help=(
+            "Maximum new Issues claimed per scan run; ignored when "
+            "--issue-number is set (default: 1)"
+        ),
+    )
+    issue_dispatch.add_argument("--github-repository", required=True)
+    issue_dispatch.add_argument("--github-ref", required=True)
+    issue_dispatch.add_argument(
+        "--new-image-workflow",
+        default="create_new_images.yml",
+    )
+    issue_dispatch.add_argument(
+        "--upgrade-workflow",
+        default="upgrade_upstream_versions.yml",
+    )
+    issue_dispatch.add_argument(
+        "--oe-upgrade-workflow",
+        default="monitor_oe_upgrade_issues.yml",
+    )
+    issue_dispatch.set_defaults(handler=_issue_dispatch)
 
     upgrade_finalize = commands.add_parser(
         "upgrade-issue-finalize",

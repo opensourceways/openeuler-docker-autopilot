@@ -25,7 +25,7 @@ openEuler社区有如下两种分类：
 
 系统只建设四个场景：新增应用镜像（场景一）、应用上游版本自动升级（场景二）、openEuler 大版本升级（场景三）、存量镜像功能测试脚本补齐（场景四）；PR CI 失败修复抽成可复用的手动组件。
 
-> 应用上游版本升级（场景二）由 GitCode `【new-version】` Issue 提供目标版本与上游证据，流水线负责生成 Dockerfile、双架构验证与 PR。PR CI 失败修复不再自动轮询，改为手动 / 显式调用 `_ci_repair.yml`。
+> 三个 Issue 驱动的场景共用统一标题 `【镜像任务】<一句话描述>`，场景由正文的 `任务类型（Type）` 决定（`new-image` / `upgrade-version` / `oe-upgrade`）；旧的 `【new-image】` / `【new-version】` / `【oe-upgrade】` 标题永久兼容。应用上游版本升级（场景二）由 Issue 提供目标版本与上游证据，流水线负责生成 Dockerfile、双架构验证与 PR。PR CI 失败修复不再自动轮询，改为手动 / 显式调用 `_ci_repair.yml`。
 
 ### 场景一：新增应用镜像
 
@@ -35,7 +35,7 @@ openEuler社区有如下两种分类：
 
 应用上游发布新版本时，需要为存量应用补一个新版本镜像目录，还要判断已有最新版本的 Dockerfile 是否可信：
 
-1. 版本与上游证据由 GitCode `【new-version】` Issue 提供（`software` 必填，可附 `upstream_evidence` / `l3_evidence` / `install_candidates`），扫描阶段只对比目标仓已有目录；
+1. 版本与上游证据由 GitCode `【镜像任务】`（`Type: upgrade-version`）Issue 提供（正文 `Software` / `Target Version` / `openEuler 版本` + `software` 必填的证据 JSON，可附 `upstream_evidence` / `l3_evidence` / `install_candidates`），扫描阶段只对比目标仓已有目录；
 2. 缺新版本 → 补功能测试 + AI 依证据与固定上游源码生成 Dockerfile + 确定性目录/元数据落盘 + 双架构原生验证 → 一应用一 PR；
 3. 目标版本目录已存在 → AI 审计并修复 Dockerfile 与 `doc/image-info.yml`，双架构通过后开 PR；
 4. conda 仓同名软件同步在 `packages/<包名>/supported-versions.yml` 登记，登记前校验上游产物。
@@ -56,7 +56,7 @@ openEuler社区有如下两种分类：
 
 当 openEuler 发布新版本时，需要基于新的 openEuler 版本更新所有已有的应用容器镜像，只能按规则新增一个目录，而不是修改已有镜像目录文件：
 
-1. 由 GitCode `【oe-upgrade】` Issue 驱动，标题给出目标版本，正文给出 `Target openEuler Version` 与 `Scope`（领域列表或 `all`）；
+1. 由 GitCode `【镜像任务】`（`Type: oe-upgrade`）Issue 驱动，正文给出 `Target openEuler Version` 与 `Scope`（领域列表或 `all`）；
 2. 控制器按 Scope 全量扫描目标仓并固定 `base_sha`，一次只派发一个未完成任务；
 3. worker 完成 prepare → 4 轮双架构校验与有界修复 → 候选封存 → 分支推送与 PR → 回写 Issue；
 4. 单个任务失败写 Issue 评论但不阻塞后续任务；全部任务结束后写活动汇总。

@@ -187,17 +187,24 @@ def parse_upgrade_issue(
     mode: str = "deliver",
 ) -> InvocationOptions:
     title_match = _TITLE_RE.fullmatch(title)
-    if not title_match:
-        raise UpgradeContractError("title: unsupported oe-upgrade format")
     target_values = _field_values(body, _TARGET_LABEL)
     if len(target_values) > 1:
         raise UpgradeContractError("duplicate Target openEuler Version field")
     if not target_values:
-        raise UpgradeContractError("body: Target openEuler Version is required")
-    title_oe = normalize_oe_version(title_match.group("oe"))
-    body_oe = normalize_oe_version(target_values[0])
-    if title_oe != body_oe:
-        raise UpgradeContractError("title and body openEuler versions do not match")
+        # 统一标题不再带版本，正文必须给出；旧标题没有正文版本时沿用标题。
+        if title_match is None:
+            raise UpgradeContractError(
+                "body: Target openEuler Version is required"
+            )
+        body_oe = normalize_oe_version(title_match.group("oe"))
+    else:
+        body_oe = normalize_oe_version(target_values[0])
+        if title_match is not None:
+            title_oe = normalize_oe_version(title_match.group("oe"))
+            if title_oe != body_oe:
+                raise UpgradeContractError(
+                    "title and body openEuler versions do not match"
+                )
     scope_values = _field_values(body, _SCOPE_LABEL)
     if len(scope_values) > 1:
         raise UpgradeContractError("duplicate Scope field")

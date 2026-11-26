@@ -1,0 +1,82 @@
+name: Watch unified GitCode image Issues
+
+# 统一入口：所有镜像需求都用【镜像任务】标题，场景由正文的「任务类型（Type）」决定。
+# 旧标题（【new-image】/【new-version】/【oe-upgrade】）仍由各自的 monitor 处理，
+# 这里只扫统一标题，避免同一 Issue 被两个轮询同时认领。
+
+on:
+  # GitHub cron 兜底（best-effort）；轮询机上的 timer 可作为主调度。
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Exact GitCode Issue number; empty scans pending Issues"
+        required: false
+        type: string
+      max_issues:
+        description: "Maximum Issues claimed in one scan run"
+        required: false
+        type: string
+        default: "3"
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: image-issue-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: Route and dispatch image requests
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          github.repository_id == '1316941460' }}
+    runs-on: >-
+      ${{ fromJSON(vars.ISSUE_POLL_RUNNER_LABELS ||
+          '["self-hosted","Linux","X64","oe-issue-poll"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate optional Issue number
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' &&
+              inputs.issue_number != '' }}
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          case "${ISSUE_NUMBER}" in
+            ''|*[!0-9]*|0)
+              echo "issue_number must be a positive integer" >&2
+              exit 2
+              ;;
+          esac
+
+      - name: Claim Issues and dispatch their scenarios
+        env:
+          GITCODE_ISSUE_TOKEN: ${{ secrets.GITCODE_ISSUE_TOKEN || secrets.GITCODE_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          MAX_ISSUES: ${{ inputs.max_issues || '3' }}
+        run: |
+          case "${MAX_ISSUES}" in
+            ''|*[!0-9]*|0)
+              echo "max_issues must be a positive integer" >&2
+              exit 2
+              ;;
+          esac
+          args=(
+            --target-repo openeuler/openeuler-docker-images
+            --github-repository "${GITHUB_REPOSITORY}"
+            --github-ref "${GITHUB_REF_NAME}"
+            --max-issues "${MAX_ISSUES}"
+          )
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] &&
+             [ -n "${ISSUE_NUMBER}" ]; then
+            args+=(--issue-number "${ISSUE_NUMBER}")
+          fi
+          python3 scripts/harness/flow.py issue-dispatch "${args[@]}"

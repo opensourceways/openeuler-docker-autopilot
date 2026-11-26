@@ -29,9 +29,29 @@ _FIELD_PATTERNS = {
         r"Domain",
         r"所属领域\s*[（(]\s*Domain\s*[）)]",
     ),
-    "os_version": (r"openEuler Version",),
-    "app_version": (r"App Version",),
+    "os_version": (
+        r"openEuler\s*版本\s*[（(]\s*openEuler Version\s*[）)]",
+        r"openEuler Version",
+    ),
+    "app_version": (
+        r"应用版本\s*[（(]\s*App Version\s*[）)]",
+        r"App Version",
+    ),
 }
+
+_UPGRADE_BODY_FIELDS = {
+    "software": (r"软件名\s*[（(]\s*Software\s*[）)]", r"Software"),
+    "version": (r"目标版本\s*[（(]\s*Target Version\s*[）)]", r"Target Version"),
+    "os_version": (
+        r"openEuler\s*版本\s*[（(]\s*openEuler Version\s*[）)]",
+        r"openEuler Version",
+    ),
+}
+
+_OE_VERSION_RE = re.compile(
+    r"^\d{2}\.\d{2}(?:-lts)?(?:-sp\d+)?$",
+    re.IGNORECASE,
+)
 
 _TITLE_RE = re.compile(
     r"^\s*【new-image】\s*add\s+(?P<request>.+?)\s+docker\s+image\s+"
@@ -484,6 +504,108 @@ def parse_upgrade_issue_request(title: str, body: str) -> dict[str, object]:
     ):
         raise IssueParseError(
             "software.version must match the version in the title"
+        )
+
+    return {
+        "app": app,
+        "version": version,
+        "os_version": os_version,
+        "source_url": str(software["repo_url"]).strip(),
+        "evidence": payload,
+    }
+
+
+def _body_field(body: str, labels: tuple[str, ...]) -> str | None:
+    label_pattern = "|".join(f"(?:{label})" for label in labels)
+    pattern = rf"^\s*\*\*(?:{label_pattern})\s*[：:]?\*\*\s*[：:]?\s*(.+?)\s*$"
+    match = re.search(pattern, body, re.IGNORECASE | re.MULTILINE)
+    return match.group(1).strip() if match and match.group(1).strip() else None
+
+
+def parse_new_image_request(title: str, body: str) -> dict[str, str]:
+    """Parse one new-image request.
+
+    旧标题（``【new-image】add ...``）继续从标题取版本与 openEuler 版本；统一标题
+    （``【镜像任务】``）的参数全部来自正文，版本缺省时按源码仓库自动推导。
+    """
+
+    if _TITLE_RE.fullmatch(title):
+        return parse_issue_request(title, body)
+
+    fields = parse_issue_body(body)
+    missing = [
+        name
+        for name in ("package_name", "source_repo_url", "domain", "os_version")
+        if name not in fields
+    ]
+    if missing:
+        raise IssueParseError(f"missing required fields: {', '.join(missing)}")
+    os_version = fields["os_version"]
+    if not _OE_VERSION_RE.fullmatch(os_version):
+        raise IssueParseError(f"invalid openEuler version: {os_version!r}")
+    app_version = fields.get("app_version") or _version_from_source_url(
+        fields["source_repo_url"]
+    )
+    if not app_version:
+        app_version, fields["source_repo_url"] = _latest_github_release_or_tag(
+            fields["source_repo_url"]
+        )
+    return {
+        "package_name": fields["package_name"],
+        "source_repo_url": fields["source_repo_url"],
+        "domain": fields["domain"],
+        "os_version": os_version,
+        "app_version": app_version,
+    }
+
+
+def parse_upgrade_request(title: str, body: str) -> dict[str, object]:
+    """Parse one scenario-two request.
+
+    旧标题（``【new-version】upgrade ...``）从标题取 app / 版本 / openEuler 版本；
+    统一标题（``【镜像任务】``）从正文的 Software / Target Version / openEuler
+    Version 字段取，正文证据 JSON 仍须与这些字段一致。
+    """
+
+    if _UPGRADE_TITLE_RE.fullmatch(title):
+        return parse_upgrade_issue_request(title, body)
+
+    app = _body_field(body, _UPGRADE_BODY_FIELDS["software"])
+    version = _body_field(body, _UPGRADE_BODY_FIELDS["version"])
+    os_version = _body_field(body, _UPGRADE_BODY_FIELDS["os_version"])
+    missing = [
+        label
+        for label, value in (
+            ("Software", app),
+            ("Target Version", version),
+            ("openEuler Version", os_version),
+        )
+        if not value
+    ]
+    if missing:
+        raise IssueParseError(f"missing required fields: {', '.join(missing)}")
+    if not _APP_NAME_RE.fullmatch(app or ""):
+        raise IssueParseError(f"invalid Software field: {app!r}")
+    if not _VERSION_RE.fullmatch(version or ""):
+        raise IssueParseError(f"invalid Target Version field: {version!r}")
+    if not _OE_VERSION_RE.fullmatch(os_version or ""):
+        raise IssueParseError(f"invalid openEuler version: {os_version!r}")
+
+    payload = _upgrade_payload(body)
+    if payload is None:
+        raise IssueParseError(
+            "body must contain the upstream evidence JSON object"
+        )
+    _validate_upgrade_payload(payload)
+
+    software = _mapping(payload["software"], "software")
+    if str(software["name"]).strip().lower() != (app or "").lower():
+        raise IssueParseError("software.name must match the Software field")
+    if _normalize_version(str(software["version"])) != _normalize_version(
+        version or ""
+    ):
+        raise IssueParseError(
+            "software.version must match the Target Version field"
         )
 
     return {

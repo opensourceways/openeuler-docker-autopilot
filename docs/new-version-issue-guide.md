@@ -38,7 +38,14 @@
 
 ## 3. Issue 标题（必填）
 
-格式固定：
+**新格式（推荐）**：标题统一为 `【镜像任务】<一句话描述>`，场景由正文 `任务类型（Type）： upgrade-version` 决定，
+参数写在正文的 `Software` / `Target Version` / `openEuler 版本` 字段里（模板见 `templates/image-issue.md`）：
+
+```text
+【镜像任务】升级 grpc 至 1.85.4
+```
+
+**旧格式（仍永久兼容）**：
 
 ```text
 【new-version】upgrade <软件名> to <目标版本> on openEuler <openEuler版本>
@@ -54,7 +61,7 @@
 
 注意：
 
-- `【new-version】` 必须原样保留（中文方括号）；
+- 旧格式下 `【new-version】` 必须原样保留（中文方括号）；
 - `upgrade`、`to`、`on openEuler` 是固定英文关键字；
 - 标题里不要加“请”“麻烦”“版本升级”等额外文字；
 - 软件名和版本号之间只隔 `to`，前后各一个空格。
