@@ -2,5 +2,7 @@ self-hosted-runner:
   labels:
     - oe-image-x86
     - oe-image-arm64
+    - oe-upgrade-x64
+    - oe-upgrade-arm64
 
 config-variables: null

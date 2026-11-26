@@ -407,19 +407,19 @@ def test_native_jobs_use_exact_self_hosted_labels_and_no_emulation_actions():
         "ARM64",
         "oe-image-arm64",
     ]
-    # Each round pins both native runners; emulation would hide the very
-    # architecture differences the round exists to find.
+    # 每轮校验按架构选择，但用通用的升级机标签，避免被单台镜像构建机
+    # 占用时长时间排队；decide 仍固定在镜像构建机上。
     assert round_jobs["x86_64"]["runs-on"] == [
         "self-hosted",
         "Linux",
         "X64",
-        "oe-image-x86",
+        "oe-upgrade-x64",
     ]
     assert round_jobs["aarch64"]["runs-on"] == [
         "self-hosted",
         "Linux",
         "ARM64",
-        "oe-image-arm64",
+        "oe-upgrade-arm64",
     ]
     assert round_jobs["decide"]["runs-on"] == [
         "self-hosted",
@@ -941,6 +941,8 @@ def test_actionlint_knows_the_confirmed_custom_runner_labels():
     assert config["self-hosted-runner"]["labels"] == [
         "oe-image-x86",
         "oe-image-arm64",
+        "oe-upgrade-x64",
+        "oe-upgrade-arm64",
     ]
 
 

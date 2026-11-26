@@ -61,7 +61,9 @@ jobs:
   x86_64:
     name: Validate (x86_64)
     if: ${{ contains(fromJSON(inputs.architectures), 'x86_64') }}
-    runs-on: [self-hosted, Linux, X64, oe-image-x86]
+    # 校验不绑定单台镜像构建机：所有 X64 升级机都带 oe-upgrade-x64，
+    # 避免唯一带 oe-image-x86 的机器被其它长任务占用时排队。
+    runs-on: [self-hosted, Linux, X64, oe-upgrade-x64]
     timeout-minutes: 180
     steps:
       - name: Check out workflow source
@@ -134,7 +136,8 @@ jobs:
   aarch64:
     name: Validate (aarch64)
     if: ${{ contains(fromJSON(inputs.architectures), 'aarch64') }}
-    runs-on: [self-hosted, Linux, ARM64, oe-image-arm64]
+    # 同上：校验用通用 ARM64 升级机标签，不再和镜像构建机一一绑定。
+    runs-on: [self-hosted, Linux, ARM64, oe-upgrade-arm64]
     timeout-minutes: 180
     steps:
       - name: Check out workflow source
