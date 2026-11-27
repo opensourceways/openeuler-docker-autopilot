@@ -294,7 +294,7 @@ def test_controlled_probe_rejects_non_explicit_or_non_test_invocation(
 
 
 MINIMAL_ISSUE_TITLE = (
-    "【new-image】add kvrocks 2.16.0 docker image on "
+    "【自动升级需求】add kvrocks 2.16.0 docker image on "
     "openEuler 24.03-LTS-SP4"
 )
 MINIMAL_ISSUE_BODY = """**软件包名称（Package Name）：** kvrocks
@@ -335,20 +335,6 @@ class TriggerIssueClient:
         return {"id": 3, "body": kwargs["body"]}
 
 
-class ScanningIssueClient(TriggerIssueClient):
-    def list_issues(self, **kwargs):
-        self.calls.append(("list", kwargs))
-        return [
-            _new_trigger_issue(
-                number=63,
-                title="ordinary request",
-                issue_state="新建",
-                issue_state_detail={"title": "新建"},
-            ),
-            dict(self.issue),
-        ]
-
-
 def _new_trigger_issue(**overrides):
     issue = {
         "number": 64,
@@ -361,177 +347,6 @@ def _new_trigger_issue(**overrides):
     }
     issue.update(overrides)
     return issue
-
-
-def _parse_trigger_task(issue):
-    from scripts.harness.parse_issue import parse_issue_request
-    from scripts.lib.task_spec import TaskSpec
-
-    fields = parse_issue_request(issue["title"], issue["body"])
-    return TaskSpec.from_workflow_dispatch(
-        {
-            "app": fields["package_name"],
-            "version": fields["app_version"],
-            "os_version": fields["os_version"],
-            "domain": fields["domain"],
-            "source_url": fields["source_repo_url"],
-        }
-    )
-
-
-def test_new_issue_is_claimed_before_dispatch_and_cannot_dispatch_twice():
-    from scripts.lib.issue_lifecycle import claim_new_image_issue
-
-    client = TriggerIssueClient(_new_trigger_issue())
-    dispatched = []
-
-    claimed = claim_new_image_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=64,
-        dispatch=dispatched.append,
-        parse_task=_parse_trigger_task,
-    )
-    duplicate = claim_new_image_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=64,
-        dispatch=dispatched.append,
-        parse_task=_parse_trigger_task,
-    )
-
-    assert claimed is not None
-    assert claimed.number == 64
-    assert claimed.task == _task()
-    assert duplicate is None
-    assert len(dispatched) == 1
-    assert dispatched[0] == {
-        "operation": "scenario_one",
-        "app": "kvrocks",
-        "version": "2.16.0",
-        "os_version": "24.03-lts-sp4",
-        "domain": "Database",
-        "source_url": "https://github.com/apache/kvrocks/tree/v2.16.0",
-        "source_run_id": "issue:64",
-    }
-    assert [name for name, _ in client.calls[:4]] == [
-        "get",
-        "update",
-        "comment",
-        "get",
-    ]
-    claim_call = client.calls[1][1]
-    assert claim_call["issue_status"] == "已接纳"
-    assert claim_call["state"] == "open"
-
-
-def test_production_selection_uses_new_status_and_new_image_title():
-    from scripts.lib.issue_lifecycle import claim_new_image_issue
-
-    client = ScanningIssueClient(_new_trigger_issue())
-    dispatched = []
-
-    result = claim_new_image_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=None,
-        dispatch=dispatched.append,
-        parse_task=_parse_trigger_task,
-    )
-
-    assert result is not None
-    assert result.number == 64
-    assert client.calls[0] == (
-        "list",
-        {
-            "target_repo": TARGET_REPO,
-            "state": "open",
-            "search": "【new-image】",
-        },
-    )
-    assert len(dispatched) == 1
-
-
-def test_invalid_new_issue_is_rejected_without_dispatch_and_kept_open():
-    from scripts.lib.issue_lifecycle import claim_new_image_issue
-
-    client = TriggerIssueClient(
-        _new_trigger_issue(
-            body=MINIMAL_ISSUE_BODY.replace(
-                "https://github.com/apache/kvrocks/tree/v2.16.0",
-                "",
-            )
-        )
-    )
-    dispatched = []
-
-    result = claim_new_image_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=64,
-        dispatch=dispatched.append,
-        parse_task=_parse_trigger_task,
-    )
-
-    assert result is None
-    assert dispatched == []
-    assert [name for name, _ in client.calls] == ["get", "comment", "update"]
-    reject_call = client.calls[-1][1]
-    assert reject_call["issue_status"] == "已拒绝"
-    assert reject_call["state"] == "open"
-
-
-def test_dispatch_failure_returns_claimed_issue_to_new_state():
-    from scripts.lib.issue_lifecycle import (
-        IssueLifecycleError,
-        claim_new_image_issue,
-    )
-
-    client = TriggerIssueClient(_new_trigger_issue())
-
-    def fail_dispatch(_):
-        raise RuntimeError("GitHub unavailable")
-
-    with pytest.raises(IssueLifecycleError, match="dispatch"):
-        claim_new_image_issue(
-            client=client,
-            target_repo=TARGET_REPO,
-            issue_number=64,
-            dispatch=fail_dispatch,
-            parse_task=_parse_trigger_task,
-        )
-
-    assert client.issue["issue_state"] == "新建"
-    assert [name for name, _ in client.calls] == ["get", "update", "update"]
-
-
-def test_dispatch_failure_restores_the_original_issue_status():
-    from scripts.lib.issue_lifecycle import (
-        IssueLifecycleError,
-        claim_new_image_issue,
-    )
-
-    client = TriggerIssueClient(
-        _new_trigger_issue(
-            issue_state="待办的",
-            issue_state_detail={"title": "待办的"},
-        )
-    )
-
-    def fail_dispatch(_):
-        raise RuntimeError("GitHub unavailable")
-
-    with pytest.raises(IssueLifecycleError, match="dispatch"):
-        claim_new_image_issue(
-            client=client,
-            target_repo=TARGET_REPO,
-            issue_number=64,
-            dispatch=fail_dispatch,
-            parse_task=_parse_trigger_task,
-        )
-
-    assert client.issue["issue_state"] == "待办的"
-    assert [name for name, _ in client.calls] == ["get", "update", "update"]
 
 
 @pytest.mark.parametrize(
@@ -809,44 +624,8 @@ def test_github_workflow_dispatch_uses_token_only_in_environment():
 
 
 UPGRADE_ISSUE_TITLE = (
-    "【new-version】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4"
+    "【自动升级需求】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4"
 )
-
-
-def _upgrade_body(name: str, version: str) -> str:
-    return json.dumps(
-        {
-            "software": {
-                "name": name,
-                "repo_url": f"https://github.com/{name}/{name}",
-                "version": version,
-                "raw_category": "rpc",
-            },
-            "upstream_evidence": {
-                "support_level": "L1",
-                "evidence": {
-                    "check_id": "kp.l1.arm_ci",
-                    "source_url": "https://ci.example.com/jobs/1",
-                    "ci_workflows": [],
-                },
-            },
-            "l3_evidence": None,
-            "install_candidates": [
-                {
-                    "type": "source",
-                    "url": (
-                        f"https://github.com/{name}/{name}/archive/refs/"
-                        f"tags/v{version}.tar.gz"
-                    ),
-                    "artifact": f"{name}-{version}.tar.gz",
-                }
-            ],
-        },
-        ensure_ascii=False,
-    )
-
-
-UPGRADE_ISSUE_BODY = _upgrade_body("grpc", "1.85.4")
 
 
 def _upgrade_trigger_issue(**overrides):
@@ -854,135 +633,13 @@ def _upgrade_trigger_issue(**overrides):
         "number": 81,
         "html_url": "https://gitcode.com/example/issues/81",
         "title": UPGRADE_ISSUE_TITLE,
-        "body": UPGRADE_ISSUE_BODY,
+        "body": "",
         "state": "open",
         "issue_state": "新建",
         "issue_state_detail": {"title": "新建"},
     }
     issue.update(overrides)
     return issue
-
-
-def _parse_upgrade_task(issue):
-    from scripts.harness.parse_issue import parse_upgrade_issue_request
-    from scripts.lib.issue_lifecycle import UpgradeRequest
-    from scripts.lib.upstream_evidence import from_issue_payload
-
-    fields = parse_upgrade_issue_request(issue["title"], issue["body"])
-    fields["evidence"] = from_issue_payload(fields["evidence"])
-    return UpgradeRequest(**fields)
-
-
-class UpgradeScanClient(TriggerIssueClient):
-    def __init__(self, issues):
-        super().__init__(issues[0])
-        self.issues = [dict(issue) for issue in issues]
-
-    def list_issues(self, **kwargs):
-        self.calls.append(("list", kwargs))
-        return [dict(issue) for issue in self.issues]
-
-
-def test_upgrade_issue_is_claimed_and_dispatched_with_its_source_issue():
-    from scripts.lib.issue_lifecycle import UpgradeRequest, claim_upgrade_issue
-
-    client = TriggerIssueClient(_upgrade_trigger_issue())
-    dispatched = []
-
-    claimed = claim_upgrade_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=81,
-        dispatch=dispatched.append,
-        parse_task=_parse_upgrade_task,
-    )
-    duplicate = claim_upgrade_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=81,
-        dispatch=dispatched.append,
-        parse_task=_parse_upgrade_task,
-    )
-
-    assert claimed is not None
-    assert claimed.number == 81
-    assert claimed.request.app == "grpc"
-    assert claimed.request.version == "1.85.4"
-    assert claimed.request.os_version == "24.03-lts-sp4"
-    assert claimed.request.source_url == "https://github.com/grpc/grpc"
-    assert claimed.request.evidence["source"] == "gitcode-issue"
-    assert claimed.request.evidence["version"] == "1.85.4"
-    assert claimed.request.evidence["collector"][0]["check_id"] == "kp.l1.arm_ci"
-    assert duplicate is None
-    assert len(dispatched) == 1
-    inputs = dispatched[0]
-    assert inputs["app"] == "grpc"
-    assert inputs["version"] == "1.85.4"
-    assert inputs["os_version"] == "24.03-lts-sp4"
-    assert inputs["source_url"] == "https://github.com/grpc/grpc"
-    assert inputs["source_issue"] == "81"
-    evidence = json.loads(inputs["evidence"])
-    assert evidence["source"] == "gitcode-issue"
-    assert evidence["repo_url"] == "https://github.com/grpc/grpc"
-    assert evidence["install_candidates"][0]["type"] == "source"
-    assert [name for name, _ in client.calls[:4]] == [
-        "get",
-        "update",
-        "comment",
-        "get",
-    ]
-    claim_call = client.calls[1][1]
-    assert claim_call["issue_status"] == "已接纳"
-    assert claim_call["state"] == "open"
-
-
-def test_upgrade_scan_claims_gitcode_default_todo_status():
-    from scripts.lib.issue_lifecycle import claim_upgrade_issue
-
-    issue = _upgrade_trigger_issue(
-        issue_state="待办的",
-        issue_state_detail={"title": "待办的"},
-    )
-    client = UpgradeScanClient([issue])
-    dispatched = []
-
-    claimed = claim_upgrade_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=None,
-        dispatch=dispatched.append,
-        parse_task=_parse_upgrade_task,
-    )
-
-    assert claimed is not None
-    assert claimed.number == 81
-    assert [item["app"] for item in dispatched] == ["grpc"]
-    assert client.issue["issue_state"] == "已接纳"
-
-
-def test_task_issue_claim_uses_in_progress_status():
-    from scripts.lib.issue_lifecycle import claim_upgrade_issue
-
-    issue = _upgrade_trigger_issue(
-        issue_state="待办的",
-        issue_state_detail={"title": "待办的"},
-        issue_type="任务",
-        issue_type_detail={"title": "任务", "id": 1884},
-    )
-    client = UpgradeScanClient([issue])
-    dispatched = []
-
-    claimed = claim_upgrade_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=None,
-        dispatch=dispatched.append,
-        parse_task=_parse_upgrade_task,
-    )
-
-    assert claimed is not None
-    assert client.issue["issue_state"] == "进行中"
-    assert [item["app"] for item in dispatched] == ["grpc"]
 
 
 def test_task_issue_failure_keeps_in_progress_and_comments():
@@ -1039,72 +696,6 @@ def test_suspended_issue_success_is_finalized_after_rerun():
     assert [name for name, _ in client.calls] == ["get", "comment", "update"]
     assert client.issue["state"] == "closed"
     assert client.issue["issue_state"] == "已完成"
-
-
-def test_upgrade_scan_queues_same_app_behind_an_accepted_issue():
-    from scripts.lib.issue_lifecycle import claim_upgrade_issue
-
-    accepted = _upgrade_trigger_issue(
-        number=70,
-        issue_state="已接纳",
-        issue_state_detail={"title": "已接纳"},
-    )
-    queued = _upgrade_trigger_issue(number=71)
-    other_app = _upgrade_trigger_issue(
-        number=72,
-        title=(
-            "【new-version】upgrade slurm to 26.05.6 "
-            "on openEuler 24.03-lts-sp4"
-        ),
-        body=_upgrade_body("slurm", "26.05.6"),
-    )
-    client = UpgradeScanClient([accepted, queued, other_app])
-    dispatched = []
-
-    claimed = claim_upgrade_issue(
-        client=client,
-        target_repo=TARGET_REPO,
-        issue_number=None,
-        dispatch=dispatched.append,
-        parse_task=_parse_upgrade_task,
-    )
-
-    assert claimed is not None
-    assert claimed.number == 72
-    assert [item["app"] for item in dispatched] == ["slurm"]
-    assert client.calls[0] == (
-        "list",
-        {
-            "target_repo": TARGET_REPO,
-            "state": "open",
-            "search": "【new-version】",
-        },
-    )
-
-
-def test_upgrade_scan_leaves_every_request_queued_while_its_app_is_busy():
-    from scripts.lib.issue_lifecycle import claim_upgrade_issue
-
-    accepted = _upgrade_trigger_issue(
-        number=70,
-        issue_state="已接纳",
-        issue_state_detail={"title": "已接纳"},
-    )
-    queued = _upgrade_trigger_issue(number=71)
-    client = UpgradeScanClient([accepted, queued])
-    dispatched = []
-
-    assert (
-        claim_upgrade_issue(
-            client=client,
-            target_repo=TARGET_REPO,
-            issue_number=None,
-            dispatch=dispatched.append,
-            parse_task=_parse_upgrade_task,
-        )
-        is None
-    )
-    assert dispatched == []
 
 
 @pytest.mark.parametrize(

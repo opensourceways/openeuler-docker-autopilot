@@ -19,7 +19,7 @@
 `openeuler/openeuler-docker-images` 维护着一批应用容器镜像，其中四类变更高度重复：
 
 1. **社区希望新增一个应用镜像**（场景一）——需要研究上游构建方式，按仓库规范写 Dockerfile、`meta.yml`、README、`doc/image-info.yml`，还要补一套能证明镜像真的可用的功能测试；
-2. **应用上游发布了新版本**（场景二）——需要为存量应用补一个新版本镜像目录：复制目录骨架、按上游版本与证据重新生成 Dockerfile、补 `meta.yml` 与功能测试，机械但量大；版本号与上游证据由 GitCode `【自动升级需求】` Issue 提供（旧 `【new-version】` 兼容）；
+2. **应用上游发布了新版本**（场景二）——需要为存量应用补一个新版本镜像目录：复制目录骨架、按上游版本与证据重新生成 Dockerfile、补 `meta.yml` 与功能测试，机械但量大；版本号与上游证据由 GitCode `【自动升级需求】` Issue 提供；
 3. **openEuler 发布新版本**（场景三）——所有存量应用都要补齐新 openEuler 版本的镜像，批量且机械；
 4. **存量镜像缺功能测试脚本**（场景四）——目标仓已把功能测试与 CI 构建绑定（Dockerfile 变更即构建，成功后按 `{app}/tests/test.sh` 执行功能测试），但多数应用没有测试脚本，需要按 [KunpengTest 规范](https://github.com/opensourceways/upstream-dashboard/blob/KunpengTest/README.md)批量补齐；
 
@@ -32,8 +32,8 @@
 | 场景 | 触发源 | 执行内容 | 输出 |
 |---|---|---|---|
 | **① 新增应用镜像** | GitCode Issue（`【自动升级需求】add <app> <version> docker image on openEuler <version>`） | 解析需求 → 生成镜像文件与测试 → 门禁 → 双架构构建测试 → 有界修复 | 单个应用的完整镜像目录 PR |
-| **② 应用自动升级** | GitCode Issue（`【自动升级需求】upgrade <app> to <version> on openEuler <version>`，正文带上游证据字段；旧 `【new-version】` 兼容）/ 手动 | 解析 Issue 证据 → 对比已有目录 → 缺新版本：补功能测试 + AI 依证据包生成 Dockerfile + 确定性目录/元数据落盘 + 双架构原生验证；已是最新：AI 审计后修复 Dockerfile 与 doc/image-info.yml | 一应用一 PR |
-| **③ openEuler 版本升级** | GitCode Issue（`【自动升级需求】upgrade openEuler to <version>`，正文给 Scope；旧 `【oe-upgrade】` 兼容）/ 手动 | 控制器按 Issue 固定请求 → 单领域串行规划 → 一次派发一个任务（prepare → 4 轮双架构校验 → 封存 → PR）→ 回写 Issue 汇总 | 一任务一 PR，Issue 持续更新进度 |
+| **② 应用自动升级** | GitCode Issue（`【自动升级需求】upgrade <app> to <version> on openEuler <version>`，正文带上游证据字段）/ 手动 | 解析 Issue 证据 → 对比已有目录 → 缺新版本：补功能测试 + AI 依证据包生成 Dockerfile + 确定性目录/元数据落盘 + 双架构原生验证；已是最新：AI 审计后修复 Dockerfile 与 doc/image-info.yml | 一应用一 PR |
+| **③ openEuler 版本升级** | GitCode Issue（`【自动升级需求】upgrade openEuler to <version>`，正文给 Scope）/ 手动 | 控制器按 Issue 固定请求 → 单领域串行规划 → 一次派发一个任务（prepare → 4 轮双架构校验 → 封存 → PR）→ 回写 Issue 汇总 | 一任务一 PR，Issue 持续更新进度 |
 | **④ 功能测试脚本补齐** | 手动触发（指定软件名） | 定位该软件最新镜像目录 → AI 按 KunpengTest 规范生成 `tests/test.sh` → 静态校验（失败重试 2 轮） | 一软件一 PR（含 Dockerfile 空行触发目标仓构建 + 功能测试） |
 
 场景 ①/③ 共享同一套「生成 → 门禁 → 双架构验证 → 交付」能力，差异只在触发输入与调度；场景 ③ 由 `【自动升级需求】upgrade openEuler to <version>` Issue 驱动，控制器固定请求与 `base_sha`，一次只推进一个任务，避免整批并发抢占构建机。场景 ② 由 GitCode Issue 提供版本与上游证据，扫描阶段只对比目标仓已有目录，Dockerfile 由 AI 结合证据包重新生成（不做版本串机械替换），补测试也调用 AI，目录复制与元数据登记由确定性代码承担；已是最新版本的应用不跳过，审计后由修复 Agent 更新 Dockerfile 与 `doc/image-info.yml` 并开 PR。场景 ④ 走独立的「手动指定软件 → 定位镜像 → 生成 → 静态校验 → 提 PR」链路，一次运行只处理一个应用。

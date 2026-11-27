@@ -41,14 +41,10 @@ from scripts.lib.gitcode_client import (
     GitCodeClientError,
 )
 from scripts.lib.issue_lifecycle import (
-    ClaimedIssue,
     ClaimedRoutedIssue,
-    ClaimedUpgradeIssue,
     IssueLifecycleError,
     UpgradeRequest as IssueUpgradeRequest,
-    claim_new_image_issue,
     claim_routed_issue,
-    claim_upgrade_issue,
     dispatch_github_workflow,
     finalize_new_image_issue,
     finalize_upgrade_issue,
@@ -243,43 +239,19 @@ def _oe_upgrade_test_prepare(args: argparse.Namespace) -> None:
     )
 
 
-def _issue_workflow_status(issue: Mapping[str, object]) -> str:
-    detail = issue.get("issue_state_detail")
-    if isinstance(detail, Mapping):
-        return str(detail.get("title", "")).strip()
-    return str(issue.get("issue_state", "")).strip()
-
-
 def _oe_upgrade_advance(args: argparse.Namespace) -> None:
     gitcode_token = os.environ.get("GITCODE_TOKEN", "")
     github_token = os.environ.get("GITHUB_TOKEN", "")
     if not gitcode_token or not github_token:
         raise UpgradeControllerError("GITCODE_TOKEN and GITHUB_TOKEN are required")
     client = GitCodeClient(token=gitcode_token)
-    if args.issue_number is not None:
-        issue = client.get_issue(
-            target_repo=args.target_repo, number=args.issue_number
+    if args.issue_number is None:
+        raise UpgradeControllerError(
+            "--issue-number is required; legacy 【oe-upgrade】 scanning is gone"
         )
-    else:
-        issues = client.list_issues(
-            target_repo=args.target_repo,
-            state="open",
-            search="【oe-upgrade】",
-        )
-        issue = next(
-            (
-                value
-                for value in issues
-                if str(value.get("title", "")).strip().startswith(
-                    "【oe-upgrade】"
-                )
-                and _issue_workflow_status(value) in {"新建", "已接纳"}
-            ),
-            None,
-        )
-        if issue is None:
-            _print_json({"action": "no-active-request"})
-            return
+    issue = client.get_issue(
+        target_repo=args.target_repo, number=args.issue_number
+    )
     issue_number = int(issue.get("number", issue.get("iid", 0)))
     if not args.trusted_author.strip():
         raise UpgradeControllerError("trusted GitCode bot author is required")
@@ -652,69 +624,6 @@ def _issue_contract_test(args: argparse.Namespace) -> None:
     )
 
 
-def _issue_watch(args: argparse.Namespace) -> None:
-    gitcode_token = _issue_token()
-    github_token = os.environ.get("GITHUB_TOKEN", "")
-    if not gitcode_token:
-        raise IssueLifecycleError(
-            "GITCODE_ISSUE_TOKEN or GITCODE_TOKEN is required"
-        )
-    if not github_token:
-        raise IssueLifecycleError("GITHUB_TOKEN is required")
-
-    def dispatch(inputs: dict[str, str]) -> None:
-        dispatch_github_workflow(
-            github_token=github_token,
-            github_repository=args.github_repository,
-            workflow=args.workflow,
-            ref=args.github_ref,
-            inputs=inputs,
-        )
-
-    def parse_task(issue: dict[str, object]) -> TaskSpec:
-        fields = parse_issue_request(
-            str(issue.get("title", "")),
-            str(issue.get("body", "") or ""),
-        )
-        return TaskSpec.from_workflow_dispatch(
-            {
-                "app": fields["package_name"],
-                "version": fields["app_version"],
-                "os_version": fields["os_version"],
-                "domain": fields["domain"],
-                "source_url": fields["source_repo_url"],
-            }
-        )
-
-    if args.issue_number is None and args.max_issues < 1:
-        raise IssueLifecycleError("--max-issues must be a positive integer")
-    limit = args.max_issues if args.issue_number is None else 1
-    claimed: list[ClaimedIssue] = []
-    for _ in range(limit):
-        # Each pass re-lists open issues so an accepted one is skipped and the
-        # next new request is claimed; a failure stops the round and leaves
-        # the backlog to the next poll.
-        result = claim_new_image_issue(
-            client=GitCodeClient(token=gitcode_token),
-            target_repo=args.target_repo,
-            issue_number=args.issue_number,
-            dispatch=dispatch,
-            parse_task=parse_task,
-        )
-        if result is None:
-            break
-        claimed.append(result)
-    _print_json(
-        {
-            "dispatched": bool(claimed),
-            "issues": [
-                {"issue_number": item.number, "issue_url": item.url}
-                for item in claimed
-            ],
-        }
-    )
-
-
 def _issue_finalize(args: argparse.Namespace) -> None:
     token = _issue_token()
     if not token:
@@ -739,66 +648,6 @@ def _issue_finalize(args: argparse.Namespace) -> None:
         {
             "issue_number": args.issue_number,
             "outcome": args.outcome,
-        }
-    )
-
-
-def _upgrade_issue_watch(args: argparse.Namespace) -> None:
-    gitcode_token = _issue_token()
-    github_token = os.environ.get("GITHUB_TOKEN", "")
-    if not gitcode_token:
-        raise IssueLifecycleError(
-            "GITCODE_ISSUE_TOKEN or GITCODE_TOKEN is required"
-        )
-    if not github_token:
-        raise IssueLifecycleError("GITHUB_TOKEN is required")
-
-    def dispatch(inputs: dict[str, str]) -> None:
-        dispatch_github_workflow(
-            github_token=github_token,
-            github_repository=args.github_repository,
-            workflow=args.workflow,
-            ref=args.github_ref,
-            inputs=inputs,
-        )
-
-    def parse_task(issue: dict[str, object]) -> IssueUpgradeRequest:
-        fields = parse_upgrade_issue_request(
-            str(issue.get("title", "")),
-            str(issue.get("body", "") or ""),
-        )
-        return IssueUpgradeRequest(
-            app=fields["app"],
-            version=fields["version"],
-            os_version=fields["os_version"],
-            source_url=fields["source_url"],
-            evidence=upstream_evidence.from_issue_payload(fields["evidence"]),
-        )
-
-    if args.issue_number is None and args.max_issues < 1:
-        raise IssueLifecycleError("--max-issues must be a positive integer")
-    limit = args.max_issues if args.issue_number is None else 1
-    claimed: list[ClaimedUpgradeIssue] = []
-    for _ in range(limit):
-        # Each pass re-lists open Issues so a request queued behind another
-        # accepted request for the same app waits for the next poll.
-        result = claim_upgrade_issue(
-            client=GitCodeClient(token=gitcode_token),
-            target_repo=args.target_repo,
-            issue_number=args.issue_number,
-            dispatch=dispatch,
-            parse_task=parse_task,
-        )
-        if result is None:
-            break
-        claimed.append(result)
-    _print_json(
-        {
-            "dispatched": bool(claimed),
-            "issues": [
-                {"issue_number": item.number, "issue_url": item.url}
-                for item in claimed
-            ],
         }
     )
 
@@ -1439,29 +1288,6 @@ def _add_delivery_commands(commands: argparse._SubParsersAction) -> None:
     issue_probe.add_argument("--failure-stage", required=True)
     issue_probe.set_defaults(handler=_issue_contract_test)
 
-    issue_watch = commands.add_parser(
-        "issue-watch",
-        description=(
-            "Claim new GitCode image requests and dispatch scenario_one; "
-            "without --issue-number, scans for new requests up to --max-issues."
-        ),
-    )
-    issue_watch.add_argument("--target-repo", required=True)
-    issue_watch.add_argument("--issue-number", type=int)
-    issue_watch.add_argument(
-        "--max-issues",
-        type=int,
-        default=1,
-        help=(
-            "Maximum new Issues claimed per scan run; ignored when "
-            "--issue-number is set (default: 1)"
-        ),
-    )
-    issue_watch.add_argument("--github-repository", required=True)
-    issue_watch.add_argument("--github-ref", required=True)
-    issue_watch.add_argument("--workflow", default="create_new_images.yml")
-    issue_watch.set_defaults(handler=_issue_watch)
-
     issue_finalize = commands.add_parser(
         "issue-finalize",
         description="Write a scenario_one result back to its source Issue.",
@@ -1480,39 +1306,11 @@ def _add_delivery_commands(commands: argparse._SubParsersAction) -> None:
     issue_finalize.add_argument("--failure-evidence-dir", type=Path)
     issue_finalize.set_defaults(handler=_issue_finalize)
 
-    upgrade_watch = commands.add_parser(
-        "upgrade-issue-watch",
-        description=(
-            "Claim 【new-version】 Issues and dispatch scenario two; requests "
-            "for an app that already has an accepted Issue stay queued."
-        ),
-    )
-    upgrade_watch.add_argument("--target-repo", required=True)
-    upgrade_watch.add_argument("--issue-number", type=int)
-    upgrade_watch.add_argument(
-        "--max-issues",
-        type=int,
-        default=1,
-        help=(
-            "Maximum new Issues claimed per scan run; ignored when "
-            "--issue-number is set (default: 1)"
-        ),
-    )
-    upgrade_watch.add_argument("--github-repository", required=True)
-    upgrade_watch.add_argument("--github-ref", required=True)
-    upgrade_watch.add_argument(
-        "--workflow",
-        default="upgrade_upstream_versions.yml",
-    )
-    upgrade_watch.set_defaults(handler=_upgrade_issue_watch)
-
     issue_dispatch = commands.add_parser(
         "issue-dispatch",
         description=(
             "Claim one 【自动升级需求】 Issue and dispatch its scenario "
-            "(add / upgrade / upgrade openEuler); legacy "
-            "【new-image】/【new-version】/【oe-upgrade】 titles keep "
-            "working through their own monitors."
+            "(add / upgrade / upgrade openEuler)."
         ),
     )
     issue_dispatch.add_argument("--target-repo", required=True)

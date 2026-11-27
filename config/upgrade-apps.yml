@@ -5,7 +5,7 @@
 # create: 两库都没有，先用场景一新建镜像 {app, domain}
 # docker/conda 两个字段都在 = 两个仓都有；只有一个 = 只升级该仓。
 # 可选 version / tag / source_url / build_notes / allow_downgrade
-# 正式入口由 【new-version】Issue 提供版本和上游证据；清单字段用于手动触发与兜底。
+# 正式入口由 【自动升级需求】Issue 提供版本和上游证据；清单字段用于手动触发与兜底。
 # 由脚本重新生成时按软件名保留。
 apps:
 - name: grpc-java

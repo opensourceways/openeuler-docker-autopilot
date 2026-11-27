@@ -31,7 +31,7 @@ def test_monitor_registration_keeps_the_final_manual_input_contract():
         "scope",
         "mode",
     }
-    assert inputs["tracking_issue_number"]["required"] is False
+    assert inputs["tracking_issue_number"]["required"] is True
     assert inputs["mode"]["type"] == "choice"
     assert inputs["mode"]["default"] == "plan"
     assert inputs["mode"]["options"] == ["plan", "deliver"]

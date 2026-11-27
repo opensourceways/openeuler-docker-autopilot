@@ -14,7 +14,6 @@ from scripts.lib.gitcode_client import GitCodeResource
 from scripts.lib.issue_comment import render_result_comment
 from scripts.lib.issue_router import (
     AUTO_UPGRADE_TITLE_PREFIX,
-    LEGACY_TITLE_PREFIXES,
     SCENARIO_NEW_IMAGE,
     SCENARIO_UPGRADE,
 )
@@ -30,42 +29,20 @@ class IssueOperationForbiddenError(IssueLifecycleError):
 
 
 _SAFE_DYNAMIC_VALUE = re.compile(r"^[A-Za-z0-9._-]+$")
-_NEW_IMAGE_TITLE = "【new-image】"
-_UPGRADE_TITLE = "【new-version】"
 # GitCode 的默认状态名是「待办的」；旧数据 / 自定义流程里也出现过「新建」。
 _CLAIMABLE_ISSUE_STATUSES = frozenset({"新建", "待办的"})
 # 已认领后可能停留的状态：需求类型用「已接纳」，任务类型没有该状态，用「进行中」。
 _CLAIMED_ISSUE_STATUSES = frozenset({"已接纳", "进行中"})
 _TASK_ISSUE_TYPE = "任务"
-_UPGRADE_APP_RE = re.compile(
-    r"^\s*【new-version】\s*upgrade\s+(?P<app>\S+)",
-    re.IGNORECASE,
-)
-
-
-@dataclass(frozen=True)
-class ClaimedIssue:
-    number: int
-    url: str
-    task: TaskSpec
-
-
 @dataclass(frozen=True)
 class UpgradeRequest:
-    """Scenario-two request parsed from one 【new-version】 Issue."""
+    """Scenario-two request parsed from one 【自动升级需求】 Issue."""
 
     app: str
     version: str
     os_version: str
     source_url: str
     evidence: Mapping[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class ClaimedUpgradeIssue:
-    number: int
-    url: str
-    request: UpgradeRequest
 
 
 @dataclass(frozen=True)
@@ -436,57 +413,6 @@ def upgrade_workflow_inputs(
     return inputs
 
 
-def _title_has_prefix(issue: Mapping[str, object], prefix: str) -> bool:
-    return str(issue.get("title", "")).strip().startswith(prefix)
-
-
-def _upgrade_app(issue: Mapping[str, object]) -> str | None:
-    match = _UPGRADE_APP_RE.match(str(issue.get("title", "")))
-    if match is None:
-        return None
-    return match.group("app").strip() or None
-
-
-def _select_new_issue(
-    issues: list[Mapping[str, object]],
-    title_prefix: str,
-) -> Mapping[str, object] | None:
-    return next(
-        (
-            candidate
-            for candidate in issues
-            if _title_has_prefix(candidate, title_prefix)
-            and _is_claimable(candidate)
-        ),
-        None,
-    )
-
-
-def _select_queued_upgrade_issue(
-    issues: list[Mapping[str, object]],
-) -> Mapping[str, object] | None:
-    # Same-app requests queue: a new request for an app whose previous request
-    # is still 已接纳 is skipped so the next poll picks it up after that run
-    # finishes. Other apps keep flowing in the same scan.
-    accepted_apps = {
-        app
-        for issue in issues
-        if _issue_status(issue) in _CLAIMED_ISSUE_STATUSES
-        for app in (_upgrade_app(issue),)
-        if app
-    }
-    return next(
-        (
-            candidate
-            for candidate in issues
-            if _title_has_prefix(candidate, _UPGRADE_TITLE)
-            and _is_claimable(candidate)
-            and _upgrade_app(candidate) not in accepted_apps
-        ),
-        None,
-    )
-
-
 def _reject_issue(
     *,
     client: Any,
@@ -512,141 +438,6 @@ def _reject_issue(
     )
 
 
-def _claim_new_issue(
-    *,
-    client: Any,
-    target_repo: str,
-    issue_number: int | None,
-    title_prefix: str,
-    select_issue: Callable[
-        [list[Mapping[str, object]]],
-        Mapping[str, object] | None,
-    ],
-    parse_task: Callable[[Mapping[str, object]], Any],
-    build_inputs: Callable[[Any, int], Mapping[str, str]],
-    dispatch: Callable[[Mapping[str, str]], None],
-    accepted_comment: str,
-) -> tuple[int, str, Any] | None:
-    """Claim one 新建 Issue by status, then dispatch its workflow."""
-
-    if issue_number is None:
-        issues = client.list_issues(
-            target_repo=target_repo,
-            state="open",
-            search=title_prefix,
-        )
-        issue = select_issue(issues)
-        if issue is None:
-            return None
-    else:
-        issue = client.get_issue(
-            target_repo=target_repo,
-            number=issue_number,
-        )
-    if str(issue.get("state", "")).lower() not in {"open", "opened"}:
-        return None
-    if not _is_claimable(issue):
-        return None
-
-    number = _issue_number(issue)
-    original_status = _issue_status(issue)
-    try:
-        task = parse_task(issue)
-    except ValueError as error:
-        _reject_issue(
-            client=client,
-            target_repo=target_repo,
-            issue=issue,
-            reason=str(error),
-        )
-        return None
-
-    _update_source_issue(
-        client=client,
-        target_repo=target_repo,
-        issue=issue,
-        issue_status=_claimed_status(issue),
-        state="open",
-    )
-    try:
-        dispatch(build_inputs(task, number))
-    except Exception as error:
-        try:
-            _update_source_issue(
-                client=client,
-                target_repo=target_repo,
-                issue=issue,
-                issue_status=original_status,
-                state="open",
-            )
-        except Exception as rollback_error:
-            raise IssueLifecycleError(
-                "workflow dispatch and Issue claim rollback both failed"
-            ) from rollback_error
-        raise IssueLifecycleError(f"workflow dispatch failed: {error}") from error
-
-    client.create_issue_comment(
-        target_repo=target_repo,
-        number=number,
-        body=accepted_comment,
-    )
-    return number, _issue_url(issue), task
-
-
-def claim_new_image_issue(
-    *,
-    client: Any,
-    target_repo: str,
-    issue_number: int | None,
-    dispatch: Callable[[Mapping[str, str]], None],
-    parse_task: Callable[[Mapping[str, object]], TaskSpec],
-) -> ClaimedIssue | None:
-    """Claim one new-image Issue by status, then dispatch scenario one."""
-
-    result = _claim_new_issue(
-        client=client,
-        target_repo=target_repo,
-        issue_number=issue_number,
-        title_prefix=_NEW_IMAGE_TITLE,
-        select_issue=lambda issues: _select_new_issue(issues, _NEW_IMAGE_TITLE),
-        parse_task=parse_task,
-        build_inputs=scenario_one_workflow_inputs,
-        dispatch=dispatch,
-        accepted_comment="该请求已接纳，自动镜像流水线已经触发。",
-    )
-    if result is None:
-        return None
-    number, url, task = result
-    return ClaimedIssue(number=number, url=url, task=task)
-
-
-def claim_upgrade_issue(
-    *,
-    client: Any,
-    target_repo: str,
-    issue_number: int | None,
-    dispatch: Callable[[Mapping[str, str]], None],
-    parse_task: Callable[[Mapping[str, object]], UpgradeRequest],
-) -> ClaimedUpgradeIssue | None:
-    """Claim one 【new-version】 Issue, queueing requests for a busy app."""
-
-    result = _claim_new_issue(
-        client=client,
-        target_repo=target_repo,
-        issue_number=issue_number,
-        title_prefix=_UPGRADE_TITLE,
-        select_issue=_select_queued_upgrade_issue,
-        parse_task=parse_task,
-        build_inputs=upgrade_workflow_inputs,
-        dispatch=dispatch,
-        accepted_comment="该升级请求已接纳，自动升级流水线已经触发。",
-    )
-    if result is None:
-        return None
-    number, url, request = result
-    return ClaimedUpgradeIssue(number=number, url=url, request=request)
-
-
 def _select_routed_issue(
     issues: list[Mapping[str, object]],
     route: Callable[[Mapping[str, object]], tuple[str, Any]],
@@ -666,12 +457,6 @@ def _select_routed_issue(
             busy_apps.add(app)
     for issue in issues:
         if not _is_claimable(issue):
-            continue
-        # 旧标题由各自的 monitor 认领，避免同一 Issue 被两条路径同时认领。
-        if any(
-            _title_has_prefix(issue, prefix)
-            for prefix in LEGACY_TITLE_PREFIXES
-        ):
             continue
         try:
             scenario, payload = route(issue)

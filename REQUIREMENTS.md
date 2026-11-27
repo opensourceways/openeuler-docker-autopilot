@@ -25,7 +25,7 @@ openEuler社区有如下两种分类：
 
 系统只建设四个场景：新增应用镜像（场景一）、应用上游版本自动升级（场景二）、openEuler 大版本升级（场景三）、存量镜像功能测试脚本补齐（场景四）；PR CI 失败修复抽成可复用的手动组件。
 
-> 三个 Issue 驱动的场景标题统一以 `【自动升级需求】` 开头：新增镜像 `add <app> <version> docker image on openEuler <version>`、应用版本升级 `upgrade <app> to <version> on openEuler <version>`、openEuler 版本升级 `upgrade openEuler to <version>`。旧前缀 `【new-image】` / `【new-version】` / `【oe-upgrade】` 永久兼容。应用上游版本升级（场景二）由 Issue 提供目标版本与上游证据，流水线负责生成 Dockerfile、双架构验证与 PR。PR CI 失败修复不再自动轮询，改为手动 / 显式调用 `_ci_repair.yml`。
+> 三个 Issue 驱动的场景标题统一以 `【自动升级需求】` 开头：新增镜像 `add <app> <version> docker image on openEuler <version>`、应用版本升级 `upgrade <app> to <version> on openEuler <version>`、openEuler 版本升级 `upgrade openEuler to <version>`。旧前缀 `【new-image】` / `【new-version】` / `【oe-upgrade】` 已下线，不再识别。应用上游版本升级（场景二）由 Issue 提供目标版本与上游证据，流水线负责生成 Dockerfile、双架构验证与 PR。PR CI 失败修复不再自动轮询，改为手动 / 显式调用 `_ci_repair.yml`。
 
 ### 场景一：新增应用镜像
 
@@ -56,7 +56,7 @@ openEuler社区有如下两种分类：
 
 当 openEuler 发布新版本时，需要基于新的 openEuler 版本更新所有已有的应用容器镜像，只能按规则新增一个目录，而不是修改已有镜像目录文件：
 
-1. 由 GitCode `【自动升级需求】upgrade openEuler to <version>` Issue 驱动（旧 `【oe-upgrade】` 兼容），标题给出目标版本，正文给出 `Target openEuler Version` 与 `Scope`（领域列表或 `all`）；
+1. 由 GitCode `【自动升级需求】upgrade openEuler to <version>` Issue 驱动，标题给出目标版本，正文给出 `Target openEuler Version` 与 `Scope`（领域列表或 `all`）；
 2. 控制器按 Scope 全量扫描目标仓并固定 `base_sha`，一次只派发一个未完成任务；
 3. worker 完成 prepare → 4 轮双架构校验与有界修复 → 候选封存 → 分支推送与 PR → 回写 Issue；
 4. 单个任务失败写 Issue 评论但不阻塞后续任务；全部任务结束后写活动汇总。

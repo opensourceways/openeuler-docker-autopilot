@@ -68,13 +68,13 @@ _LABEL_LEGACY_RE = re.compile(
 )
 
 _TITLE_RE = re.compile(
-    r"^\s*(?:【自动升级需求】|【new-image】)\s*add\s+(?P<request>.+?)\s+docker\s+image\s+"
+    r"^\s*【自动升级需求】\s*add\s+(?P<request>.+?)\s+docker\s+image\s+"
     r"on\s+openEuler\s+(?P<os_version>\d{2}\.\d{2}"
     r"(?:-lts)?(?:-sp\d+)?)\s*$",
     re.IGNORECASE,
 )
 _UPGRADE_TITLE_RE = re.compile(
-    r"^\s*(?:【自动升级需求】|【new-version】)\s*upgrade\s+"
+    r"^\s*【自动升级需求】\s*upgrade\s+"
     r"(?P<app>\S+)\s+to\s+(?P<version>\S+)\s+"
     r"on\s+openEuler\s+(?P<os_version>\d{2}\.\d{2}"
     r"(?:-lts)?(?:-sp\d+)?)\s*$",
@@ -590,9 +590,8 @@ def parse_upgrade_issue_request(title: str, body: str) -> dict[str, object]:
     Title format:
         【自动升级需求】upgrade <app> to <version> on openEuler <os_version>
 
-    旧的 ``【new-version】upgrade ...`` 标题同样接受。正文用平铺字段给出上游
-    证据（``软件名`` / ``源码仓库`` / ``软件版本`` 必填），JSON 证据块仍可识别；
-    ``software.name`` / ``software.version`` 必须与标题一致。
+    正文用平铺字段给出上游证据（``软件名`` / ``源码仓库`` / ``软件版本`` 必填），
+    JSON 证据块仍可识别；``software.name`` / ``software.version`` 必须与标题一致。
     """
 
     match = _UPGRADE_TITLE_RE.fullmatch(title)

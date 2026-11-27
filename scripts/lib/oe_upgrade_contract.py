@@ -26,11 +26,6 @@ UPGRADE_DOMAINS = (
 _DOMAIN_BY_LOWER = {domain.lower(): domain for domain in UPGRADE_DOMAINS}
 _OE_RE = re.compile(r"^\d{2}\.\d{2}(?:-lts)?(?:-sp\d+)?$", re.IGNORECASE)
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-_LEGACY_TITLE_RE = re.compile(
-    r"^\s*【oe-upgrade】.*?openEuler\s+"
-    r"(?P<oe>\d{2}\.\d{2}(?:-lts)?(?:-sp\d+)?)\s*$",
-    re.IGNORECASE,
-)
 _AUTO_TITLE_RE = re.compile(
     r"^\s*【自动升级需求】\s*upgrade\s+openEuler\s+to\s+"
     r"(?P<oe>\d{2}\.\d{2}(?:-lts)?(?:-sp\d+)?)\s*$",
@@ -185,10 +180,9 @@ def _field_values(body: str, label: str) -> list[str]:
 
 
 def _title_oe_version(title: str) -> str | None:
-    for pattern in (_AUTO_TITLE_RE, _LEGACY_TITLE_RE):
-        match = pattern.fullmatch(title)
-        if match is not None:
-            return match.group("oe")
+    match = _AUTO_TITLE_RE.fullmatch(title)
+    if match is not None:
+        return match.group("oe")
     return None
 
 

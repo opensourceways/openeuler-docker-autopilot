@@ -60,13 +60,19 @@ def _oe_body():
         (UPGRADE_TITLE, SCENARIO_UPGRADE),
         (NEW_IMAGE_TITLE, SCENARIO_NEW_IMAGE),
         (OE_UPGRADE_TITLE, SCENARIO_OE_UPGRADE),
-        (LEGACY_UPGRADE_TITLE, SCENARIO_UPGRADE),
-        (LEGACY_NEW_IMAGE_TITLE, SCENARIO_NEW_IMAGE),
-        (LEGACY_OE_UPGRADE_TITLE, SCENARIO_OE_UPGRADE),
     ],
 )
 def test_title_selects_scenario(title, expected):
     assert route_issue(title) == expected
+
+
+@pytest.mark.parametrize(
+    "title",
+    [LEGACY_UPGRADE_TITLE, LEGACY_NEW_IMAGE_TITLE, LEGACY_OE_UPGRADE_TITLE],
+)
+def test_legacy_titles_are_no_longer_accepted(title):
+    with pytest.raises(IssueRoutingError, match="无法判断场景"):
+        route_issue(title)
 
 
 def test_unknown_title_is_rejected():
@@ -107,27 +113,27 @@ def test_claim_routed_issue_dispatches_the_auto_upgrade_scenario():
     assert comment["body"] == _comments()[SCENARIO_UPGRADE]
 
 
-def test_claim_routed_issue_skips_legacy_titled_issues():
+def test_claim_routed_issue_rejects_a_legacy_title():
     from scripts.lib.issue_lifecycle import claim_routed_issue
 
-    legacy = _issue(53, LEGACY_UPGRADE_TITLE, _upgrade_body())
-    unified = _issue(54, UPGRADE_TITLE, _upgrade_body())
-    client = _FakeClient([legacy, unified])
+    client = _FakeClient([_issue(53, LEGACY_UPGRADE_TITLE, _upgrade_body())])
     dispatched = []
 
     claimed = claim_routed_issue(
         client=client,
         target_repo=TARGET_REPO,
-        issue_number=None,
+        issue_number=53,
         route=_route,
         dispatch=lambda *args: dispatched.append(args),
         accepted_comments=_comments(),
     )
 
-    assert claimed is not None
-    assert claimed.number == 54
-    assert claimed.scenario == SCENARIO_UPGRADE
-    assert len(dispatched) == 1
+    assert claimed is None
+    assert dispatched == []
+    update_call = next(call for name, call in client.calls if name == "update")
+    assert update_call["issue_status"] == "已拒绝"
+    comment = next(call for name, call in client.calls if name == "comment")
+    assert "无法判断场景" in comment["body"]
 
 
 def test_claim_routed_issue_rejects_an_unroutable_title():

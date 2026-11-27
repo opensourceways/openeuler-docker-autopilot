@@ -39,8 +39,7 @@ def _issue():
     return {
         "number": 19,
         "title": (
-            "【oe-upgrade】upgrade latest application images to "
-            "openEuler 26.03-LTS"
+            "【自动升级需求】upgrade openEuler to 26.03-LTS"
         ),
         "body": (
             "**openEuler 目标版本（Target openEuler Version）：** "

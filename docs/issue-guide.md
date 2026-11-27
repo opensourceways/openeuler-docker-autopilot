@@ -46,17 +46,9 @@
 - 版本号不要带空格或斜杠，例：`1.85.4`、`2.16.0`；
 - openEuler 版本 `24.03-lts-sp4`、`24.03-LTS-SP4` 均可，大小写不敏感。
 
-### 2.3 旧标题（永久兼容）
+### 2.3 旧标题已下线
 
-以下旧标题仍会被正确识别，由各自的旧监控工作流认领，不需要修改已提交的 Issue：
-
-```text
-【new-image】add <软件包> <应用版本> docker image on openEuler <openEuler版本>
-【new-version】upgrade <软件名> to <目标版本> on openEuler <openEuler版本>
-【oe-upgrade】补齐 openEuler <openEuler版本> 镜像
-```
-
-新提交建议统一使用第 2.1 节的三种标题。
+`【new-image】` / `【new-version】` / `【oe-upgrade】` 三种旧标题**不再支持**，对应旧监控工作流已移除；沿用旧标题提交的 Issue 会被识别为无效并回帖说明。请统一使用第 2.1 节的三种标题。
 
 ---
 
@@ -242,7 +234,7 @@
 |---|---|
 | `title must match 【自动升级需求】add ...` | 严格按第 3.1 节格式重写标题 |
 | `title must match 【自动升级需求】upgrade ...` | 严格按第 4.1 节格式重写标题 |
-| `title must match 【oe-upgrade】...` | 旧标题格式不完整；改用 `【自动升级需求】upgrade openEuler to <目标版本>` |
+| `title must match 【自动升级需求】upgrade openEuler to ...` | 严格按第 5.1 节格式重写标题（旧 `【oe-upgrade】` 不再支持） |
 | `invalid app name in title` | 软件名只能包含字母、数字、`.`、`_`、`-`，且以字母或数字开头 |
 | `invalid version in title` | 版本号不要带空格/斜杠，例：`1.85.4` |
 | `missing required field: ...` / `missing required fields: ...` | 补齐第 3.2 / 4.2 节标为必填的字段 |

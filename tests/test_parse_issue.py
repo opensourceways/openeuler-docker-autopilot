@@ -81,7 +81,7 @@ MINIMAL_TARGET_ISSUE = """**软件包名称（Package Name）：** kvrocks
 
 def test_parse_target_repository_minimal_bilingual_issue():
     fields = parse_issue_request(
-        "【new-image】add kvrocks 2.16.0 docker image on openEuler 24.03-LTS-SP4",
+        "【自动升级需求】add kvrocks 2.16.0 docker image on openEuler 24.03-LTS-SP4",
         MINIMAL_TARGET_ISSUE,
     )
 
@@ -109,7 +109,7 @@ def test_parse_new_image_issue_accepts_the_unified_title():
 
 def test_parse_minimal_issue_can_take_version_from_pinned_source_url():
     fields = parse_issue_request(
-        "【new-image】add kvrocks docker image on openEuler 24.03-LTS-SP4",
+        "【自动升级需求】add kvrocks docker image on openEuler 24.03-LTS-SP4",
         MINIMAL_TARGET_ISSUE,
     )
 
@@ -126,7 +126,7 @@ def test_parse_pinned_source_url_keeps_a_compound_upstream_version():
     ).replace("kvrocks", "percona-server")
 
     fields = parse_issue_request(
-        "【new-image】add percona-server docker image on openEuler 24.03-LTS-SP4",
+        "【自动升级需求】add percona-server docker image on openEuler 24.03-LTS-SP4",
         body,
     )
 
@@ -140,7 +140,7 @@ def test_title_version_takes_precedence_over_a_different_source_ref(monkeypatch)
     monkeypatch.setattr(urllib.request, "urlopen", unexpected_urlopen)
 
     fields = parse_issue_request(
-        "【new-image】add kvrocks 3.0.0 docker image on openEuler 24.03-LTS-SP4",
+        "【自动升级需求】add kvrocks 3.0.0 docker image on openEuler 24.03-LTS-SP4",
         MINIMAL_TARGET_ISSUE,
     )
 
@@ -202,7 +202,7 @@ def test_parse_minimal_issue_uses_latest_github_release_or_tag_when_version_is_o
     ).replace("kvrocks", "percona-server")
 
     fields = parse_issue_request(
-        "【new-image】add percona-server docker image on openEuler 24.03-LTS-SP4",
+        "【自动升级需求】add percona-server docker image on openEuler 24.03-LTS-SP4",
         body,
     )
 
@@ -260,7 +260,7 @@ def test_parse_minimal_issue_falls_back_to_latest_github_tag(monkeypatch):
     ).replace("kvrocks", "example-app")
 
     fields = parse_issue_request(
-        "【new-image】add example-app docker image on openEuler 24.03-LTS-SP4",
+        "【自动升级需求】add example-app docker image on openEuler 24.03-LTS-SP4",
         body,
     )
 
@@ -277,7 +277,7 @@ def test_parse_minimal_issue_falls_back_to_latest_github_tag(monkeypatch):
 def test_parse_minimal_issue_rejects_title_and_body_package_mismatch():
     with pytest.raises(IssueParseError, match="package"):
         parse_issue_request(
-            "【new-image】add nginx 1.27.2 docker image on openEuler 24.03-LTS-SP4",
+            "【自动升级需求】add nginx 1.27.2 docker image on openEuler 24.03-LTS-SP4",
             MINIMAL_TARGET_ISSUE,
         )
 
@@ -537,7 +537,7 @@ def test_flat_evidence_requires_the_software_group():
 
 def test_parse_upgrade_issue_still_accepts_the_legacy_title():
     fields = parse_upgrade_issue_request(
-        "【new-version】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4",
+        "【自动升级需求】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4",
         FLAT_EVIDENCE,
     )
 
@@ -549,7 +549,7 @@ def test_parse_upgrade_issue_still_accepts_the_legacy_title():
 def test_parse_upgrade_issue_rejects_an_unsafe_app_name():
     with pytest.raises(IssueParseError, match="app name"):
         parse_upgrade_issue_request(
-            "【new-version】upgrade grpc;rm to 1.85.4 on openEuler 24.03-lts",
+            "【自动升级需求】upgrade grpc;rm to 1.85.4 on openEuler 24.03-lts",
             "",
         )
 
@@ -557,6 +557,6 @@ def test_parse_upgrade_issue_rejects_an_unsafe_app_name():
 def test_parse_upgrade_issue_rejects_a_non_matching_title():
     with pytest.raises(IssueParseError, match="title must match"):
         parse_upgrade_issue_request(
-            "【new-image】add grpc 1.85.4 docker image on openEuler 24.03-lts",
+            "【自动升级需求】add grpc 1.85.4 docker image on openEuler 24.03-lts",
             "",
         )

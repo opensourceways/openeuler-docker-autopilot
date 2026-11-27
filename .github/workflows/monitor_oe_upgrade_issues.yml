@@ -1,16 +1,14 @@
 name: Monitor openEuler Upgrade Issues
 
 on:
-  # 暂未纳入 hwyx86 的定时派发：先靠 GitHub cron 每 30 分钟兜底，
-  # 端到端验证通过后再挂到 oe-issue-poll 的 5 分钟 timer 上。
-  schedule:
-    - cron: "*/30 * * * *"
+  # 仅由统一入口 monitor_auto_upgrade_issues.yml 与 worker 收口后按 Issue 编号派发；
+  # 不再自带定时扫描，也不再认领旧标题 【oe-upgrade】。
   workflow_dispatch:
     inputs:
       tracking_issue_number:
         description: >-
-          Tracking GitCode Issue number; empty scans open 【oe-upgrade】 Issues
-        required: false
+          Tracking GitCode Issue number (required for manual dispatch)
+        required: true
         type: string
       oe_version:
         description: "Target openEuler version; empty reuses the Issue request"
@@ -35,8 +33,7 @@ permissions:
 
 concurrency:
   group: >-
-    oe-upgrade-advance-${{ inputs.tracking_issue_number ||
-    'scheduled' }}
+    oe-upgrade-advance-${{ inputs.tracking_issue_number }}
   cancel-in-progress: false
 
 jobs:
@@ -53,9 +50,6 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Validate manual inputs
-        if: >-
-          ${{ github.event_name == 'workflow_dispatch' &&
-              inputs.tracking_issue_number != '' }}
         env:
           ISSUE_NUMBER: ${{ inputs.tracking_issue_number }}
         run: |
@@ -87,10 +81,7 @@ jobs:
             echo "GITCODE_BOT_USERNAME repository variable is required" >&2
             exit 2
           fi
-          issue_args=()
-          if [ -n "${ISSUE_NUMBER}" ]; then
-            issue_args=(--issue-number "${ISSUE_NUMBER}")
-          fi
+          issue_args=(--issue-number "${ISSUE_NUMBER}")
           python3 scripts/harness/flow.py oe-upgrade-advance \
             --target-repo openeuler/openeuler-docker-images \
             "${issue_args[@]}" \

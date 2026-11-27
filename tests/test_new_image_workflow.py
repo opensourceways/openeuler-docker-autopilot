@@ -9,7 +9,6 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "create_new_images.yml"
 ISSUE_TEST_PATH = ROOT / ".github" / "workflows" / "issue_contract_test.yml"
-WATCH_PATH = ROOT / ".github" / "workflows" / "monitor_new_image_issues.yml"
 ROUND_PATH = ROOT / ".github" / "workflows" / "_create_new_image_rounds.yml"
 ROUNDS = ("round-1", "round-2", "round-3", "round-4")
 ARCHITECTURE_JOBS = ("x86_64", "aarch64")
@@ -315,46 +314,6 @@ def test_round_decision_artifact_is_strict_and_merge_safe():
     download = package_steps["Download round decision evidence"]
     assert download["with"]["pattern"].lstrip().startswith("phase1-decide*")
     assert download["with"]["merge-multiple"] is True
-
-
-def test_issue_watcher_polls_on_schedule_and_scans_up_to_max_issues():
-    """Production schedules scans; both repositories support the same manual run."""
-    data = _workflow(WATCH_PATH)
-    trigger = _trigger(data)
-
-    assert set(trigger) == {"schedule", "workflow_dispatch"}
-    assert trigger["schedule"][0]["cron"] == "42 * * * *"
-    assert '#   - cron: "*/5 * * * *"' not in WATCH_PATH.read_text()
-    assert data["permissions"] == {
-        "actions": "write",
-        "contents": "read",
-    }
-    assert data["concurrency"]["cancel-in-progress"] is False
-    assert len(data["jobs"]) == 1
-
-    job = data["jobs"]["watch"]
-    text = _job_text(job)
-    assert "ISSUE_POLL_RUNNER_LABELS" in job["runs-on"]
-    assert "oe-issue-poll" in job["runs-on"]
-    assert "github.event_name == 'workflow_dispatch'" in job["if"]
-    assert "github.repository_id == '1316941460'" in job["if"]
-    assert "PHASE1_TEST_ISSUE_NUMBER" not in text
-    issue_input = trigger["workflow_dispatch"]["inputs"]["issue_number"]
-    assert issue_input["required"] is False
-    assert "empty scans pending Issues" in issue_input["description"]
-    validation = next(
-        step for step in job["steps"]
-        if step["name"] == "Validate optional Issue number"
-    )
-    assert "inputs.issue_number != ''" in validation["if"]
-    assert "issue-watch" in text
-    assert "--max-issues" in text
-    assert "MAX_ISSUES" in text
-    assert '${GITHUB_EVENT_NAME}' in text
-    assert "GITCODE_TOKEN" in text
-    assert "github.token" in text
-    assert "DEEPSEEK_API_KEY" not in text
-    assert "oe-issue-poll" in text
 
 
 def test_workflows_do_not_use_github_hosted_ubuntu_runners():

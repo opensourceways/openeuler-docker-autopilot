@@ -6,7 +6,7 @@
 * 场景二（应用升级）：``【自动升级需求】upgrade <app> to <version> on openEuler <os>``
 * 场景三（openEuler 升级）：``【自动升级需求】upgrade openEuler to <version>``
 
-旧标题 ``【new-image】`` / ``【new-version】`` / ``【oe-upgrade】`` 继续按原场景处理。
+旧标题 ``【new-image】`` / ``【new-version】`` / ``【oe-upgrade】`` 不再支持。
 """
 
 from __future__ import annotations
@@ -36,19 +36,6 @@ _NEW_IMAGE_TITLE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# 旧标题由各自的旧 monitor 认领，统一入口必须跳过，避免同一 Issue 被两条路径
-# 同时认领。``【自动升级需求】`` 只有统一入口处理，不在其中。
-LEGACY_TITLE_PREFIXES = (
-    "【new-image】",
-    "【new-version】",
-    "【oe-upgrade】",
-)
-_LEGACY_ROUTES = {
-    "【new-image】": SCENARIO_NEW_IMAGE,
-    "【new-version】": SCENARIO_UPGRADE,
-    "【oe-upgrade】": SCENARIO_OE_UPGRADE,
-}
-
 
 class IssueRoutingError(ValueError):
     """Raised when an Issue title does not name exactly one scenario."""
@@ -64,9 +51,6 @@ def route_issue(title: str) -> str:
         return SCENARIO_UPGRADE
     if _NEW_IMAGE_TITLE_RE.fullmatch(stripped):
         return SCENARIO_NEW_IMAGE
-    for prefix, scenario in _LEGACY_ROUTES.items():
-        if stripped.startswith(prefix):
-            return scenario
     raise IssueRoutingError(
         "无法判断场景：标题必须以 "
         "`【自动升级需求】add <app> <version> docker image on openEuler <version>`、"

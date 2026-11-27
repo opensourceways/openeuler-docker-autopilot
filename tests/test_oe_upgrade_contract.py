@@ -52,7 +52,7 @@ def test_upgrade_request_is_stable_and_validates_external_key():
 def test_issue_parser_requires_matching_title_and_body_versions():
     from scripts.lib.oe_upgrade_contract import UpgradeContractError, parse_upgrade_issue
 
-    title = "【oe-upgrade】upgrade latest application images to openEuler 26.03-LTS"
+    title = "【自动升级需求】upgrade openEuler to 26.03-LTS"
     body = "**openEuler 目标版本（Target openEuler Version）：** 24.03-lts-sp4\n"
 
     with pytest.raises(UpgradeContractError, match="title.*body"):
@@ -64,7 +64,7 @@ def test_issue_parser_accepts_minimal_body_and_optional_scope():
 
     options = parse_upgrade_issue(
         123,
-        "【oe-upgrade】upgrade latest application images to openEuler 26.03-LTS",
+        "【自动升级需求】upgrade openEuler to 26.03-LTS",
         (
             "**openEuler 目标版本（Target openEuler Version）：** 26.03-lts\n"
             "**Scope：** Database\n"
@@ -98,7 +98,7 @@ def test_issue_parser_rejects_duplicate_target_version_field():
     with pytest.raises(UpgradeContractError, match="duplicate"):
         parse_upgrade_issue(
             123,
-            "【oe-upgrade】upgrade latest application images to openEuler 26.03-LTS",
+            "【自动升级需求】upgrade openEuler to 26.03-LTS",
             (
                 "**Target openEuler Version:** 26.03-lts\n"
                 "**Target openEuler Version:** 26.03-lts\n"

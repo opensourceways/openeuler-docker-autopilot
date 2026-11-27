@@ -2,8 +2,8 @@
 # 从轮询机派发统一 Issue 监控工作流 monitor_auto_upgrade_issues.yml
 # （与 oe-issue-poll.sh / runner-disk-guard.sh 共用同一个 token 文件）。
 #
-# 统一监控负责扫描新标题 【自动升级需求】 的 add / upgrade / upgrade openEuler 三类请求；
-# 旧标题 【new-image】 / 【new-version】 / 【oe-upgrade】 仍由各自的旧 monitor 处理。
+# 统一监控负责扫描 【自动升级需求】 的 add / upgrade / upgrade openEuler 三类请求；
+# 旧标题 【new-image】 / 【new-version】 / 【oe-upgrade】 已不再支持。
 set -euo pipefail
 
 TOKEN_FILE="${TOKEN_FILE:-/etc/oe-issue-poll/token}"

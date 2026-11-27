@@ -23,8 +23,7 @@ def test_watcher_has_plan_and_deliver_inputs_and_serial_concurrency():
     data = _load(WATCH)
     trigger = _on(data)
 
-    assert set(trigger) == {"schedule", "workflow_dispatch"}
-    assert trigger["schedule"][0]["cron"] == "*/30 * * * *"
+    assert set(trigger) == {"workflow_dispatch"}
     inputs = trigger["workflow_dispatch"]["inputs"]
     assert set(inputs) == {
         "tracking_issue_number",
@@ -32,7 +31,7 @@ def test_watcher_has_plan_and_deliver_inputs_and_serial_concurrency():
         "scope",
         "mode",
     }
-    assert inputs["tracking_issue_number"]["required"] is False
+    assert inputs["tracking_issue_number"]["required"] is True
     assert inputs["mode"]["options"] == ["plan", "deliver"]
     job = data["jobs"]["oe-upgrade-advance"]
     assert "ISSUE_POLL_RUNNER_LABELS" in job["runs-on"]
@@ -43,6 +42,8 @@ def test_watcher_has_plan_and_deliver_inputs_and_serial_concurrency():
     assert "oe-upgrade-advance" in text
     assert "oe_upgrade_worker.yml" in text
     assert "GITCODE_TOKEN" in text
+    assert "empty scans open" not in text
+    assert "--issue-number" in text
 
 
 def test_worker_is_one_task_per_run_with_stable_run_name_and_concurrency():
