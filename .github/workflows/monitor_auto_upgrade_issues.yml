@@ -4,8 +4,8 @@ name: Watch 【自动升级需求】 GitCode Issues
 #   场景一：add <app> <version> docker image on openEuler <version>
 #   场景二：upgrade <app> to <version> on openEuler <version>
 #   场景三：upgrade openEuler to <version>
-# 旧标题 `【new-image】` / `【new-version】` / `【oe-upgrade】` 仍由各自的旧 monitor 处理；
-# 两个入口互不重叠，避免同一 Issue 被同时认领。
+# 旧标题 `【new-image】` / `【new-version】` / `【oe-upgrade】` 已下线，不再识别；
+# 对应旧监控工作流已删除，本入口是唯一的 Issue 认领入口。
 
 on:
   # 主调度：hwyx86 上的 auto-upgrade-issue-poll.timer 每 5 分钟调用 workflow_dispatch
