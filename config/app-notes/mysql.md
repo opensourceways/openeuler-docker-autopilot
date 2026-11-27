@@ -21,3 +21,9 @@ build_timeout_minutes: 240
 
 ## 验证
 - `mysqld --version`；tests/test.sh 存在时以其为准。
+
+<!-- oe-app-note:auto:26.10.0.1/24.03-lts-sp4 -->
+## 自动沉淀：26.10.0.1 / 24.03-lts-sp4
+
+MySQL 从 26.x 起采用日历版本号（major=年份、minor=月份，如 26.10.0），并在 tag 上追加第四位 update 组件（如 mysql-26.10.0.1）。源码中 MYSQL_VERSION_UPDATE 只进入 MYSQL_SERVER_VERSION_WITH_UPDATE，而 `mysqld --version` 打印的 MYSQL_SERVER_VERSION 仍是三位（26.10.0）。因此功能测试对这类带第四位的版本必须做三位基版本匹配，不能要求四位完全相等。
+<!-- /oe-app-note:auto -->
