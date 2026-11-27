@@ -458,14 +458,27 @@ jobs:
           OUTCOME: ${{ steps.outcome.outputs.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           FAILURE_LOG: ${{ runner.temp }}/failure-log.md
+          UPGRADE_RESULT: ${{ needs.upgrade.result }}
+          CONDA_RESULT: ${{ needs.conda-upgrade.result }}
+          CREATE_RESULT: ${{ needs.create-image.result }}
+          REPAIR_RESULT: ${{ needs.repair.result }}
+          AUDIT_RESULT: ${{ needs.audit.result }}
         run: |
-          summary=""
+          summary="$(printf '%s\n' \
+            "- 升级任务：\`${UPGRADE_RESULT:-skipped}\`" \
+            "- conda 登记：\`${CONDA_RESULT:-skipped}\`" \
+            "- 新建镜像：\`${CREATE_RESULT:-skipped}\`" \
+            "- 自动修复：\`${REPAIR_RESULT:-skipped}\`" \
+            "- 审计/修复：\`${AUDIT_RESULT:-skipped}\`" \
+            "- 跳过 / 待登记明细见运行摘要：${RUN_URL}")"
+          failure_summary=""
           if [ -s "${FAILURE_LOG}" ]; then
-            summary="$(cat "${FAILURE_LOG}")"
+            failure_summary="$(cat "${FAILURE_LOG}")"
           fi
           python3 scripts/harness/flow.py upgrade-issue-finalize \
             --target-repo "${TARGET_REPO}" \
             --issue-number "${SOURCE_ISSUE}" \
             --outcome "${OUTCOME}" \
             --run-url "${RUN_URL}" \
-            --failure-summary "${summary}"
+            --summary "${summary}" \
+            --failure-summary "${failure_summary}"

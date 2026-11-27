@@ -283,6 +283,9 @@ def test_failure_and_summary_comments_are_bounded_and_machine_readable():
     )
     assert "failed: `1`" in summary
     assert "oe-upgrade-summary:" in summary
+    assert summary.startswith("## openEuler 版本升级处理结果")
+    assert "- **场景**：③ openEuler 版本升级" in summary
+    assert "### 失败摘要" in summary
 
 
 def test_large_initial_summary_uses_domain_counts_instead_of_full_task_list():

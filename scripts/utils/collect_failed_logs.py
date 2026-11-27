@@ -146,7 +146,7 @@ def _section(job: dict, lines: list[str], repo: str) -> str:
     body = "\n".join(lines)
     if len(body) > _MAX_CHARS_PER_JOB:
         body = body[:_MAX_CHARS_PER_JOB] + "\n…（截断）"
-    return f"### {name}\n\n{url}\n\n```text\n{body}\n```"
+    return f"**{name}**\n\n{url}\n\n```text\n{body}\n```"
 
 
 def collect(repo: str, run_id: str, token: str) -> str:
@@ -157,7 +157,7 @@ def collect(repo: str, run_id: str, token: str) -> str:
         try:
             lines = excerpt(download_job_log(repo, job["id"], token))
         except Exception as error:  # noqa: BLE001 - 单个 job 失败不影响其余摘要
-            section = f"### {name}\n\n日志获取失败：{error}"
+            section = f"**{name}**\n\n日志获取失败：{error}"
         else:
             section = _section(job, lines, repo)
         if used + len(section) > _MAX_TOTAL_CHARS:

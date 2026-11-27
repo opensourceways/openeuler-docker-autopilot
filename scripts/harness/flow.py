@@ -728,6 +728,7 @@ def _issue_finalize(args: argparse.Namespace) -> None:
         "outcome": args.outcome,
         "run_url": args.run_url,
         "pr_url": args.pr_url,
+        "summary": getattr(args, "summary", ""),
         "failure_summary": args.failure_summary,
     }
     failure_evidence_dir = getattr(args, "failure_evidence_dir", None)
@@ -917,6 +918,7 @@ def _upgrade_issue_finalize(args: argparse.Namespace) -> None:
         outcome=args.outcome,
         run_url=args.run_url,
         pr_url=args.pr_url,
+        summary=getattr(args, "summary", ""),
         failure_summary=args.failure_summary,
     )
     _print_json(
@@ -1473,6 +1475,7 @@ def _add_delivery_commands(commands: argparse._SubParsersAction) -> None:
     )
     issue_finalize.add_argument("--run-url", required=True)
     issue_finalize.add_argument("--pr-url", default="")
+    issue_finalize.add_argument("--summary", default="")
     issue_finalize.add_argument("--failure-summary", default="")
     issue_finalize.add_argument("--failure-evidence-dir", type=Path)
     issue_finalize.set_defaults(handler=_issue_finalize)
@@ -1552,6 +1555,7 @@ def _add_delivery_commands(commands: argparse._SubParsersAction) -> None:
     )
     upgrade_finalize.add_argument("--run-url", required=True)
     upgrade_finalize.add_argument("--pr-url", default="")
+    upgrade_finalize.add_argument("--summary", default="")
     upgrade_finalize.add_argument("--failure-summary", default="")
     upgrade_finalize.set_defaults(handler=_upgrade_issue_finalize)
 

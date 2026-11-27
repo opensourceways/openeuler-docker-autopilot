@@ -60,7 +60,7 @@ def test_collect_renders_one_section_per_failed_job(monkeypatch):
 
     text = logs.collect("o/r", "9", "token")
 
-    assert text.startswith("### Upgrade folly / Validate x86_64")
+    assert text.startswith("**Upgrade folly / Validate x86_64**")
     assert "https://github.com/o/r/actions/runs/9/job/1" in text
     assert "##[error]boom" in text
 
@@ -85,4 +85,4 @@ def test_collect_survives_a_job_whose_log_cannot_be_downloaded(monkeypatch):
     text = logs.collect("o/r", "9", "token")
 
     assert "日志获取失败" in text
-    assert "### ok" in text
+    assert "**ok**" in text

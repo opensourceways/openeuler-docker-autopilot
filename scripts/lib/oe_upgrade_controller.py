@@ -104,7 +104,7 @@ def _plan_preview_body(
 ) -> str:
     return "\n".join(
         (
-            "openEuler 升级规划预览已生成；本次没有建立交付活动。",
+            "## openEuler 升级规划预览已生成；本次没有建立交付活动。",
             "",
             f"- Target openEuler: `{request.oe_version}`",
             f"- Scope: `{', '.join(request.scope)}`",

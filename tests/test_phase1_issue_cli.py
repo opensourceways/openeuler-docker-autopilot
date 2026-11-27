@@ -322,6 +322,7 @@ def test_issue_finalize_handler_updates_the_exact_source_issue(
             "outcome": "success",
             "run_url": "https://github.com/example/repo/actions/runs/123",
             "pr_url": "https://gitcode.com/example/repo/pull/9",
+            "summary": "",
             "failure_summary": "",
         }
     ]

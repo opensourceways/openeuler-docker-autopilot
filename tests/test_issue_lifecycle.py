@@ -1159,3 +1159,33 @@ def test_upgrade_issue_is_finalized_from_scenario_two_result(
     update = client.calls[2][1]
     assert update["issue_status"] == expected_status
     assert update["state"] == expected_state
+
+
+def test_upgrade_comment_uses_the_shared_result_layout():
+    from scripts.lib.issue_lifecycle import finalize_upgrade_issue
+
+    client = TriggerIssueClient(
+        _upgrade_trigger_issue(
+            issue_state="已接纳",
+            issue_state_detail={"title": "已接纳"},
+        )
+    )
+
+    finalize_upgrade_issue(
+        client=client,
+        target_repo=TARGET_REPO,
+        issue_number=81,
+        outcome="failure",
+        run_url="https://github.com/Meihan-chen/repo/actions/runs/456",
+        summary="- 升级任务：`failure`",
+        failure_summary="**Validate x86_64**\n\n```text\nerror: boom\n```",
+    )
+
+    body = client.calls[1][1]["body"]
+    assert body.startswith("## 自动升级流水线未完成")
+    assert "- **场景**：② 应用自动升级" in body
+    assert "- **Workflow**：https://github.com/Meihan-chen/repo/actions/runs/456" in body
+    assert "### 摘要" in body
+    assert "- 升级任务：`failure`" in body
+    assert "### 失败摘要" in body
+    assert "**Validate x86_64**" in body

@@ -134,6 +134,7 @@ def test_finalize_only_entry_rewrites_one_issue_without_rerunning_the_pipeline()
         "pr_url",
         "run_url",
         "failure_summary",
+        "summary",
     }
     assert trigger["issue_number"]["required"] is True
     assert trigger["outcome"]["options"] == ["success", "failure"]

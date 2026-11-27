@@ -11,9 +11,11 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from scripts.lib.gitcode_client import GitCodeResource
+from scripts.lib.issue_comment import render_result_comment
 from scripts.lib.issue_router import (
     AUTO_UPGRADE_TITLE_PREFIX,
     LEGACY_TITLE_PREFIXES,
+    SCENARIO_NEW_IMAGE,
     SCENARIO_UPGRADE,
 )
 from scripts.lib.task_spec import TaskSpec
@@ -189,6 +191,10 @@ def _brief(value: object, *, limit: int = 500) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
+
+
+def _summary_lines(text: str) -> list[str]:
+    return [line for line in str(text or "").splitlines() if line.strip()]
 
 
 def _agent_stage_lines(generation_dir: Path) -> list[str]:
@@ -491,7 +497,11 @@ def _reject_issue(
     client.create_issue_comment(
         target_repo=target_repo,
         number=_issue_number(issue),
-        body=f"自动处理未启动：{reason}",
+        body=(
+            "## 自动处理未启动\n\n"
+            f"- **原因**：{reason}\n"
+            "- **下一步**：按原因修正标题或正文后重新提交。"
+        ),
     )
     _update_source_issue(
         client=client,
@@ -764,7 +774,9 @@ def _finalize_issue(
     issue_number: int,
     outcome: str,
     run_url: str,
+    scenario: str,
     pr_url: str = "",
+    summary: str = "",
     failure_summary: str = "",
     failure_evidence_dir: Path | None = None,
     pipeline_label: str = "自动镜像流水线",
@@ -822,10 +834,14 @@ def _finalize_issue(
             if pr_url
             else f"{pipeline_label}已完成，Issue 已关闭。"
         )
-        lines = [headline, "", f"- Workflow: {run_url}"]
-        if pr_url:
-            lines.append(f"- Pull request: {pr_url}")
-        comment = "\n".join(lines)
+        comment = render_result_comment(
+            scenario=scenario,
+            headline=headline,
+            status="✅ 已完成",
+            run_url=run_url,
+            pr_url=pr_url,
+            summary_lines=_summary_lines(summary),
+        )
     elif outcome == "needs-human-review":
         if failure_evidence_dir is not None:
             try:
@@ -837,16 +853,12 @@ def _finalize_issue(
             raise IssueLifecycleError(
                 "needs-human-review requires terminal failure evidence"
             )
-        comment = "\n".join(
-            (
-                f"needs-human-review: {pipeline_label}未收敛，需要人工处理。",
-                "",
-                failure_summary,
-                "",
-                "## Evidence",
-                "",
-                f"- Workflow: {run_url}",
-            )
+        comment = render_result_comment(
+            scenario=scenario,
+            headline=f"needs-human-review: {pipeline_label}未收敛，需要人工处理。",
+            status="🧑‍💻 待人工处理",
+            run_url=run_url,
+            evidence=failure_summary,
         )
     else:
         headline = (
@@ -855,14 +867,18 @@ def _finalize_issue(
             else f"{pipeline_label}未完成，需要人工处理"
             f"（Issue 状态保持「{target_status}」）。"
         )
-        lines = [headline, "", f"- Workflow: {run_url}"]
-        summary = failure_summary.strip()
-        if summary:
-            # 失败摘要可能是多行的日志摘录，单独成段，不要塞进列表项。
-            lines.extend(["", summary])
-        else:
-            lines.append("- Failure summary: see workflow run")
-        comment = "\n".join(lines)
+        comment = render_result_comment(
+            scenario=scenario,
+            headline=headline,
+            status=(
+                "⚠️ 已挂起"
+                if target_status == "已挂起"
+                else f"⚠️ 待处理（Issue 保持「{target_status}」）"
+            ),
+            run_url=run_url,
+            summary_lines=_summary_lines(summary),
+            failure_summary=failure_summary,
+        )
     client.create_issue_comment(
         target_repo=target_repo,
         number=issue_number,
@@ -887,6 +903,7 @@ def finalize_new_image_issue(
     outcome: str,
     run_url: str,
     pr_url: str = "",
+    summary: str = "",
     failure_summary: str = "",
     failure_evidence_dir: Path | None = None,
 ) -> Any | None:
@@ -898,7 +915,9 @@ def finalize_new_image_issue(
         issue_number=issue_number,
         outcome=outcome,
         run_url=run_url,
+        scenario=SCENARIO_NEW_IMAGE,
         pr_url=pr_url,
+        summary=summary,
         failure_summary=failure_summary,
         failure_evidence_dir=failure_evidence_dir,
     )
@@ -912,6 +931,7 @@ def finalize_upgrade_issue(
     outcome: str,
     run_url: str,
     pr_url: str = "",
+    summary: str = "",
     failure_summary: str = "",
 ) -> Any | None:
     """Write the terminal scenario-two result back to its source Issue.
@@ -926,7 +946,9 @@ def finalize_upgrade_issue(
         issue_number=issue_number,
         outcome=outcome,
         run_url=run_url,
+        scenario=SCENARIO_UPGRADE,
         pr_url=pr_url,
+        summary=summary,
         failure_summary=failure_summary,
         pipeline_label="自动升级流水线",
         require_pr_on_success=False,

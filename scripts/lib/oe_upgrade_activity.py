@@ -8,6 +8,10 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Sequence
 
+from scripts.lib.issue_comment import (
+    SCENARIO_OE_UPGRADE,
+    render_result_comment,
+)
 from scripts.lib.oe_upgrade_contract import UPGRADE_DOMAINS, UpgradeRequest
 from scripts.lib.task_spec import TaskSpec
 
@@ -118,7 +122,7 @@ def render_rejection_comment(
     marker = rejection_marker(issue_number, title, issue_body)
     return "\n".join(
         (
-            "openEuler 大版本升级请求格式校验失败，自动化未建立活动。",
+            "## openEuler 大版本升级请求格式校验失败，自动化未建立活动。",
             "",
             f"- 原因: {_brief(reason, limit=1200)}",
             "- 请修正 Issue 标题和必填字段后，将状态重新设为「新建」。",
@@ -148,20 +152,20 @@ def render_failure_comment(
         raise ValueError("failure comment run URL must use HTTPS")
     assert task.task_key and task.mdu_path and task.derive_from
     source_oe = task.derive_from.split("/", 1)[1]
-    return "\n".join(
-        (
-            "openEuler 升级任务自动处理失败；本活动不会自动重试该 MDU。",
-            "",
+    return render_result_comment(
+        scenario=SCENARIO_OE_UPGRADE,
+        headline="openEuler 版本升级任务自动处理失败",
+        status="⚠️ 已挂起（本活动不会自动重试该 MDU）",
+        run_url=run_url,
+        summary_lines=[
             f"- MDU: `{task.mdu_path}`",
             f"- 应用版本: `{task.version}`",
             f"- openEuler: `{source_oe}` → `{task.os_version}`",
             f"- Reason: `{reason}`",
-            f"- 摘要: {_brief(summary)}",
-            f"- Workflow: {run_url}",
             f"- Evidence artifact: `{_brief(artifact_name, limit=200)}`",
-            "",
-            failure_marker(request.request_key, task.task_key),
-        )
+        ],
+        failure_summary=_brief(summary),
+        footer_lines=[failure_marker(request.request_key, task.task_key)],
     )
 
 
@@ -172,18 +176,20 @@ def render_planning_failure_comment(
     reason = _brief(failure.get("reason"), limit=800)
     if not mdu_path:
         raise ValueError("planning failure requires mdu_path")
-    return "\n".join(
-        (
-            "该 MDU 无法形成安全的 openEuler 升级任务。",
-            "",
+    return render_result_comment(
+        scenario=SCENARIO_OE_UPGRADE,
+        headline="该 MDU 无法形成安全的 openEuler 升级任务",
+        status="⚠️ 已跳过该 MDU",
+        summary_lines=[
             f"- MDU: `{mdu_path}`",
-            f"- Reason: `planning`",
-            f"- 摘要: {reason}",
-            "",
+            "- Reason: `planning`",
+        ],
+        failure_summary=reason,
+        footer_lines=[
             planning_failure_marker(
                 request.request_key, mdu_path, request.oe_version
-            ),
-        )
+            )
+        ],
     )
 
 
@@ -231,7 +237,7 @@ def render_initial_summary_comment(
         else f"`{', '.join(request.scope)}`"
     )
     lines = [
-        "openEuler 升级交付活动初始汇总已生成；即将按顺序处理待执行任务。",
+        "## openEuler 升级交付活动初始汇总已生成；即将按顺序处理待执行任务。",
         "",
         f"- Target openEuler: `{request.oe_version}`",
         f"- Scope: {scope_label}",
@@ -418,28 +424,24 @@ def render_summary_comment(
         f"- `{failure.get('mdu_path', '')}`: `planning`"
         for failure in planning_failures[: max(0, 20 - len(failure_items))]
     )
-    return "\n".join(
-        (
-            "openEuler 大版本升级自动化已完成；Issue 保持打开，等待 PR 审核。",
-            "",
+    return render_result_comment(
+        scenario=SCENARIO_OE_UPGRADE,
+        headline="openEuler 版本升级处理结果：自动化已完成",
+        status="✅ 已完成（Issue 保持打开，等待 PR 审核）",
+        run_url=run_url,
+        summary_lines=[
             f"- Target openEuler: `{request.oe_version}`",
             f"- Scope: `{', '.join(request.scope)}`",
             f"- Base SHA: `{request.base_sha}`",
             *(f"- {name}: `{counts[name]}`" for name in counts),
-            "",
-            "### PR 摘要",
-            "",
-            *(pr_items or ("- 无",)),
-            "",
-            "### 失败摘要",
-            "",
-            *(failure_items or ("- 无",)),
-            "",
-            f"- Final workflow: {run_url}",
-            f"- Full result artifact: `{artifact_name}`",
+        ],
+        extra_sections=(("PR 摘要", tuple(pr_items)),),
+        failure_summary="\n".join(failure_items),
+        footer_lines=[
+            f"- 全量结果 Artifact：`{artifact_name}`",
             "",
             summary_marker(request.request_key, digest),
-        )
+        ],
     )
 
 
