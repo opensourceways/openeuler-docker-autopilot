@@ -17,3 +17,9 @@ app: scann
 
 ## 验证
 - `python -c "import scann; print(scann.__version__)"`；tests/test.sh 为准。
+
+<!-- oe-app-note:auto:4a7bc8ab0bc770e71a259b7966c500496b99010a/24.03-lts-sp4 -->
+## 自动沉淀：4a7bc8ab0bc770e71a259b7966c500496b99010a / 24.03-lts-sp4
+
+scann 1.4.2 在 PyPI 同时提供 cp39-cp39-manylinux_2_27 的 x86_64 与 aarch64 轮子；清华 PyPI 镜像可能对本 runner 网段返回 403 导致 pip 报 'from versions: none'，构建时优先用官方 https://pypi.org/simple 作为索引。
+<!-- /oe-app-note:auto -->
