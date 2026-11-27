@@ -932,13 +932,11 @@ openeuler-docker-images-workflow/
 │   └── utils/
 │       └── scoring.py                 # 置信度计算
 ├── docs/
+│   ├── issue-guide.md                 # 三个场景的 Issue 提交指南（标题 + 正文 + 示例）
 │   ├── failure-patterns.yml           # verified 结构化故障模式
 │   ├── failure-patterns.md            # 知识库维护策略
 │   └── ci-failure-patterns.md         # CI 修复组件：失败模式知识库（自动维护）
 ├── templates/
-│   ├── new-image-issue.md             # 场景一 Issue 模板（自动升级需求 add）
-│   ├── auto-upgrade-issue.md          # 场景二 Issue 模板（自动升级需求）
-│   ├── new-version-issue.md           # 场景二旧标题模板（兼容保留）
 │   └── pr.md                          # PR 模板
 ├── tests/                             # 本仓单元测试
 ├── DESIGN.md

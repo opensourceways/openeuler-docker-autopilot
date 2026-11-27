@@ -156,7 +156,7 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 
 ## 1. 提交新镜像需求
 
-在 [openeuler-docker-images Issues](https://gitcode.com/openeuler/openeuler-docker-images/issues) 提交 Issue 即可，无需接触本仓库。
+在 [openeuler-docker-images Issues](https://gitcode.com/openeuler/openeuler-docker-images/issues) 提交 Issue 即可，无需接触本仓库。三个场景的标题、正文与完整示例统一整理在 [`docs/issue-guide.md`](docs/issue-guide.md)。
 
 **① 标题统一以 `【自动升级需求】add` 开头：**
 
@@ -170,7 +170,7 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 【自动升级需求】add kvrocks 2.16.0 docker image on openEuler 24.03-LTS-SP4
 ```
 
-**② 正文至少提供三个字段**（模板见 [`templates/new-image-issue.md`](templates/new-image-issue.md)）：
+**② 正文至少提供三个字段**（完整示例见 [`docs/issue-guide.md`](docs/issue-guide.md) 第 3 节）：
 
 ```markdown
 **软件包名称（Package Name）：** kvrocks
@@ -378,7 +378,7 @@ create_new_images.yml  (operation = scenario_one)
 
 ### 4.1 触发与候选发现
 
-新入口是 [`monitor_auto_upgrade_issues.yml`](.github/workflows/monitor_auto_upgrade_issues.yml)：扫描标题为 `【自动升级需求】upgrade <app> to <version> on openEuler <version>` 的 Issue，认领后交给 [`upgrade_upstream_versions.yml`](.github/workflows/upgrade_upstream_versions.yml)。旧入口 [`monitor_upgrade_issues.yml`](.github/workflows/monitor_upgrade_issues.yml) 继续扫 `【new-version】` 标题。正文用平铺字段描述上游证据（`软件名` / `源码仓库` / `软件版本` / `门禁路径` / `中游检查点` / `安装候选` 等，每行 `字段: 值`），旧的证据 JSON 块仍可识别；模板见 [`templates/auto-upgrade-issue.md`](templates/auto-upgrade-issue.md)，字段与拒绝原因见 [`docs/new-version-issue-guide.md`](docs/new-version-issue-guide.md)。解析后归一化成 `evidence` 输入透传。
+新入口是 [`monitor_auto_upgrade_issues.yml`](.github/workflows/monitor_auto_upgrade_issues.yml)：扫描标题以 `【自动升级需求】` 开头的 Issue（三个场景统一前缀），认领后按后缀分发给对应工作流。旧入口 [`monitor_new_image_issues.yml`](.github/workflows/monitor_new_image_issues.yml) / [`monitor_upgrade_issues.yml`](.github/workflows/monitor_upgrade_issues.yml) / [`monitor_oe_upgrade_issues.yml`](.github/workflows/monitor_oe_upgrade_issues.yml) 继续扫各自的旧标题。正文用平铺字段描述上游证据（`软件名` / `源码仓库` / `软件版本` / `门禁路径` / `中游检查点` / `安装候选` 等，每行 `字段: 值`），旧的证据 JSON 块仍可识别；完整格式、字段约束与拒绝原因见 [`docs/issue-guide.md`](docs/issue-guide.md)。解析后归一化成 `evidence` 输入透传。
 
 工作流也可手动触发：
 
@@ -476,7 +476,7 @@ clone 目标仓 → 确定性检查 → upgrade_auditor Agent → upgrade_fixer 
 
 升级证据来自触发 Issue 的正文：
 
-- Issue 正文用平铺字段描述证据：`软件名` / `源码仓库` / `软件版本` 必填，`上游支持检查点`、`中游检查点`、`安装候选` 三组可整组省略；旧的 JSON 块仍可识别。字段约束见 [`docs/new-version-issue-guide.md`](docs/new-version-issue-guide.md)；
+- Issue 正文用平铺字段描述证据：`软件名` / `源码仓库` / `软件版本` 必填，`上游支持检查点`、`中游检查点`、`安装候选` 三组可整组省略；旧的 JSON 块仍可识别。字段约束见 [`docs/issue-guide.md`](docs/issue-guide.md)；
 - [`parse_issue.py`](scripts/harness/parse_issue.py) 把平铺字段组装成与旧 JSON 等价的结构并校验必填项，要求软件名 / 版本一致；[`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把它归一化为 `source=gitcode-issue` 的证据包，保留原始字段；
 - [`upgrade_scan.py`](scripts/harness/upgrade_scan.py) 只在应用同名时把该证据写入升级矩阵，其它条目仍回落到 `source=manual`；
 - 证据会出现在 PR 正文、Dockerfile 生成提示与测试生成提示里，**只作参考，不参与门禁**；上游版本是否真实可用，由 AI 生成与双架构构建/功能测试兜底验证。
@@ -798,14 +798,12 @@ openeuler-docker-images-workflow/
 │   ├── bootstrap_tools.py                   # 工具链落地
 │   └── runner_preflight.py                  # Runner 能力自检
 ├── docs/
+│   ├── issue-guide.md                       # 三个场景的 Issue 提交指南（标题 + 正文 + 示例）
 │   ├── failure-patterns.yml                 # verified 结构化故障模式
 │   ├── failure-patterns.md                  # 知识库维护策略
 │   ├── ci-failure-patterns.md               # CI 修复组件的失败模式知识库
 │   └── runbooks/                            # 运维手册
 ├── templates/
-│   ├── new-image-issue.md                   # 场景一 Issue 模板
-│   ├── auto-upgrade-issue.md                # 场景二 Issue 模板（【自动升级需求】+ 上游证据字段）
-│   ├── new-version-issue.md                 # 场景二旧标题模板（【new-version】，兼容保留）
 │   └── pr.md                                # PR 模板
 ├── tests/                                   # 本仓单元、契约与工作流回归测试
 ├── requirements.txt                         # 运行时依赖（requests）
@@ -914,6 +912,7 @@ CI 修复组件自带一套平台与 AI 调用层（`ci_*` 与 `ai_runner` / `op
 
 | 文档 | 内容 |
 |------|------|
+| [`docs/issue-guide.md`](docs/issue-guide.md) | 三个场景的 Issue 提交指南：标题规则、正文字段、完整示例与常见拒绝原因 |
 | [`REQUIREMENTS.md`](REQUIREMENTS.md) | 项目目标、部署约束、测试策略结论及其论证 |
 | [`DESIGN.md`](DESIGN.md) | 系统设计全文：仓库规范、工作流、Agent 协作、构建流水线、命名规范、风险与缓解 |
 | [`docs/failure-patterns.md`](docs/failure-patterns.md) | 场景一 / 三 故障知识库的组织与维护策略 |

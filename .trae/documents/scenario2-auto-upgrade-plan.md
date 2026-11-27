@@ -1,6 +1,6 @@
 # 场景二改回「应用自动升级」实施方案
 
-> **状态更新（正式版本）**：场景二已改为 GitCode `【new-version】` Issue 驱动。目标版本与上游证据由 Issue 正文提供，工作流不再调用 upstream-dashboard，也不再用看板做版本发现；扫描阶段只负责定位两个目标仓目录、判断目标版本是否已存在。本文档保留初版设计记录，当前实现与字段约束以 [README 第 4 节](../../README.md) 和 [new-version-issue-guide.md](../../docs/new-version-issue-guide.md) 为准。
+> **状态更新（正式版本）**：场景二已改为 GitCode `【自动升级需求】upgrade <app> to <version> on openEuler <version>` Issue 驱动。目标版本与上游证据由 Issue 正文提供，工作流不再调用 upstream-dashboard，也不再用看板做版本发现；扫描阶段只负责定位两个目标仓目录、判断目标版本是否已存在。本文档保留初版设计记录，当前实现与字段约束以 [README 第 4 节](../../README.md) 和 [issue-guide.md](../../docs/issue-guide.md) 为准。
 
 ## Context
 
