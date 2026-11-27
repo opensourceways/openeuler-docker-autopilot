@@ -154,7 +154,7 @@ def cases_yaml(package: str) -> str:
             "description": "conda 元数据登记的包内文件必须完整落盘",
             "category": "functional",
             "cmd": (
-                'python -c "import glob,json,os,sys; '
+                'python3 -c "import glob,json,os,sys; '
                 "p=os.environ['CONDA_PREFIX']; "
                 f"m=glob.glob(os.path.join(p,'conda-meta','{package}-'"
                 "+os.environ['PKG_VERSION']+'-*.json')); "
