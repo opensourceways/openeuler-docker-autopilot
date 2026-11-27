@@ -1,0 +1,8 @@
+[Unit]
+Description=Dispatch unified auto-upgrade Issue monitor workflow
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/auto-upgrade-issue-poll.sh

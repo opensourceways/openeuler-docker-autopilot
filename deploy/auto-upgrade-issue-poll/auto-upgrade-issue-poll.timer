@@ -1,0 +1,11 @@
+[Unit]
+Description=Dispatch unified auto-upgrade Issue monitor every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*:0/5
+AccuracySec=1min
+Unit=auto-upgrade-issue-poll.service
+
+[Install]
+WantedBy=timers.target

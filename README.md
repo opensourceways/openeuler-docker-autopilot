@@ -226,7 +226,12 @@ Runner 需预装 **Docker 与 buildx**。能力由 Job 启动时的 `scripts/run
 
 > 校验 Job 使用通用的 `oe-upgrade-x64` / `oe-upgrade-arm64`，四台构建机上的实例都能承接，避免被单台 `oe-image-*` 机器占用时长时间排队；只有 `decide`、候选封存与交付这类需要固定镜像构建机的步骤仍锁 `oe-image-*`。
 
-Issue 轮询的主调度在 hwyx86 上，跑在专用 `oe-issue-poll` Runner 上（与镜像构建机隔离，不会被长任务卡住）：场景二 `monitor_upgrade_issues.yml` 由 `oe-issue-poll.timer` 每 5 分钟派发；场景一 `monitor_new_image_issues.yml` 由 `oe-new-image-poll.timer` 每 30 分钟派发；场景三 `monitor_oe_upgrade_issues.yml` 暂未纳入定时派发，只靠 GitHub cron 每 30 分钟兜底（端到端验证通过后再挂）。GitHub 自带 cron 只作低频兜底，因为其 schedule 属于 best-effort，可能长期延迟或丢跑；需要换机器时设置 Variable `ISSUE_POLL_RUNNER_LABELS`。
+Issue 轮询的主调度在 hwyx86 上，跑在专用 `oe-issue-poll` Runner 上（与镜像构建机隔离，不会被长任务卡住）：
+
+- **新标题入口** `monitor_auto_upgrade_issues.yml` 覆盖 `add` / `upgrade` / `upgrade openEuler` 三类 `【自动升级需求】` 请求，由 `auto-upgrade-issue-poll.timer` 每 5 分钟派发，安装脚本见 [`deploy/auto-upgrade-issue-poll/install.sh`](deploy/auto-upgrade-issue-poll/install.sh)；
+- **旧标题兼容入口**：场景二 `monitor_upgrade_issues.yml` 由 `oe-issue-poll.timer` 每 5 分钟、场景一 `monitor_new_image_issues.yml` 由 `oe-new-image-poll.timer` 每 30 分钟派发；场景三旧入口 `monitor_oe_upgrade_issues.yml` 暂未纳入定时派发，只靠 GitHub cron 每 30 分钟兜底（端到端验证通过后再挂）。
+
+GitHub 自带 cron 只作低频兜底，因为其 schedule 属于 best-effort，可能长期延迟或丢跑（新标题 Issue 若只靠 cron，可能几十分钟甚至几小时才被扫到）；需要换机器时设置 Variable `ISSUE_POLL_RUNNER_LABELS`。
 
 **Runner 磁盘巡检。** [`runner_disk_guard.yml`](.github/workflows/runner_disk_guard.yml) 给每台主 Runner 各派一个 Job，在本机取 `/`、`/var/lib/docker`、Runner 工作目录三者中最小的剩余空间；低于 70 GiB 时就地清理 BuildKit/buildx 缓存、停止的容器、未使用镜像和 7 天前的 runner 临时文件。同机另一个实例正在构建时（检测到运行中容器），只做安全清理，跳过 buildx/builder 全量清理。主调度由 hwyx86 上的 `runner-disk-guard.timer` 每 30 分钟触发（派发脚本复用 `/etc/oe-issue-poll/token`），安装脚本见 [`deploy/runner-disk-guard/install.sh`](deploy/runner-disk-guard/install.sh)；阈值可用 Variable `RUNNER_DISK_MIN_FREE_GIB` 或手动输入覆盖。
 
@@ -776,6 +781,7 @@ openeuler-docker-images-workflow/
 │   ├── watchlist.json                       # CI 修复组件的仓库列表与扫描参数（仅手动使用）
 │   └── upgrade-apps.yml                     # ② 场景二软件清单（人工维护，不遍历目标仓）
 ├── deploy/
+│   ├── auto-upgrade-issue-poll/             # 轮询机上的 5 分钟统一 Issue 监控 timer 与安装脚本
 │   └── runner-disk-guard/                   # 轮询机上的 30 分钟磁盘巡检 timer 与安装脚本
 ├── scripts/
 │   ├── harness/

@@ -8,7 +8,9 @@ name: Watch 【自动升级需求】 GitCode Issues
 # 两个入口互不重叠，避免同一 Issue 被同时认领。
 
 on:
-  # GitHub cron 兜底（best-effort）；轮询机上的 timer 可作为主调度。
+  # 主调度：hwyx86 上的 auto-upgrade-issue-poll.timer 每 5 分钟调用 workflow_dispatch
+  # （安装脚本 deploy/auto-upgrade-issue-poll/install.sh）。
+  # GitHub 自带 cron 只作低频兜底（best-effort，可能长期延迟或丢跑）。
   schedule:
     - cron: '*/30 * * * *'
   workflow_dispatch:

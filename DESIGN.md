@@ -860,7 +860,7 @@ Issue   创建在目标仓
 | 风险 | 概率 | 缓解 |
 |------|------|------|
 | Agent 生成的 Dockerfile 无法构建 | 高 | 确定性构建验证 + Fixer 3 轮（内置故障知识库） |
-| Issue 未被及时扫描 | 低 | 场景二由 `oe-issue-poll` 定时派发，场景三由 GitHub cron 兜底，均可手动触发 |
+| Issue 未被及时扫描 | 低 | 新标题 `【自动升级需求】` 由轮询机 `auto-upgrade-issue-poll.timer` 每 5 分钟派发统一监控，GitHub cron 低频兜底；旧标题由各自的旧 monitor 定时派发；均可手动触发 |
 | 多个升级任务抢占构建机 | 中 | 场景三控制器一次只推进一个任务；场景二用 `max_parallel` 与 runner 标签限流 |
 | Agent 幻觉生成错误元数据 | 中 | CI schema 验证 + Testcase Creator 独立检查 |
 | 双架构构建结果不一致 | 低 | 每架构独立测试，全部通过才合并 manifest |
