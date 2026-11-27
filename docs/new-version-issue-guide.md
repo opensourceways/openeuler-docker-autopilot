@@ -11,7 +11,7 @@
 | 你的诉求 | 是否用本文 |
 |---|---|
 | 某个软件要升级到新版本（docker 镜像和/或 conda 包） | 是 |
-| 某个软件在 openEuler 镜像仓/conda 仓里还没有，想新增 | 否，请提交 `【new-image】` 新建镜像 Issue |
+| 某个软件在 openEuler 镜像仓/conda 仓里还没有，想新增 | 否，请提交 `【自动升级需求】add <app> <version> docker image on openEuler <version>` 新建镜像 Issue |
 | 只想改 Dockerfile 里的构建参数，不升级版本 | 否，请直接提 PR 或联系维护者 |
 
 自动升级覆盖两个目标仓，**同一个 Issue 会自动判断升级哪里**：
@@ -140,7 +140,7 @@
 - **两个仓都有该软件** → 同一次运行里 docker 升级和 conda 登记都会执行，分别出结果。
 - **conda 登记前会校验上游渠道产物**：按该包 `package.yml` 的 `channel` 查询 anaconda.org，目标版本缺对应架构产物时跳过登记与建 PR，并在运行日志记录原因。
 - **conda 包缺 `tests/cases.yml`** 时自动补一份通用用例（安装版本核对 + 包文件完整性），与版本登记一起提交。
-- **两库都没有该软件** → 目前只有已登记为「待新建」的软件（如 `grpc-java`）会自动调用场景一新建镜像；其它软件会挂起，建议改提 `【new-image】` Issue。
+- **两库都没有该软件** → 目前只有已登记为「待新建」的软件（如 `grpc-java`）会自动调用场景一新建镜像；其它软件会挂起，建议改提 `【自动升级需求】add ...` Issue。
 - **成功后会生成两类 PR**：镜像升级 PR 是主产物；另有按应用单独提交的 app-notes PR（Agent 总结的构建经验，写入 `config/app-notes/<app>.md`），评审合并与否不影响本次升级。
 
 ---
@@ -170,7 +170,7 @@
 | `software.version must match the version in the title` | `软件版本` 与标题里的版本保持一致 |
 | `software.repo_url must be an HTTPS URL` | 上游地址改成 `https://...` |
 | `install_candidates` 相关报错 | 若填写，`type` 只能是 `source` / `binary`，`url` 必须是 HTTPS |
-| `软件清单、docker 仓与 conda 仓里都没有这个应用` | 软件名写错，或该软件尚未入库；改提 `【new-image】` |
+| `软件清单、docker 仓与 conda 仓里都没有这个应用` | 软件名写错，或该软件尚未入库；改提 `【自动升级需求】add ...` |
 
 ---
 

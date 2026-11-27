@@ -78,6 +78,20 @@ def test_issue_parser_accepts_minimal_body_and_optional_scope():
     assert options.mode == "deliver"
 
 
+def test_issue_parser_accepts_the_unified_auto_upgrade_title():
+    from scripts.lib.oe_upgrade_contract import parse_upgrade_issue
+
+    options = parse_upgrade_issue(
+        123,
+        "【自动升级需求】upgrade openEuler to 24.03-LTS-SP4",
+        "**Scope：** HPC\n",
+        mode="plan",
+    )
+
+    assert options.oe_version == "24.03-lts-sp4"
+    assert options.scope == ("HPC",)
+
+
 def test_issue_parser_rejects_duplicate_target_version_field():
     from scripts.lib.oe_upgrade_contract import UpgradeContractError, parse_upgrade_issue
 

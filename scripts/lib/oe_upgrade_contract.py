@@ -26,8 +26,13 @@ UPGRADE_DOMAINS = (
 _DOMAIN_BY_LOWER = {domain.lower(): domain for domain in UPGRADE_DOMAINS}
 _OE_RE = re.compile(r"^\d{2}\.\d{2}(?:-lts)?(?:-sp\d+)?$", re.IGNORECASE)
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-_TITLE_RE = re.compile(
+_LEGACY_TITLE_RE = re.compile(
     r"^\s*【oe-upgrade】.*?openEuler\s+"
+    r"(?P<oe>\d{2}\.\d{2}(?:-lts)?(?:-sp\d+)?)\s*$",
+    re.IGNORECASE,
+)
+_AUTO_TITLE_RE = re.compile(
+    r"^\s*【自动升级需求】\s*upgrade\s+openEuler\s+to\s+"
     r"(?P<oe>\d{2}\.\d{2}(?:-lts)?(?:-sp\d+)?)\s*$",
     re.IGNORECASE,
 )
@@ -179,6 +184,14 @@ def _field_values(body: str, label: str) -> list[str]:
     return [match.group(1).strip() for match in pattern.finditer(body)]
 
 
+def _title_oe_version(title: str) -> str | None:
+    for pattern in (_AUTO_TITLE_RE, _LEGACY_TITLE_RE):
+        match = pattern.fullmatch(title)
+        if match is not None:
+            return match.group("oe")
+    return None
+
+
 def parse_upgrade_issue(
     issue_number: int,
     title: str,
@@ -186,21 +199,21 @@ def parse_upgrade_issue(
     *,
     mode: str = "deliver",
 ) -> InvocationOptions:
-    title_match = _TITLE_RE.fullmatch(title)
+    title_oe_value = _title_oe_version(title)
     target_values = _field_values(body, _TARGET_LABEL)
     if len(target_values) > 1:
         raise UpgradeContractError("duplicate Target openEuler Version field")
     if not target_values:
-        # 统一标题不再带版本，正文必须给出；旧标题没有正文版本时沿用标题。
-        if title_match is None:
+        # 标题带目标版本时可省略正文版本；两者都缺才报错。
+        if title_oe_value is None:
             raise UpgradeContractError(
                 "body: Target openEuler Version is required"
             )
-        body_oe = normalize_oe_version(title_match.group("oe"))
+        body_oe = normalize_oe_version(title_oe_value)
     else:
         body_oe = normalize_oe_version(target_values[0])
-        if title_match is not None:
-            title_oe = normalize_oe_version(title_match.group("oe"))
+        if title_oe_value is not None:
+            title_oe = normalize_oe_version(title_oe_value)
             if title_oe != body_oe:
                 raise UpgradeContractError(
                     "title and body openEuler versions do not match"

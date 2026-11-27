@@ -1506,8 +1506,9 @@ def _add_delivery_commands(commands: argparse._SubParsersAction) -> None:
     issue_dispatch = commands.add_parser(
         "issue-dispatch",
         description=(
-            "Claim one 【自动升级需求】 Issue and dispatch scenario two; "
-            "legacy 【new-image】/【new-version】/【oe-upgrade】 titles keep "
+            "Claim one 【自动升级需求】 Issue and dispatch its scenario "
+            "(add / upgrade / upgrade openEuler); legacy "
+            "【new-image】/【new-version】/【oe-upgrade】 titles keep "
             "working through their own monitors."
         ),
     )

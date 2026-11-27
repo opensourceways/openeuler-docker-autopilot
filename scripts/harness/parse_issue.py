@@ -68,7 +68,7 @@ _LABEL_LEGACY_RE = re.compile(
 )
 
 _TITLE_RE = re.compile(
-    r"^\s*【new-image】\s*add\s+(?P<request>.+?)\s+docker\s+image\s+"
+    r"^\s*(?:【自动升级需求】|【new-image】)\s*add\s+(?P<request>.+?)\s+docker\s+image\s+"
     r"on\s+openEuler\s+(?P<os_version>\d{2}\.\d{2}"
     r"(?:-lts)?(?:-sp\d+)?)\s*$",
     re.IGNORECASE,
@@ -347,7 +347,7 @@ def parse_issue_request(title: str, body: str) -> dict[str, str]:
     match = _TITLE_RE.fullmatch(title)
     if match is None:
         raise IssueParseError(
-            "title must match 【new-image】add <app> [version] docker image "
+            "title must match 【自动升级需求】add <app> [version] docker image "
             "on openEuler <version>"
         )
     request_parts = match.group("request").split()

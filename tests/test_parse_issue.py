@@ -96,6 +96,17 @@ def test_parse_target_repository_minimal_bilingual_issue():
     }
 
 
+def test_parse_new_image_issue_accepts_the_unified_title():
+    fields = parse_issue_request(
+        "【自动升级需求】add kvrocks 2.16.0 docker image on openEuler 24.03-LTS-SP4",
+        MINIMAL_TARGET_ISSUE,
+    )
+
+    assert fields["package_name"] == "kvrocks"
+    assert fields["app_version"] == "2.16.0"
+    assert fields["os_version"] == "24.03-LTS-SP4"
+
+
 def test_parse_minimal_issue_can_take_version_from_pinned_source_url():
     fields = parse_issue_request(
         "【new-image】add kvrocks docker image on openEuler 24.03-LTS-SP4",

@@ -17,9 +17,15 @@ LEGACY_UPGRADE_TITLE = (
     "【new-version】upgrade grpc to 1.85.4 on openEuler 24.03-lts-sp4"
 )
 NEW_IMAGE_TITLE = (
+    "【自动升级需求】add kvrocks 2.16.0 docker image on openEuler 24.03-LTS-SP4"
+)
+OE_UPGRADE_TITLE = (
+    "【自动升级需求】upgrade openEuler to 24.03-LTS-SP4"
+)
+LEGACY_NEW_IMAGE_TITLE = (
     "【new-image】add kvrocks 2.16.0 docker image on openEuler 24.03-LTS-SP4"
 )
-OE_UPGRADE_TITLE = "【oe-upgrade】补齐 openEuler 24.03-LTS-SP4 镜像"
+LEGACY_OE_UPGRADE_TITLE = "【oe-upgrade】补齐 openEuler 24.03-LTS-SP4 镜像"
 
 
 def _new_image_body():
@@ -52,12 +58,14 @@ def _oe_body():
     ("title", "expected"),
     [
         (UPGRADE_TITLE, SCENARIO_UPGRADE),
-        (LEGACY_UPGRADE_TITLE, SCENARIO_UPGRADE),
         (NEW_IMAGE_TITLE, SCENARIO_NEW_IMAGE),
         (OE_UPGRADE_TITLE, SCENARIO_OE_UPGRADE),
+        (LEGACY_UPGRADE_TITLE, SCENARIO_UPGRADE),
+        (LEGACY_NEW_IMAGE_TITLE, SCENARIO_NEW_IMAGE),
+        (LEGACY_OE_UPGRADE_TITLE, SCENARIO_OE_UPGRADE),
     ],
 )
-def test_title_prefix_selects_scenario(title, expected):
+def test_title_selects_scenario(title, expected):
     assert route_issue(title) == expected
 
 
