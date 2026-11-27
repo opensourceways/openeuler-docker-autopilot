@@ -135,7 +135,7 @@ PR CI 失败修复保留为**手动组件**：入口 `ci_fix_pipeline.yml` → `
 | **容器内逐条执行式修复** | 不在文本上盲改：在自托管 Runner 的容器里逐条执行 Dockerfile 指令、失败即修，跑通后反推 Dockerfile 并用 `docker build` 验证 |
 | **精准日志抓取** | 从 PR 评论表格逐行解析 FAILED 行，只取实际失败架构的构建 job 日志、排除 trigger/编排层；日志与 `ci_failed` 状态矛盾时主动标记「证据不足」而不是猜根因 |
 | **CI 失败知识库** | [`docs/ci-failure-patterns.md`](docs/ci-failure-patterns.md) 按失败模式归档，修复通过 CI 后追加案例，下次诊断参考 |
-| **生成类场景只增不改** | 场景一 / 三 / 四的存量镜像目录只读，`meta.yml` / README 仅允许末尾追加，由 `gate_diff.py` 差分强制；场景二升级只新增版本目录并追加 `meta.yml` |
+| **生成类场景只增不改** | 场景一 / 三 / 四的存量镜像目录只读，`meta.yml` / README 仅允许末尾追加，由 `gate_diff.py` 差分强制；场景二升级新增版本目录，并在 `meta.yml`、README / `doc/image-info.yml` 的版本表里追加新版本行（旧行保留） |
 | **可复现工具链** | hadolint / jq / opencode 版本与 SHA256 锁定在 `.github/toolchain.lock.yml`，Python 依赖锁定在 `python-phase1.lock.txt` |
 | **失败可追踪** | 无法自动收敛时保留构建、测试与修复证据，Issue 转为 `needs-human-review` 交维护者判断 |
 

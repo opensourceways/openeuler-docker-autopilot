@@ -7,7 +7,8 @@ Dockerfile 不再机械替换版本串：升级目标 Dockerfile 由 AI 结合�
 
 1. 复制该应用最新的 ``{old_version}/{os_version}/`` 目录为 ``{new_version}/{os_version}/``；
 2. 用 AI 生成的完整 Dockerfile 覆盖新目录中的 Dockerfile，并做最小可用性校验；
-3. 应用根目录的 ``README.md`` / ``doc/image-info.yml`` 中把旧版本整串替换成新版本；
+3. 在应用根目录的 ``README.md`` / ``doc/image-info.yml`` 版本表里**追加**新版本行，
+   旧版本行保留；
 4. 往 ``meta.yml`` 追加 ``<new_version>-<oe_tag>: {path: ...}`` 条目。
 
 Fail closed：生成内容为空、缺 ``FROM`` 或没有出现新版本号时直接报错并清理目录，
@@ -35,7 +36,8 @@ class UpgradePlan:
     src_dir: Path
 
 
-# README / image-info 是应用级文件（应用根目录），与版本目录同级，原地更新。
+# README / image-info 是应用级文件（应用根目录），与版本目录同级。
+# 两者都含版本表，升级时按「追加新行、保留旧行」处理。
 _ROOT_VERSION_FILES = ("README.md", "doc/image-info.yml")
 
 
@@ -94,13 +96,58 @@ def plan_upgrade(app_dir: Path, target_version: str = "") -> UpgradePlan:
     )
 
 
-def _replace_version(text: str, old_version: str, new_version: str) -> tuple[str, int]:
-    # 整串替换：左侧不能是字母/数字/点（避免 12.1.0 里的 2.1.0），
+def _version_pattern(version: str) -> re.Pattern[str]:
+    # 整串匹配：左侧不能是字母/数字/点（避免 12.1.0 里的 2.1.0），
     # 右侧既不能接字母数字（避免 2.1.0rc1），也不能接 ".数字"（避免 2.1.0.1）。
-    pattern = re.compile(
-        rf"(?<![\w.]){re.escape(old_version)}(?![\w])(?!\.\d)"
+    return re.compile(
+        rf"(?<![\w.]){re.escape(version)}(?![\w])(?!\.\d)"
     )
-    return pattern.subn(new_version, text)
+
+
+def _version_tokens(old_version: str, new_version: str) -> list[tuple[str, str]]:
+    """同一版本在 tag 里可能写成 28_25 / 28+25 / 4.0.3 等形态。"""
+    pairs = {(old_version, new_version)}
+    for separator in (".", "+"):
+        if separator in old_version:
+            pairs.add(
+                (
+                    old_version.replace(separator, "_"),
+                    new_version.replace(separator, "_"),
+                )
+            )
+    return sorted(pairs, key=lambda pair: len(pair[0]), reverse=True)
+
+
+def _append_version_row(
+    text: str, old_version: str, new_version: str
+) -> tuple[str, bool]:
+    """在 Markdown 版本表的旧版本行之后追加新版本行；旧行保留。
+
+    只处理表格行（README / image-info 的版本表）；没有匹配表格时原样返回，
+    避免对非表格内容做原地改写。
+    """
+    lines = text.splitlines(keepends=True)
+    new_pattern = _version_pattern(new_version)
+    if any(
+        line.lstrip().startswith("|") and new_pattern.search(line)
+        for line in lines
+    ):
+        return text, False
+
+    old_pattern = _version_pattern(old_version)
+    for index, line in enumerate(lines):
+        if not line.lstrip().startswith("|") or not old_pattern.search(line):
+            continue
+        updated = line
+        for old_token, new_token in _version_tokens(old_version, new_version):
+            updated = _version_pattern(old_token).sub(new_token, updated)
+        if updated == line:
+            continue
+        if not updated.endswith(("\n", "\r")):
+            updated += "\n"
+        lines.insert(index + 1, updated)
+        return "".join(lines), True
+    return text, False
 
 
 # openEuler 官方镜像的 [source] / [update-source] / [debuginfo] 仓库 repodata
@@ -211,15 +258,17 @@ def apply_upgrade(
             target.write_text(content, encoding="utf-8")
             changed.append(target)
 
-        # 应用级文件：README / doc/image-info.yml 位于应用根目录，原地更新
+        # 应用级文件：README / doc/image-info.yml 位于应用根目录，追加新版本行
         for rel in _ROOT_VERSION_FILES:
             path = app_dir / rel
             if not path.is_file():
                 continue
-            updated, count = _replace_version(
-                path.read_text(encoding="utf-8"), plan.old_version, new_version
+            updated, appended = _append_version_row(
+                path.read_text(encoding="utf-8"),
+                plan.old_version,
+                new_version,
             )
-            if count:
+            if appended:
                 _rewrite(path, updated)
         entry = _meta_entry_text(
             meta.read_text(encoding="utf-8"), new_version, plan.os_version

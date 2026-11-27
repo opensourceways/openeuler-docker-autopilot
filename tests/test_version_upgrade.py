@@ -29,11 +29,23 @@ def _build_app(root: Path) -> Path:
             encoding="utf-8",
         )
     (app / "README.md").write_text(
-        "```\ndocker run myapp:2.1.0\n```\n", encoding="utf-8"
+        "# myapp\n\n"
+        "```\n"
+        "docker run myapp:2.1.0\n"
+        "```\n"
+        "\n"
+        "| Tag | Currently | Architectures |\n"
+        "|---|---|---|\n"
+        "|[2.1.0-oe2203sp3](https://example.com/myapp/2.1.0/22.03-lts-sp3/Dockerfile)| myapp 2.1.0 on openEuler 22.03-LTS-SP3 | amd64, arm64 |\n",
+        encoding="utf-8",
     )
     (app / "doc").mkdir()
     (app / "doc" / "image-info.yml").write_text(
-        "version: 2.1.0\n", encoding="utf-8"
+        "tags: |\n"
+        "  | Tag | Currently | Architectures |\n"
+        "  |---|---|---|\n"
+        "  |[2.1.0-oe2203sp3](https://example.com/myapp/2.1.0/22.03-lts-sp3/Dockerfile)| myapp 2.1.0 on openEuler 22.03-LTS-SP3 | amd64, arm64 |\n",
+        encoding="utf-8",
     )
     (app / "meta.yml").write_text(
         "2.1.0-oe2203sp3:\n  path: 2.1.0/22.03-lts-sp3/Dockerfile\n", encoding="utf-8"
@@ -114,9 +126,14 @@ class ApplyUpgradeTest(unittest.TestCase):
                 ),
             )
 
-            # README / image-info 在应用根目录，原地更新
-            self.assertIn("myapp:2.2.0", (app / "README.md").read_text(encoding="utf-8"))
-            self.assertIn("2.2.0", (app / "doc" / "image-info.yml").read_text(encoding="utf-8"))
+            # README / image-info 的版本表追加新行，旧行与正文保持不变
+            readme = (app / "README.md").read_text(encoding="utf-8")
+            self.assertIn("myapp 2.2.0 on openEuler 22.03-LTS-SP3", readme)
+            self.assertIn("myapp 2.1.0 on openEuler 22.03-LTS-SP3", readme)
+            self.assertIn("docker run myapp:2.1.0", readme)
+            info = (app / "doc" / "image-info.yml").read_text(encoding="utf-8")
+            self.assertIn("myapp 2.2.0 on openEuler 22.03-LTS-SP3", info)
+            self.assertIn("myapp 2.1.0 on openEuler 22.03-LTS-SP3", info)
 
             meta = (app / "meta.yml").read_text(encoding="utf-8")
             self.assertIn("2.2.0-oe2203sp3:", meta)
@@ -129,6 +146,60 @@ class ApplyUpgradeTest(unittest.TestCase):
             self.assertIn("README.md", relative)
             self.assertIn("doc/image-info.yml", relative)
             self.assertIn("meta.yml", relative)
+
+    def test_appends_a_row_and_rewrites_underscore_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = Path(tmp) / "Others" / "openjdk"
+            image = app / "28.25" / "24.03-lts-sp4"
+            image.mkdir(parents=True)
+            (image / "Dockerfile").write_text(
+                "FROM openeuler/openeuler:24.03-lts-sp4\nARG V=28.25\n",
+                encoding="utf-8",
+            )
+            (app / "README.md").write_text(
+                "| Tag | Currently | Architectures |\n"
+                "|---|---|---|\n"
+                "|[28_25-oe2403sp4](https://example.com/openjdk/28.25/24.03-lts-sp4/Dockerfile)| OpenJDK 28.25 on openEuler 24.03-LTS-SP4 | amd64, arm64 |\n",
+                encoding="utf-8",
+            )
+            (app / "doc").mkdir()
+            (app / "doc" / "image-info.yml").write_text("tags: |\n", encoding="utf-8")
+            (app / "meta.yml").write_text(
+                "28.25-oe2403sp4:\n  path: 28.25/24.03-lts-sp4/Dockerfile\n",
+                encoding="utf-8",
+            )
+
+            plan = version_upgrade.plan_upgrade(app, target_version="28.26")
+            version_upgrade.apply_upgrade(
+                app, plan, "28.26", _new_dockerfile("28.26")
+            )
+
+            readme = (app / "README.md").read_text(encoding="utf-8")
+            self.assertIn("[28_26-oe2403sp4]", readme)
+            self.assertIn("openjdk/28.26/24.03-lts-sp4/Dockerfile", readme)
+            self.assertIn("OpenJDK 28.26 on openEuler", readme)
+            self.assertIn("[28_25-oe2403sp4]", readme)
+            self.assertIn("openjdk/28.25/24.03-lts-sp4/Dockerfile", readme)
+
+    def test_tableless_readme_is_left_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = _build_app(Path(tmp))
+            (app / "README.md").write_text(
+                "```\ndocker run myapp:2.1.0\n```\n", encoding="utf-8"
+            )
+            (app / "doc" / "image-info.yml").write_text(
+                "version: 2.1.0\n", encoding="utf-8"
+            )
+            plan = version_upgrade.plan_upgrade(app)
+
+            version_upgrade.apply_upgrade(
+                app, plan, "2.2.0", _new_dockerfile("2.2.0")
+            )
+
+            self.assertEqual(
+                (app / "README.md").read_text(encoding="utf-8"),
+                "```\ndocker run myapp:2.1.0\n```\n",
+            )
 
     def test_generated_dockerfile_is_not_mechanically_replaced(self) -> None:
         """AI 产出的构建方式必须原样落盘，不能被旧文件的版本替换覆盖。"""
