@@ -1,5 +1,5 @@
 <!-- oe-app-note:auto:1.7.0/24.03-lts-sp4 -->
 ## 自动沉淀：1.7.0 / 24.03-lts-sp4
 
-1.7.0 的 go.mod `go` 指令跳升到 1.26.5（1.6.0 为 1.23.0+toolchain 1.23.4），升级时必须同步抬高 GO_VERSION 到 ≥1.26.5，否则 go build 直接报 requires go。构建布局未变：manager 用根目录 main.go，config-daemon/webhook/config-cleanup 仍在 cmd/ 下；Makefile 的 MAIN_PKG=cmd/manager/main.go 是遗留字段，实际 hack/build-go.sh 对 manager 编译的是根 main.go。纯 Go CGO_ENABLED=0 构建、无新增系统依赖，但首次构建需联网拉取大量 k8s/controller-runtime 依赖，耗时较长。
+上游 sriov-network-operator 的 pkg/version/version.go 中版本常量是 2020 年 OpenShift 4.7 时代遗留的硬编码 "4.7.0"，从未随 v1.x tag 更新过（git 历史最后一条为 2020-10-16 "Create manifests for 4.7"）。关键坑：守护进程 `version` 命令用的是 `version.Version`（`semver.Version` 结构体），而 hack/build-go.sh 只能通过 `-ldflags -X pkg/version.Raw=...` 注入字符串变量 `Raw`，无法用 ldflags 覆盖 semver 结构体，因此所有源码构建的输出都会是 `v4.7.0`。升级/修复时必须构建前 `sed -i "s/4\.7\.0/${VERSION}/g" pkg/version/version.go` 把该常量改成与 git tag 一致，否则版本校验会稳定失败（x86_64 与 aarch64 同样失败）。sed 与 tar/curl 均已在 openEuler 基础镜像中可用，无需额外安装。
 <!-- /oe-app-note:auto -->
