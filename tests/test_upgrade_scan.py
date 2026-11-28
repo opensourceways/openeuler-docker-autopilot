@@ -169,7 +169,8 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertEqual(len(result["audits"]), 1)
         audit = result["audits"][0]
         self.assertEqual(audit["app"], "kvrocks")
-        self.assertEqual(audit["version"], "v2.16.0")
+        # 既有目录是裸版本号 2.16.0，审计项也要沿用该命名
+        self.assertEqual(audit["version"], "2.16.0")
         self.assertEqual(audit["os_version"], "24.03-lts-sp4")
         self.assertEqual(
             audit["dockerfile_path"],

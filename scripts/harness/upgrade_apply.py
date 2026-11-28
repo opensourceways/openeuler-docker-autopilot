@@ -748,8 +748,6 @@ def run(
     app = str(item["app"])
     domain = str(item["domain"])
     new_version = str(item["version"])
-    # 提交哈希作为版本号时，目录/tag 只取前 7 位；Dockerfile 仍用完整哈希
-    dir_version = naming_version(new_version)
 
     repo_dir = Path(_env("SOURCE_REPO_DIR", DEFAULT_SOURCE_REPO_DIR))
     if not repo_dir.is_dir():
@@ -757,6 +755,11 @@ def run(
     app_dir = repo_dir / domain / app
     if not app_dir.is_dir():
         raise SystemExit(f"{app}: 目标仓里没有 {domain}/{app}")
+
+    # 目录/tag 沿用目标仓既有命名；Dockerfile 仍用完整版本
+    dir_version = naming_version(
+        new_version, version_upgrade.existing_version_dirs(app_dir)
+    )
 
     plan = version_upgrade.plan_upgrade(app_dir, target_version=dir_version)
     branch = f"auto/version-update/{app}/{dir_version}-{_os_tag(plan.os_version)}"

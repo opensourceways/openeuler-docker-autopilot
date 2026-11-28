@@ -59,6 +59,16 @@ def _numeric_parts(name: str) -> tuple[int, ...] | None:
     return tuple(int(part) for part in parts)
 
 
+def existing_version_dirs(app_dir: Path) -> list[str]:
+    """应用根目录下已有版本目录的名字（只算含 ``*/Dockerfile`` 的目录）。"""
+
+    return sorted(
+        entry.name
+        for entry in app_dir.iterdir()
+        if entry.is_dir() and any(entry.glob("*/Dockerfile"))
+    )
+
+
 def plan_upgrade(app_dir: Path, target_version: str = "") -> UpgradePlan:
     """选取复制源：优先同一版本线上、低于目标版本的最高目录。
 

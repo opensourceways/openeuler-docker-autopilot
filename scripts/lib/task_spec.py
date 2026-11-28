@@ -7,7 +7,7 @@ import hashlib
 import re
 from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
-from typing import Mapping
+from typing import Iterable, Mapping
 from urllib.parse import urlparse
 
 
@@ -51,18 +51,38 @@ def _os_tag(os_version: str) -> str:
 
 
 _HASH_VERSION_RE = re.compile(r"^[0-9a-fA-F]{12,}$")
+_LEADING_NON_DIGIT_RE = re.compile(r"^[^0-9]+")
+_VERSION_SHAPE_RE = re.compile(r"\d+")
 
 
-def naming_version(version: str) -> str:
+def _version_shape(name: str) -> str:
+    """把版本名里的数字段替换成 ``#``，用于比较既有目录的命名形态。"""
+
+    return _VERSION_SHAPE_RE.sub("#", name)
+
+
+def naming_version(version: str, existing: Iterable[str] = ()) -> str:
     """版本目录与镜像 tag 使用的版本名。
 
-    上游版本是提交哈希时只取前 7 位，避免把 40 位哈希写进目录名和
-    ``<version>-oe<tag>``；其它版本原样返回。
+    - 上游版本是提交哈希时只取前 7 位，避免把 40 位哈希写进目录名和
+      ``<version>-oe<tag>``；
+    - 目标仓已有版本目录采用「裸版本号」命名时（如 ``1.35.1``），去掉
+      Issue/上游版本的前缀：``v1.36.0`` → ``1.36.0``、
+      ``npu-v0.3.14.post1`` → ``0.3.14.post1``；形态对不上时保持原样。
     """
 
     text = str(version or "").strip()
     if _HASH_VERSION_RE.fullmatch(text):
         return text[:7]
+    stripped = _LEADING_NON_DIGIT_RE.sub("", text)
+    if stripped and stripped != text:
+        shape = _version_shape(stripped)
+        for name in existing:
+            candidate = str(name or "").strip()
+            if not candidate or not candidate[0].isdigit():
+                continue
+            if _version_shape(candidate) == shape:
+                return stripped
     return text
 
 

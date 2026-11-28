@@ -55,6 +55,7 @@ from scripts.harness import testgen_scan  # noqa: E402
 from scripts.lib import app_notes  # noqa: E402
 from scripts.lib.stage_common import log_stage  # noqa: E402
 from scripts.lib.task_spec import _os_tag, naming_version  # noqa: E402
+from scripts.lib.version_upgrade import existing_version_dirs  # noqa: E402
 
 DEFAULT_TARGET_REPO = "openeuler/openeuler-docker-images"
 DEFAULT_APPS_FILE = os.path.join(PROJECT_ROOT, "config", "upgrade-apps.yml")
@@ -603,9 +604,10 @@ def find_updates(
             )
             continue
 
-        # 提交哈希作为版本号时，目录/tag 只取前 7 位；证据里保留完整哈希
+        # 目录/tag 沿用目标仓既有命名：哈希取前 7 位，带 v / npu-v 前缀的
+        # 版本按已有裸版本目录去掉前缀；证据里保留完整版本。
         release_version = version
-        version = naming_version(version)
+        version = naming_version(version, existing_version_dirs(app_dir))
 
         entry_source = (
             source_url

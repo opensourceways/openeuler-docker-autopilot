@@ -29,6 +29,24 @@ def test_naming_version_truncates_commit_hashes(version, expected):
     assert naming_version(version) == expected
 
 
+@pytest.mark.parametrize(
+    ("version", "existing", "expected"),
+    [
+        ("v1.36.0", ["1.33.0", "1.35.1"], "1.36.0"),
+        ("npu-v0.3.14.post1", ["0.3.11.post1", "0.3.14"], "0.3.14.post1"),
+        ("slurm-26-05-6-1", ["25.11.1"], "slurm-26-05-6-1"),
+        ("v1.36.0", [], "v1.36.0"),
+        ("fb32cae86117254cb27c4695e6aa77299724d62d", ["1.5"], "fb32cae"),
+    ],
+)
+def test_naming_version_follows_existing_directory_style(
+    version, existing, expected
+):
+    from scripts.lib.task_spec import naming_version
+
+    assert naming_version(version, existing) == expected
+
+
 def test_task_spec_normalizes_workflow_dispatch_input():
 
     from scripts.lib.task_spec import TaskSpec
