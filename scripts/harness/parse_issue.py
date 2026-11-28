@@ -63,6 +63,8 @@ _FLAT_EVIDENCE_KEYS = {
     **{path: path for path in _FLAT_EVIDENCE_LABELS.values()},
 }
 _FLAT_LINE_RE = re.compile(r"^\s*(?P<label>[^:：]{1,80}?)\s*[:：]\s*(?P<value>.*?)\s*$")
+# Issue 模板可选字段留空时写 ``（空）``，按空值跳过，避免造出假的门禁/候选。
+_TABLE_EMPTY_VALUES = {"（空）", "(空)"}
 _LABEL_LEGACY_RE = re.compile(
     r"^(?P<name>.+?)\s*[（(]\s*(?P<legacy>[^（）()]+?)\s*[）)]\s*$"
 )
@@ -375,7 +377,7 @@ def parse_issue_request(title: str, body: str) -> dict[str, str]:
 
 
 def _upgrade_payload(body: str) -> Mapping[str, object] | None:
-    """提取上游证据：优先旧的 JSON 块，其次统一格式的平铺字段。"""
+    """提取上游证据：优先旧的 JSON 块，其次统一格式的表格/平铺字段。"""
 
     payload = _json_evidence(body)
     if payload is not None:
@@ -422,14 +424,39 @@ def _flat_evidence_label(label: str) -> str | None:
 
 
 def _flat_evidence_value(value: str) -> str:
-    return value.strip().strip("`").strip()
+    text = value.strip().strip("`").strip()
+    if text in _TABLE_EMPTY_VALUES:
+        return ""
+    return text
+
+
+def _evidence_pairs(body: str) -> list[tuple[str, str]]:
+    """按正文顺序提取（标签, 值）对，兼容平铺行与两列 Markdown 表格。
+
+    平铺：``软件名: grpc``；表格：``| **软件名** | grpc |``（表头与分隔行会被
+    后续的标签归一过滤掉）。
+    """
+
+    pairs: list[tuple[str, str]] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if len(cells) >= 2:
+                pairs.append((cells[0], cells[1]))
+            continue
+        match = _FLAT_LINE_RE.match(line)
+        if match is not None:
+            pairs.append((match.group("label"), match.group("value")))
+    return pairs
 
 
 def _flat_evidence(body: str) -> dict[str, object] | None:
-    """解析统一 Issue 的平铺证据块，组装成与旧 JSON 等价的结构。
+    """解析统一 Issue 的证据块，组装成与旧 JSON 等价的结构。
 
-    支持的字段形如 ``软件名: grpc`` 或 ``软件名(software.name): grpc``；同一段正文里
-    可以重复出现 ``门禁路径`` / ``安装候选``，每组字段合成一个列表项。
+    同时支持平铺行（``软件名: grpc``）和两列 Markdown 表格
+    （``| **软件名** | grpc |``）；同一段正文里可以重复出现 ``门禁路径`` /
+    ``安装候选``，每组字段合成一个列表项。可选字段的 ``（空）`` 视为未填。
     """
 
     values: dict[str, str] = {}
@@ -439,14 +466,11 @@ def _flat_evidence(body: str) -> dict[str, object] | None:
     candidate: dict[str, str] | None = None
     matched = False
 
-    for line in body.splitlines():
-        match = _FLAT_LINE_RE.match(line)
-        if match is None:
-            continue
-        canonical = _flat_evidence_label(match.group("label"))
+    for label, raw_value in _evidence_pairs(body):
+        canonical = _flat_evidence_label(label)
         if canonical is None:
             continue
-        value = _flat_evidence_value(match.group("value"))
+        value = _flat_evidence_value(raw_value)
         if not value:
             continue
         matched = True
@@ -590,8 +614,9 @@ def parse_upgrade_issue_request(title: str, body: str) -> dict[str, object]:
     Title format:
         【自动升级需求】upgrade <app> to <version> on openEuler <os_version>
 
-    正文用平铺字段给出上游证据（``软件名`` / ``源码仓库`` / ``软件版本`` 必填），
-    JSON 证据块仍可识别；``software.name`` / ``software.version`` 必须与标题一致。
+    正文用两列 Markdown 表格或平铺字段给出上游证据（``软件名`` / ``源码仓库`` /
+    ``软件版本`` 必填，可选字段留空写 ``（空）``），JSON 证据块仍可识别；
+    ``software.name`` / ``software.version`` 必须与标题一致。
     """
 
     match = _UPGRADE_TITLE_RE.fullmatch(title)

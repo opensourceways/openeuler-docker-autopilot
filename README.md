@@ -383,7 +383,7 @@ create_new_images.yml  (operation = scenario_one)
 
 ### 4.1 触发与候选发现
 
-唯一入口是 [`monitor_auto_upgrade_issues.yml`](.github/workflows/monitor_auto_upgrade_issues.yml)：扫描标题以 `【自动升级需求】` 开头的 Issue（三个场景统一前缀），认领后按后缀分发给对应工作流；旧标题对应的两个监控工作流已删除，不再识别旧格式。正文用平铺字段描述上游证据（`软件名` / `源码仓库` / `软件版本` / `门禁路径` / `中游检查点` / `安装候选` 等，每行 `字段: 值`），旧的证据 JSON 块仍可识别；完整格式、字段约束与拒绝原因见 [`docs/issue-guide.md`](docs/issue-guide.md)。解析后归一化成 `evidence` 输入透传。
+唯一入口是 [`monitor_auto_upgrade_issues.yml`](.github/workflows/monitor_auto_upgrade_issues.yml)：扫描标题以 `【自动升级需求】` 开头的 Issue（三个场景统一前缀），认领后按后缀分发给对应工作流；旧标题对应的两个监控工作流已删除，不再识别旧格式。正文用两列 Markdown 表格（`| 字段 | 值 |`，推荐）或平铺字段（每行 `字段: 值`）描述上游证据（`软件名` / `源码仓库` / `软件版本` / `门禁路径` / `中游检查点` / `安装候选` 等，表格中留空的字段写 `（空）`），旧的证据 JSON 块仍可识别；完整格式、字段约束与拒绝原因见 [`docs/issue-guide.md`](docs/issue-guide.md)。解析后归一化成 `evidence` 输入透传。
 
 工作流也可手动触发：
 
@@ -481,8 +481,8 @@ clone 目标仓 → 确定性检查 → upgrade_auditor Agent → upgrade_fixer 
 
 升级证据来自触发 Issue 的正文：
 
-- Issue 正文用平铺字段描述证据：`软件名` / `源码仓库` / `软件版本` 必填，`上游支持检查点`、`中游检查点`、`安装候选` 三组可整组省略；旧的 JSON 块仍可识别。字段约束见 [`docs/issue-guide.md`](docs/issue-guide.md)；
-- [`parse_issue.py`](scripts/harness/parse_issue.py) 把平铺字段组装成与旧 JSON 等价的结构并校验必填项，要求软件名 / 版本一致；[`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把它归一化为 `source=gitcode-issue` 的证据包，保留原始字段；
+- Issue 正文用两列表格或平铺字段描述证据：`软件名` / `源码仓库` / `软件版本` 必填，`上游支持检查点`、`中游检查点`、`安装候选` 三组可整组省略（表格里写 `（空）`）；旧的 JSON 块仍可识别。字段约束见 [`docs/issue-guide.md`](docs/issue-guide.md)；
+- [`parse_issue.py`](scripts/harness/parse_issue.py) 把表格 / 平铺字段组装成与旧 JSON 等价的结构并校验必填项，要求软件名 / 版本一致；[`upstream_evidence.py`](scripts/lib/upstream_evidence.py) 把它归一化为 `source=gitcode-issue` 的证据包，保留原始字段；
 - [`upgrade_scan.py`](scripts/harness/upgrade_scan.py) 只在应用同名时把该证据写入升级矩阵，其它条目仍回落到 `source=manual`；
 - 证据会出现在 PR 正文、Dockerfile 生成提示与测试生成提示里，**只作参考，不参与门禁**；上游版本是否真实可用，由 AI 生成与双架构构建/功能测试兜底验证。
 - `install_candidates` 是候选安装方式，最终由 Agent 按实际 Dockerfile 决定 `install_mode`；升级 PR 标题携带该方式对应的 `[kunpeng-install:<source|binary>]` 标记。

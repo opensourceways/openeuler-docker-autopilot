@@ -292,7 +292,7 @@ GitCode Issue 创建（标题 `【自动升级需求】add ...`）
 
 ### 3.3 场景二：应用上游版本自动升级
 
-正式入口是 GitCode `【自动升级需求】upgrade <app> to <version> on openEuler <version>` Issue，旧标题已下线：正文用平铺字段给出上游证据（`软件名` / `源码仓库` / `软件版本` 必填，可附 `上游支持检查点`、`中游检查点`、`安装候选`；旧的 JSON 块仍可识别），解析后归一化成 `software` / `upstream_evidence` / `l3_evidence` / `install_candidates`。手动触发时版本可由清单或参数兜底。
+正式入口是 GitCode `【自动升级需求】upgrade <app> to <version> on openEuler <version>` Issue，旧标题已下线：正文用两列 Markdown 表格（`| 字段 | 值 |`，兼容平铺行）给出上游证据（`软件名` / `源码仓库` / `软件版本` 必填，可附 `上游支持检查点`、`中游检查点`、`安装候选`；旧的 JSON 块仍可识别），解析后归一化成 `software` / `upstream_evidence` / `l3_evidence` / `install_candidates`。手动触发时版本可由清单或参数兜底。
 
 ```
 【自动升级需求】upgrade ... Issue

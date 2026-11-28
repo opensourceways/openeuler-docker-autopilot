@@ -506,6 +506,88 @@ def test_flat_evidence_accepts_plain_labels_without_legacy_names():
     ] == [{"workflow_path": ".github/workflows/ci.yml", "test_depth": "smoke"}]
 
 
+TABLE_EVIDENCE = """| 字段 | 值 |
+| :--- | :--- |
+| **软件名** | salmon |
+| **源码仓库** | https://github.com/COMBINE-lab/salmon |
+| **软件版本** | v2.12.0 |
+| **上游支持检查点** | kp.l1.release_artifact |
+| **上游支持检查点地址** | https://github.com/COMBINE-lab/salmon/releases/tag/v2.12.0 |
+| **门禁路径** | （空） |
+| **门禁地址** | （空） |
+| **门禁运行地址** | （空） |
+| **测试深度** | （空） |
+| **中游检查点** | kp.l3.openeuler_conda |
+| **中游制品** | salmon-2.12.0 (aarch64) |
+| **中游路径** | https://gitcode.com/openeuler/conda-ecopkgs/tree/master/packages/salmon |
+| **安装候选** | binary |
+| **候选包地址** | https://github.com/COMBINE-lab/salmon/releases/tag/v2.12.0 |
+| **候选包制品** | salmon-cli-aarch64-unknown-linux-gnu.tar.xz |
+"""
+
+TABLE_ISSUE_TITLE = (
+    "【自动升级需求】upgrade salmon to v2.12.0 on openEuler 24.03-LTS-SP4"
+)
+
+
+def test_table_evidence_block_parses_for_an_auto_upgrade_title():
+    fields = parse_upgrade_issue_request(TABLE_ISSUE_TITLE, TABLE_EVIDENCE)
+
+    assert fields["app"] == "salmon"
+    assert fields["version"] == "v2.12.0"
+    assert fields["os_version"] == "24.03-LTS-SP4"
+    assert fields["source_url"] == "https://github.com/COMBINE-lab/salmon"
+    payload = fields["evidence"]
+    assert payload["software"] == {
+        "name": "salmon",
+        "repo_url": "https://github.com/COMBINE-lab/salmon",
+        "version": "v2.12.0",
+    }
+    # 表格里的 （空） 视为未填，不生成假的门禁记录
+    assert payload["upstream_evidence"]["evidence"] == {
+        "check_id": "kp.l1.release_artifact",
+        "source_url": (
+            "https://github.com/COMBINE-lab/salmon/releases/tag/v2.12.0"
+        ),
+    }
+    assert payload["l3_evidence"] == {
+        "check_id": "kp.l3.openeuler_conda",
+        "artifact": "salmon-2.12.0 (aarch64)",
+        "source_url": (
+            "https://gitcode.com/openeuler/conda-ecopkgs/tree/master/"
+            "packages/salmon"
+        ),
+    }
+    assert payload["install_candidates"] == [
+        {
+            "type": "binary",
+            "url": (
+                "https://github.com/COMBINE-lab/salmon/releases/tag/v2.12.0"
+            ),
+            "artifact": "salmon-cli-aarch64-unknown-linux-gnu.tar.xz",
+        }
+    ]
+
+
+def test_table_evidence_groups_workflow_rows_when_filled():
+    body = TABLE_EVIDENCE.replace(
+        "| **门禁路径** | （空） |",
+        "| **门禁路径** | `.github/workflows/ci.yml` |",
+    ).replace(
+        "| **测试深度** | （空） |",
+        "| **测试深度** | smoke |",
+    )
+
+    payload = parse_upgrade_issue_request(TABLE_ISSUE_TITLE, body)["evidence"]
+
+    assert payload["upstream_evidence"]["evidence"]["ci_workflows"] == [
+        {
+            "workflow_path": ".github/workflows/ci.yml",
+            "test_depth": "smoke",
+        }
+    ]
+
+
 def test_flat_evidence_groups_repeated_workflow_and_candidate_lines():
     body = FLAT_EVIDENCE + (
         "门禁路径(ci_workflows.workflow_path): .github/workflows/ci2.yml\n"
