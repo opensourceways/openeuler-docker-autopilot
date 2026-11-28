@@ -59,7 +59,7 @@ docker run --rm --entrypoint bash \
 1. 首行恰为 `#!/bin/bash`；
 2. **禁止 `set -e` / `set -euo pipefail` / `set -o errexit`**：断言失败必须继续跑完其余用例，输出与退出码才不失真；
 3. 开头必须有 `EXPECTED_VERSION` 必需守卫：`: "${EXPECTED_VERSION:?EXPECTED_VERSION is required}"`；
-4. 版本断言必须与 `EXPECTED_VERSION` **精确**比较（按该应用实际输出格式解析后完整相等），不接受模糊子串；
+4. 版本断言必须与 `EXPECTED_VERSION` **精确**比较（按该应用实际输出格式解析后完整相等），不接受模糊子串；版本必须来自软件真实输出或发行包元数据（`--version`、`importlib.metadata.version`、`pip show`、`rpm -q`、`dpkg-query` 等），**禁止从 CI 注入的 `DOCKER_TAG` 解析版本后自证**；工具没有 `--version` 时优先读包元数据；
 5. 用例函数名只能是 `test` 加字母/数字/下划线（`test_x`、`testVersion` 合法；`test-image`、`test.v1` 非法），至少一个用例；
 6. 每个用例输出且只输出一行 `PASS: <断言说明>` 或 `FAIL: <断言说明>`；前置检查失败可用 `FATAL: <原因>`；
 7. **禁止手动 `exit 0`**：用例与 main 用 `return` 表达成败，最后一行 `main "$@"`，脚本退出码由 main 返回值决定；

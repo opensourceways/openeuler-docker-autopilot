@@ -76,6 +76,31 @@ _VERSION_COMPARISON_RE = re.compile(
     r"(?:==|!=|=~|-eq|-ne|-lt|-gt|-le|-ge|\bgrep\b|\bcase\b"
     r"|\[\[?[^\n]*\]\]?|\btest\s)"
 )
+# EXPECTED_VERSION 常见写法是先赋给局部变量再比较：
+#   local expected="${EXPECTED_VERSION:?...}"
+#   if [ "${actual}" = "${expected}" ]; then
+_VERSION_ALIAS_RE = re.compile(
+    r"(?m)^\s*(?:local\s+|declare\s+|readonly\s+|export\s+)?"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)="
+    r"\"?\$\{?EXPECTED_VERSION\b"
+)
+# 可接受的「真实版本来源」：软件自身输出或发行包元数据。
+# CI 注入的 DOCKER_TAG 是镜像 tag，不是软件输出，不能拿来和 EXPECTED_VERSION 自证。
+_SOFTWARE_VERSION_SOURCE_RES = (
+    re.compile(r"importlib\.metadata", re.IGNORECASE),
+    re.compile(r"\bfrom\s+importlib\s+import\s+metadata\b", re.IGNORECASE),
+    re.compile(r"\bpip3?\s+(?:show|freeze|list)\b", re.IGNORECASE),
+    re.compile(r"\b(?:dpkg-query|rpm)\s+-[A-Za-z]*q", re.IGNORECASE),
+    re.compile(r"__version__"),
+    re.compile(r"--version\b"),
+    re.compile(r"\s-(?:v|V|version)\b"),
+)
+# 由 DOCKER_TAG 派生出的变量，例如 `tag_version="${DOCKER_TAG%%-*}"`。
+_CI_TAG_ALIAS_RE = re.compile(
+    r"(?m)^\s*(?:local\s+|declare\s+|readonly\s+|export\s+)?"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)="
+    r"[^\n]*\bDOCKER_TAG\b"
+)
 
 
 class KunpengContractError(ValueError):
@@ -177,8 +202,9 @@ def _case_bodies(text: str) -> dict[str, str]:
     return bodies
 
 
-def _asserts_expected_version(lines: list[str]) -> bool:
-    """EXPECTED_VERSION 是否参与比较，而不只是必填守卫/赋值。"""
+def _asserts_expected_version(text: str) -> bool:
+    """EXPECTED_VERSION 是否参与比较（支持先赋给局部变量再比较）。"""
+    lines = text.splitlines()
     for line in lines:
         if "EXPECTED_VERSION" not in line:
             continue
@@ -186,6 +212,45 @@ def _asserts_expected_version(lines: list[str]) -> bool:
         if "EXPECTED_VERSION" not in stripped:
             continue
         if _VERSION_COMPARISON_RE.search(stripped):
+            return True
+    for match in _VERSION_ALIAS_RE.finditer(text):
+        alias = re.compile(rf"\$\{{?{re.escape(match.group('name'))}\b")
+        for line in lines:
+            if "EXPECTED_VERSION" in line:
+                continue
+            if alias.search(line) and _VERSION_COMPARISON_RE.search(line):
+                return True
+    return False
+
+
+def _has_software_version_source(text: str) -> bool:
+    """脚本是否从软件输出或发行包元数据读取真实版本。"""
+    return any(pattern.search(text) for pattern in _SOFTWARE_VERSION_SOURCE_RES)
+
+
+def _compares_ci_tag_version(text: str) -> bool:
+    """是否把 DOCKER_TAG 派生的版本与 EXPECTED_VERSION 做比较。"""
+    expected_aliases = [
+        match.group("name") for match in _VERSION_ALIAS_RE.finditer(text)
+    ]
+    tag_aliases = [
+        match.group("name") for match in _CI_TAG_ALIAS_RE.finditer(text)
+    ]
+    expected_ref = re.compile(r"\$\{?EXPECTED_VERSION\b")
+    expected_alias_refs = [
+        re.compile(rf"\$\{{?{re.escape(name)}\b") for name in expected_aliases
+    ]
+    tag_refs = [
+        re.compile(rf"\$\{{?{re.escape(name)}\b")
+        for name in tag_aliases + ["DOCKER_TAG"]
+    ]
+    for line in text.splitlines():
+        if _VERSION_COMPARISON_RE.search(line) is None:
+            continue
+        has_expected = expected_ref.search(line) is not None or any(
+            pattern.search(line) for pattern in expected_alias_refs
+        )
+        if has_expected and any(pattern.search(line) for pattern in tag_refs):
             return True
     return False
 
@@ -279,15 +344,31 @@ def check_test_script(path: Path) -> list[dict[str, str]]:
                 "or a -z/-n check",
             )
         )
-    if _EXPECTED_VERSION_RE.search(text) and not _asserts_expected_version(lines):
-        findings.append(
-            _finding(
-                "kunpeng.expected_version_not_asserted",
-                "EXPECTED_VERSION is only guarded, never compared with the "
-                "actual software output: the test must assert the exact "
-                "version, e.g. [ \"${out}\" = \"${EXPECTED_VERSION}\" ]",
+    if _EXPECTED_VERSION_RE.search(text):
+        if not _asserts_expected_version(text):
+            findings.append(
+                _finding(
+                    "kunpeng.expected_version_not_asserted",
+                    "EXPECTED_VERSION is only guarded, never compared with the "
+                    "actual software output: the test must assert the exact "
+                    "version, e.g. [ \"${out}\" = \"${EXPECTED_VERSION}\" ]; "
+                    "if the tool has no --version, read the package metadata "
+                    "(importlib.metadata.version / pip show / rpm -q)",
+                )
             )
-        )
+        elif (
+            _compares_ci_tag_version(text)
+            and not _has_software_version_source(text)
+        ):
+            findings.append(
+                _finding(
+                    "kunpeng.expected_version_from_ci_tag",
+                    "EXPECTED_VERSION is compared with a value derived from the "
+                    "CI-injected DOCKER_TAG, which is not software output: use "
+                    "the real version (--version, importlib.metadata.version, "
+                    "pip show, rpm/dpkg query) instead",
+                )
+            )
 
     for name, body in _case_bodies(text).items():
         if not _ASSERTION_RE.search(body):

@@ -220,6 +220,100 @@ class CheckTestScriptTest(unittest.TestCase):
                 _codes(check_test_script(path)),
             )
 
+    def test_importlib_metadata_version_assertion_is_accepted(self) -> None:
+        import tempfile
+
+        script = """#!/bin/bash
+
+: "${EXPECTED_VERSION:?EXPECTED_VERSION is required}"
+
+test_version() {
+    local expected actual
+    expected="${EXPECTED_VERSION#npu-v}"
+    actual="$(python3 -c 'from importlib.metadata import version; print(version("mooncake-transfer-engine-npu"))')"
+    if [ "${actual}" = "${expected}" ]; then
+        echo "PASS: wheel version ${actual}"
+        return 0
+    fi
+    echo "FAIL: expected ${expected}, got '${actual}'"
+    return 1
+}
+
+main() { test_version; }
+main "$@"
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write_script(Path(tmp), script)
+            self.assertEqual(check_test_script(path), [])
+
+    def test_expected_version_compared_with_ci_tag_is_flagged(self) -> None:
+        import tempfile
+
+        script = """#!/bin/bash
+
+: "${EXPECTED_VERSION:?EXPECTED_VERSION is required}"
+
+test_version() {
+    local tag_version
+    tag_version="${DOCKER_TAG%%-*}"
+    if [ "${tag_version}" = "${EXPECTED_VERSION}" ]; then
+        echo "PASS: tag version"
+        return 0
+    fi
+    echo "FAIL: expected ${EXPECTED_VERSION}, got ${tag_version}"
+    return 1
+}
+
+main() { test_version; }
+main "$@"
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write_script(Path(tmp), script)
+            self.assertIn(
+                "kunpeng.expected_version_from_ci_tag",
+                _codes(check_test_script(path)),
+            )
+
+    def test_ci_tag_alias_with_metadata_version_is_accepted(self) -> None:
+        import tempfile
+
+        script = """#!/bin/bash
+
+: "${EXPECTED_VERSION:?EXPECTED_VERSION is required}"
+
+test_image_tag() {
+    local tag_version
+    tag_version="${DOCKER_TAG%%-*}"
+    if [ -n "${tag_version}" ]; then
+        echo "PASS: image tag ${tag_version}"
+        return 0
+    fi
+    echo "FAIL: empty image tag"
+    return 1
+}
+
+test_version() {
+    local expected actual
+    expected="${EXPECTED_VERSION#npu-v}"
+    actual="$(pip show mooncake-transfer-engine-npu | awk '/^Version:/{print $2}')"
+    if [ "${actual}" = "${expected}" ]; then
+        echo "PASS: wheel version ${actual}"
+        return 0
+    fi
+    echo "FAIL: expected ${expected}, got '${actual}'"
+    return 1
+}
+
+main() { test_image_tag; test_version; }
+main "$@"
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write_script(Path(tmp), script)
+            self.assertNotIn(
+                "kunpeng.expected_version_from_ci_tag",
+                _codes(check_test_script(path)),
+            )
+
     def test_pass_line_missing(self) -> None:
         import tempfile
 
