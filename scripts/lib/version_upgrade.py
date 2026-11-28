@@ -186,6 +186,24 @@ def ensure_repo_cache_cleaned(text: str) -> str:
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
+_SHORT_HASH_RE = re.compile(r"^[0-9a-fA-F]{7,11}$")
+
+
+def _dockerfile_has_version(text: str, version: str) -> bool:
+    pattern = re.compile(
+        rf"(?<![0-9A-Za-z])v?{re.escape(version)}(?![0-9A-Za-z])",
+        re.IGNORECASE,
+    )
+    if pattern.search(text) is not None:
+        return True
+    # 目录/tag 用 7 位短哈希时，Dockerfile 里应保留完整哈希（下载/检出的真实 ref）
+    if _SHORT_HASH_RE.fullmatch(version):
+        return re.search(
+            rf"(?<![0-9a-fA-F]){re.escape(version)}[0-9a-fA-F]{{8,}}", text
+        ) is not None
+    return False
+
+
 def check_dockerfile(text: str, new_version: str) -> list[str]:
     """校验 AI 生成的 Dockerfile 是否真的表达新版本；返回可读问题列表。"""
     findings: list[str] = []
@@ -195,11 +213,7 @@ def check_dockerfile(text: str, new_version: str) -> list[str]:
         return findings
     if re.search(r"(?im)^\s*FROM\s+\S+", stripped) is None:
         findings.append("生成的 Dockerfile 缺少 FROM 指令")
-    pattern = re.compile(
-        rf"(?<![0-9A-Za-z])v?{re.escape(new_version)}(?![0-9A-Za-z])",
-        re.IGNORECASE,
-    )
-    if pattern.search(stripped) is None:
+    if not _dockerfile_has_version(stripped, new_version):
         findings.append(f"生成的 Dockerfile 没有出现目标版本 {new_version}")
     return findings
 
@@ -211,16 +225,20 @@ def apply_upgrade(
     dockerfile_text: str,
     *,
     supporting_files: dict[str, str] | None = None,
+    match_version: str | None = None,
 ) -> list[Path]:
     """复制目录、写入 AI 生成的 Dockerfile、更新版本元数据。
 
+    ``new_version`` 是目录与 tag 使用的版本名；``match_version`` 是 Dockerfile
+    里应出现的真实版本（默认同 ``new_version``）。两者不同用于提交哈希作为
+    版本号的场景：目录/tag 用 7 位短哈希，Dockerfile 保留完整哈希。
     ``supporting_files`` 是审计后需要改写的辅助文件（相对版本目录 -> 新内容），
     例如 ``build-QGIS.sh``；只在从旧版本目录复制出的新目录里落盘。
     """
     if new_version == plan.old_version:
         raise UpgradeError(f"{app_dir.name}: 目标版本与当前版本相同（{new_version}）")
 
-    findings = check_dockerfile(dockerfile_text, new_version)
+    findings = check_dockerfile(dockerfile_text, match_version or new_version)
     if findings:
         raise UpgradeError(f"{app_dir.name}: " + "；".join(findings))
 

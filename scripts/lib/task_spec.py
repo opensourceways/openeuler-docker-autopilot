@@ -50,6 +50,22 @@ def _os_tag(os_version: str) -> str:
     return "oe" + suffix.replace(".", "").replace("-", "")
 
 
+_HASH_VERSION_RE = re.compile(r"^[0-9a-fA-F]{12,}$")
+
+
+def naming_version(version: str) -> str:
+    """版本目录与镜像 tag 使用的版本名。
+
+    上游版本是提交哈希时只取前 7 位，避免把 40 位哈希写进目录名和
+    ``<version>-oe<tag>``；其它版本原样返回。
+    """
+
+    text = str(version or "").strip()
+    if _HASH_VERSION_RE.fullmatch(text):
+        return text[:7]
+    return text
+
+
 @dataclass(frozen=True)
 class TaskSpec:
     app: str

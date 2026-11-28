@@ -13,7 +13,24 @@ def _kvrocks_input():
     }
 
 
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        ("fb32cae86117254cb27c4695e6aa77299724d62d", "fb32cae"),
+        ("B1ACF3C01CC914729FE188DFC8ED761858028D4F", "B1ACF3C"),
+        ("b1acf3c", "b1acf3c"),
+        ("2.12.0", "2.12.0"),
+        ("npu-v0.3.14.post1", "npu-v0.3.14.post1"),
+    ],
+)
+def test_naming_version_truncates_commit_hashes(version, expected):
+    from scripts.lib.task_spec import naming_version
+
+    assert naming_version(version) == expected
+
+
 def test_task_spec_normalizes_workflow_dispatch_input():
+
     from scripts.lib.task_spec import TaskSpec
 
     task = TaskSpec.from_workflow_dispatch(_kvrocks_input())

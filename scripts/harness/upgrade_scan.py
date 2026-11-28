@@ -54,7 +54,7 @@ sys.path.insert(0, PROJECT_ROOT)
 from scripts.harness import testgen_scan  # noqa: E402
 from scripts.lib import app_notes  # noqa: E402
 from scripts.lib.stage_common import log_stage  # noqa: E402
-from scripts.lib.task_spec import _os_tag  # noqa: E402
+from scripts.lib.task_spec import _os_tag, naming_version  # noqa: E402
 
 DEFAULT_TARGET_REPO = "openeuler/openeuler-docker-images"
 DEFAULT_APPS_FILE = os.path.join(PROJECT_ROOT, "config", "upgrade-apps.yml")
@@ -603,6 +603,10 @@ def find_updates(
             )
             continue
 
+        # 提交哈希作为版本号时，目录/tag 只取前 7 位；证据里保留完整哈希
+        release_version = version
+        version = naming_version(version)
+
         entry_source = (
             source_url
             or str(entry.get("source_url") or "").strip()
@@ -667,7 +671,7 @@ def find_updates(
         if evidence is None:
             evidence = _manual_evidence(
                 name=entry["name"],
-                version=version,
+                version=release_version,
                 tag=tag,
                 source_url=entry_source,
             )
@@ -760,6 +764,16 @@ def find_updates(
                 }
             )
             continue
+        if version.lower() in _PLACEHOLDER_VERSIONS:
+            skipped.append(
+                {
+                    "app": entry["name"],
+                    "target": "new-image",
+                    "reason": f"版本号无效（{version}）",
+                }
+            )
+            continue
+        version = naming_version(version)
         os_version = forced_os.strip()
         if not os_version:
             skipped.append(

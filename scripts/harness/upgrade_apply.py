@@ -48,7 +48,7 @@ from scripts.lib.stage_common import (  # noqa: E402
     log_stage,
     normalize_repo,
 )
-from scripts.lib.task_spec import TaskSpec, _os_tag  # noqa: E402
+from scripts.lib.task_spec import TaskSpec, _os_tag, naming_version  # noqa: E402
 
 DEFAULT_SOURCE_REPO_DIR = os.path.join(PROJECT_ROOT, "source-repo")
 DEFAULT_TARGET_REPO = "openeuler/openeuler-docker-images"
@@ -748,6 +748,8 @@ def run(
     app = str(item["app"])
     domain = str(item["domain"])
     new_version = str(item["version"])
+    # 提交哈希作为版本号时，目录/tag 只取前 7 位；Dockerfile 仍用完整哈希
+    dir_version = naming_version(new_version)
 
     repo_dir = Path(_env("SOURCE_REPO_DIR", DEFAULT_SOURCE_REPO_DIR))
     if not repo_dir.is_dir():
@@ -756,8 +758,8 @@ def run(
     if not app_dir.is_dir():
         raise SystemExit(f"{app}: 目标仓里没有 {domain}/{app}")
 
-    plan = version_upgrade.plan_upgrade(app_dir, target_version=new_version)
-    branch = f"auto/version-update/{app}/{new_version}-{_os_tag(plan.os_version)}"
+    plan = version_upgrade.plan_upgrade(app_dir, target_version=dir_version)
+    branch = f"auto/version-update/{app}/{dir_version}-{_os_tag(plan.os_version)}"
     base_branch = _env("TARGET_BRANCH", DEFAULT_TARGET_BRANCH)
 
     checkout = _git(repo_dir, "checkout", "-B", branch, f"origin/{base_branch}", check=False)
@@ -786,9 +788,10 @@ def run(
     changed = version_upgrade.apply_upgrade(
         app_dir,
         plan,
-        new_version,
+        dir_version,
         dockerfile_text,
         supporting_files=supporting_updates,
+        match_version=new_version,
     )
 
     _git(repo_dir, "add", "-A", str(app_dir.relative_to(repo_dir)))
@@ -798,7 +801,7 @@ def run(
         repo_dir,
         "-c", f"user.name={commit_name}",
         "-c", f"user.email={commit_email}",
-        "commit", "-m", f"feat: upgrade {app} to {new_version}",
+        "commit", "-m", f"feat: upgrade {app} to {dir_version}",
     )
 
     token = _env("GITCODE_TOKEN")
@@ -812,7 +815,7 @@ def run(
 
     task = TaskSpec(
         app=app,
-        version=new_version,
+        version=dir_version,
         os_version=plan.os_version,
         domain=domain,
         source_url=str(item.get("source_url") or ""),
@@ -829,7 +832,7 @@ def run(
         test_status=test_status,
         push_repo=push_repo,
         item_json=json.dumps(
-            {**item, "install_mode": install_mode},
+            {**item, "version": dir_version, "install_mode": install_mode},
             ensure_ascii=False,
             separators=(",", ":"),
         ),

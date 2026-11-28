@@ -235,6 +235,37 @@ class ApplyUpgradeTest(unittest.TestCase):
             with pytest.raises(version_upgrade.UpgradeError):
                 version_upgrade.apply_upgrade(app, plan, "2.2.0", _new_dockerfile("2.2.0"))
 
+    def test_hash_version_uses_short_directory_and_tag(self) -> None:
+        full = "b1acf3c01cc914729fe188dfc8ed761858028d4f"
+        with tempfile.TemporaryDirectory() as tmp:
+            app = Path(tmp) / "Others" / "webbench"
+            image = app / "1.5" / "24.03-lts-sp4"
+            image.mkdir(parents=True)
+            (image / "Dockerfile").write_text(
+                "FROM openeuler/openeuler:24.03-lts-sp4\nARG VERSION=1.5\n",
+                encoding="utf-8",
+            )
+            (app / "meta.yml").write_text(
+                "1.5-oe2403sp4:\n  path: 1.5/24.03-lts-sp4/Dockerfile\n",
+                encoding="utf-8",
+            )
+            plan = version_upgrade.plan_upgrade(app, target_version="fb32cae")
+            version_upgrade.apply_upgrade(
+                app,
+                plan,
+                "fb32cae",
+                f"FROM openeuler/openeuler:24.03-lts-sp4\nARG VERSION={full}\n",
+                match_version=full,
+            )
+
+            self.assertTrue(
+                (app / "fb32cae" / "24.03-lts-sp4" / "Dockerfile").is_file()
+            )
+            self.assertFalse((app / full).exists())
+            meta = (app / "meta.yml").read_text(encoding="utf-8")
+            self.assertIn("fb32cae-oe2403sp4:", meta)
+            self.assertIn("path: fb32cae/24.03-lts-sp4/Dockerfile", meta)
+
     def test_generated_dockerfile_without_new_version_fails_closed_and_cleans_up(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             app = _build_app(Path(tmp))
@@ -308,3 +339,20 @@ class CheckDockerfileTest(unittest.TestCase):
         self.assertIn("FROM", version_upgrade.check_dockerfile("ARG VERSION=2.2.0\n", "2.2.0")[0])
         findings = version_upgrade.check_dockerfile("FROM x\nARG VERSION=2.1.0\n", "2.2.0")
         self.assertTrue(any("2.2.0" in item for item in findings))
+
+    def test_accepts_full_hash_when_naming_uses_short_hash(self) -> None:
+        full = "fb32cae86117254cb27c4695e6aa77299724d62d"
+
+        self.assertEqual(
+            version_upgrade.check_dockerfile(
+                f"FROM x\nARG VERSION={full}\n", "fb32cae"
+            ),
+            [],
+        )
+        # 短哈希与完整哈希不同源时仍然拒绝
+        self.assertTrue(
+            version_upgrade.check_dockerfile(
+                "FROM x\nARG VERSION=b1acf3c01cc914729fe188dfc8ed761858028d4f\n",
+                "fb32cae",
+            )
+        )
