@@ -604,8 +604,8 @@ def find_updates(
             )
             continue
 
-        # 目录/tag 沿用目标仓既有命名：哈希取前 7 位，带 v / npu-v 前缀的
-        # 版本按已有裸版本目录去掉前缀；证据里保留完整版本。
+        # 目录/tag 沿用目标仓既有命名：哈希取前 7 位，v / npu-v 前缀和
+        # -tentative 这类装饰后缀按已有裸版本目录剥离；证据里保留完整版本。
         release_version = version
         version = naming_version(version, existing_version_dirs(app_dir))
 

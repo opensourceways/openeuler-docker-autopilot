@@ -37,6 +37,13 @@ def test_naming_version_truncates_commit_hashes(version, expected):
         ("slurm-26-05-6-1", ["25.11.1"], "slurm-26-05-6-1"),
         ("v1.36.0", [], "v1.36.0"),
         ("fb32cae86117254cb27c4695e6aa77299724d62d", ["1.5"], "fb32cae"),
+        # 后缀装饰：Cassandra 上游 tag 是 5.0.10-tentative，既有目录是裸版本号
+        ("5.0.10-tentative", ["5.0.4", "5.0.5", "5.0.9"], "5.0.10"),
+        ("v2.0.0-release", ["1.9.0"], "2.0.0"),
+        # rc/beta 等预发布标记不能剥离，否则会被误当成正式版本
+        ("1.36.0-rc1", ["1.35.1"], "1.36.0-rc1"),
+        # .post1 是版本语义的一部分，Maven 式风格匹配时不剥离
+        ("0.3.14.post1", ["0.3.14"], "0.3.14.post1"),
     ],
 )
 def test_naming_version_follows_existing_directory_style(

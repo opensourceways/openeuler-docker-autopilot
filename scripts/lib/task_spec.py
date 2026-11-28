@@ -52,6 +52,11 @@ def _os_tag(os_version: str) -> str:
 
 _HASH_VERSION_RE = re.compile(r"^[0-9a-fA-F]{12,}$")
 _LEADING_NON_DIGIT_RE = re.compile(r"^[^0-9]+")
+_TRAILING_DECORATION_RE = re.compile(r"-[A-Za-z][A-Za-z0-9]*$")
+_PRERELEASE_SUFFIX_RE = re.compile(
+    r"-(?:a|b|rc|alpha|beta|pre|preview|dev|post|snapshot)\d*$",
+    re.IGNORECASE,
+)
 _VERSION_SHAPE_RE = re.compile(r"\d+")
 
 
@@ -61,28 +66,53 @@ def _version_shape(name: str) -> str:
     return _VERSION_SHAPE_RE.sub("#", name)
 
 
+def _strip_trailing_decoration(name: str) -> str:
+    """去掉 ``5.0.10-tentative`` 这类非版本语义的后缀；rc/beta 等预发布标记保留。"""
+
+    match = _TRAILING_DECORATION_RE.search(name)
+    if not match or _PRERELEASE_SUFFIX_RE.fullmatch(match.group(0)):
+        return name
+    return name[: match.start()]
+
+
+def _matches_existing_shape(name: str, existing: Iterable[str]) -> bool:
+    if not name or not name[0].isdigit():
+        return False
+    shape = _version_shape(name)
+    for item in existing:
+        candidate = str(item or "").strip()
+        if not candidate or not candidate[0].isdigit():
+            continue
+        if _version_shape(candidate) == shape:
+            return True
+    return False
+
+
 def naming_version(version: str, existing: Iterable[str] = ()) -> str:
     """版本目录与镜像 tag 使用的版本名。
 
     - 上游版本是提交哈希时只取前 7 位，避免把 40 位哈希写进目录名和
       ``<version>-oe<tag>``；
     - 目标仓已有版本目录采用「裸版本号」命名时（如 ``1.35.1``），去掉
-      Issue/上游版本的前缀：``v1.36.0`` → ``1.36.0``、
-      ``npu-v0.3.14.post1`` → ``0.3.14.post1``；形态对不上时保持原样。
+      Issue/上游版本的前缀与装饰后缀：``v1.36.0`` → ``1.36.0``、
+      ``npu-v0.3.14.post1`` → ``0.3.14.post1``、
+      ``5.0.10-tentative`` → ``5.0.10``；形态对不上时保持原样，
+      ``rc``/``beta`` 等预发布后缀不剥离。
     """
 
     text = str(version or "").strip()
     if _HASH_VERSION_RE.fullmatch(text):
         return text[:7]
+
     stripped = _LEADING_NON_DIGIT_RE.sub("", text)
-    if stripped and stripped != text:
-        shape = _version_shape(stripped)
-        for name in existing:
-            candidate = str(name or "").strip()
-            if not candidate or not candidate[0].isdigit():
-                continue
-            if _version_shape(candidate) == shape:
-                return stripped
+    candidates = [stripped if stripped != text else text]
+    for base in list(candidates):
+        without_suffix = _strip_trailing_decoration(base)
+        if without_suffix != base:
+            candidates.append(without_suffix)
+    for name in candidates:
+        if _matches_existing_shape(name, existing):
+            return name
     return text
 
 
