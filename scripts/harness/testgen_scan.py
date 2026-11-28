@@ -79,6 +79,27 @@ def latest_dockerfile(app_dir: Path) -> Path | None:
     return best
 
 
+def version_dockerfile(app_dir: Path, version: str) -> Path | None:
+    """目标版本目录自己的 Dockerfile；同版本多条 OS 线时取最高 OS。
+
+    审计必须锁定清单给出的版本目录，不能沿用 ``latest_dockerfile``：
+    应用同时存在 ``master`` 这类浮动目录时，它按字典序排在固定哈希目录前面，
+    会被误当成“最新版本”，导致修复改错目录、tag/meta 全部对不上。
+    """
+    target = version.strip().lstrip("vV").lower()
+    candidates = [
+        dockerfile
+        for dockerfile in app_dir.glob("*/*/Dockerfile")
+        if dockerfile.parts[-3].strip().lstrip("vV").lower() == target
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda dockerfile: _version_key(dockerfile.parts[-2]),
+    )
+
+
 def index_target_apps(repo_dir: Path) -> dict[str, list[tuple[str, str]]]:
     """normalized app name -> [(domain, app)] over every known domain."""
     index: dict[str, list[tuple[str, str]]] = {}

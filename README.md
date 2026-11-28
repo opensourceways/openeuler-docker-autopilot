@@ -466,11 +466,14 @@ Issue（或手动清单）给出的目标版本已在目标仓时不跳过，由
 
 ```
 clone 目标仓 → 确定性检查 → upgrade_auditor Agent → upgrade_fixer Agent
-→ 更新 Dockerfile / doc/image-info.yml → 推 auto/image-audit 分支
+→ 更新 Dockerfile / doc/image-info.yml → 补齐 meta.yml / README 版本登记
+→ 推 auto/image-audit 分支
 → x86_64 + aarch64 原生构建与功能测试 → 两个架构都通过才开 PR
 ```
 
 - **确定性检查**（[`upgrade_audit.py`](scripts/harness/upgrade_audit.py)）：`ARG VERSION` / `ARG TAG` / `git clone -b` 是否指向清单版本与 tag、`meta.yml` 是否登记该版本、是否存在 `tests/test.sh`、是否使用 `EXPECTED_VERSION`，以及 `doc/image-info.yml` 是否合法、是否包含目标版本与测试脚本命令。
+- **版本目录锁定**：审计只针对清单目标版本自己的目录（[`testgen_scan.version_dockerfile`](scripts/harness/testgen_scan.py)）；应用同时存在 `master` 这类浮动目录时，不会被字典序更大的目录顶掉。
+- **版本登记同步**（[`version_upgrade.ensure_version_registered`](scripts/lib/version_upgrade.py)）：修复落盘后确定性补齐 `meta.yml` 的 `<version>-<oe_tag>` 映射，以及 README / `doc/image-info.yml` 缺失的版本行；旧版本行保留。CI 以 `meta.yml` 决定构建目录。
 - **AI 审计**（[`upgrade-auditor.md`](.github/agents/upgrade-auditor.md)）：判断 Dockerfile 是否有问题、是否按上游证据构建、构建出的镜像版本是否正确、测试脚本是否足够；输出 `ok / issues / critical` 与逐条问题。
 - **AI 修复**（[`upgrade-fixer.md`](.github/agents/upgrade-fixer.md)）：修正 Dockerfile 的版本/tag/构建源，并按测试脚本更新 `doc/image-info.yml` 的 `usage`、`tags` 与结构；修复结果先过确定性校验，再ersion>` 分支。
 - **双架构原生校验**：与升级链路一致，修复分支在 x86_64 / aarch64 各自真实构建并跑功能测试，任一架构失败都不开 PR（证据留在 artifact），避免把编译错误丢给目标仓 CI 再回流。

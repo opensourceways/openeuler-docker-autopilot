@@ -691,13 +691,18 @@ def find_updates(
                     }
                 )
                 continue
+            # 审计必须锁定目标版本自己的目录：应用同时有 master 这类浮动
+            # 目录时，latest_dockerfile 会选中它，导致修复改错目录。
+            audit_dockerfile = (
+                testgen_scan.version_dockerfile(app_dir, version) or dockerfile
+            )
             audits.append(
                 {
                     "app": app,
                     "domain": domain,
                     "version": version,
-                    "os_version": dockerfile.parts[-2],
-                    "dockerfile_path": dockerfile.relative_to(repo_dir).as_posix(),
+                    "os_version": audit_dockerfile.parts[-2],
+                    "dockerfile_path": audit_dockerfile.relative_to(repo_dir).as_posix(),
                     "source_url": entry_source,
                     "evidence": evidence,
                     "has_test_script": testgen_scan.has_any_test_script(app_dir),

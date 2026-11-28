@@ -82,6 +82,23 @@ class LatestDockerfileTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(testgen_scan.latest_dockerfile(Path(tmp)))
 
+    def test_version_dockerfile_prefers_the_requested_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app_dir = Path(tmp)
+            for version in ("df38c01", "master"):
+                image = app_dir / version / "24.03-lts-sp4"
+                image.mkdir(parents=True)
+                (image / "Dockerfile").write_text("FROM x\n", encoding="utf-8")
+            picked = testgen_scan.version_dockerfile(app_dir, "df38c01")
+            self.assertIsNotNone(picked)
+            self.assertEqual(picked.parts[-3], "df38c01")
+
+    def test_version_dockerfile_missing_version_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(
+                testgen_scan.version_dockerfile(Path(tmp), "1.0.0")
+            )
+
 
 class ResolveItemTest(unittest.TestCase):
     def setUp(self) -> None:

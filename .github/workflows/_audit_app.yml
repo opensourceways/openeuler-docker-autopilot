@@ -2,7 +2,8 @@ name: Audit and fix one app
 
 # 场景二的「已是最新版本」审计与修复（由 upgrade_upstream_versions.yml 调用）：
 #   目标仓已有上游最新版本 → 不跳过 → AI 审计 Dockerfile / 证据对齐 / 版本正确性 /
-#   测试脚本 → 发现问题时调用修复 Agent，更新 Dockerfile 与 doc/image-info.yml。
+#   测试脚本 → 发现问题时调用修复 Agent，更新 Dockerfile 与 doc/image-info.yml，
+#   并确定性补齐 meta.yml / README 的版本登记（CI 以 meta.yml 为准）。
 #
 # 交付顺序与升级链路一致：先推修复分支，再跑双架构原生构建 + 功能测试，
 # 两个架构都通过才开 PR，避免把编译错误直接丢给目标仓 CI。

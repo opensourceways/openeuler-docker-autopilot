@@ -280,6 +280,54 @@ class FixValidationTest(unittest.TestCase):
             )
             self.assertIn("srun --version", image_info)
 
+    def test_apply_fix_registers_missing_version_in_meta_and_docs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(Path(tmp))
+            app = repo / "Others" / "slurm"
+            (app / "meta.yml").write_text("", encoding="utf-8")
+            old_image = app / "26.05.5.1" / "24.03-lts-sp4"
+            old_image.mkdir(parents=True)
+            (old_image / "Dockerfile").write_text("FROM x\n", encoding="utf-8")
+            old_row = (
+                "|[26.05.5.1-oe2403sp4](https://gitcode.com/x/blob/master/"
+                "Others/slurm/26.05.5.1/24.03-lts-sp4/Dockerfile) | "
+                "slurm 26.05.5.1 on openEuler 24.03-LTS-SP4 | amd64, arm64 |\n"
+            )
+            (app / "README.md").write_text(
+                "| Tags | Currently |  Architectures|\n|--|--|--|\n" + old_row,
+                encoding="utf-8",
+            )
+            doc = app / "doc"
+            doc.mkdir(exist_ok=True)
+            (doc / "image-info.yml").write_text(
+                "name: slurm\ntags: |\n  " + old_row + "usage: |\n  srun --version\n",
+                encoding="utf-8",
+            )
+
+            context = upgrade_audit.collect_context(repo, _ITEM)
+            payload = self._corrected_payload()
+            # AI 修复只返回修好的 Dockerfile 与旧 image-info，漏登记新版本
+            payload["image_info"] = (
+                "name: slurm\ntags: |\n  " + old_row + "usage: |\n  srun --version\n"
+            )
+
+            changed = upgrade_audit.apply_fix(repo, context, payload)
+
+            relative = {path.relative_to(repo).as_posix() for path in changed}
+            self.assertIn("Others/slurm/meta.yml", relative)
+            self.assertIn("Others/slurm/README.md", relative)
+            self.assertIn("Others/slurm/doc/image-info.yml", relative)
+            meta = (app / "meta.yml").read_text(encoding="utf-8")
+            self.assertIn("26.05.6.1-oe2403sp4", meta)
+            self.assertIn("26.05.6.1/24.03-lts-sp4/Dockerfile", meta)
+            readme = (app / "README.md").read_text(encoding="utf-8")
+            self.assertIn("26.05.6.1-oe2403sp4", readme)
+            self.assertIn("26.05.6.1/24.03-lts-sp4/Dockerfile", readme)
+            # 旧版本行保留，只追加新版本
+            self.assertIn("26.05.5.1-oe2403sp4", readme)
+            image_info = (doc / "image-info.yml").read_text(encoding="utf-8")
+            self.assertIn("26.05.6.1-oe2403sp4", image_info)
+
     def test_pr_body_mentions_audit_and_test_alignment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = _make_repo(Path(tmp))

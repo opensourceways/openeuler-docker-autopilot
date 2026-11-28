@@ -320,3 +320,51 @@ def _meta_entry_text(text: str, new_version: str, os_version: str) -> str | None
     if text and not text.endswith("\n"):
         text += "\n"
     return text + entry
+
+
+def _has_version_row(text: str, version: str) -> bool:
+    pattern = _version_pattern(version)
+    return any(
+        line.lstrip().startswith("|") and pattern.search(line)
+        for line in text.splitlines()
+    )
+
+
+def ensure_version_registered(
+    app_dir: Path, version: str, os_version: str
+) -> list[Path]:
+    """补齐版本的确定性登记：``meta.yml`` 与 README / image-info 版本表。
+
+    审计修复可能只改 Dockerfile，而 CI 以 ``meta.yml`` 决定构建哪个目录；
+    版本标签表（README、doc/image-info.yml）也可能落后。这里只做「缺什么补
+    什么」：meta 缺条目就追加；版本表缺该版本行时，复制现有版本行并替换版本
+    串。已有内容一律保持原样，不删除旧版本。
+    """
+    changed: list[Path] = []
+
+    meta = app_dir / "meta.yml"
+    if meta.is_file():
+        updated = _meta_entry_text(
+            meta.read_text(encoding="utf-8"), version, os_version
+        )
+        if updated is not None:
+            meta.write_text(updated, encoding="utf-8")
+            changed.append(meta)
+
+    others = [
+        name for name in existing_version_dirs(app_dir) if name != version
+    ]
+    for rel in _ROOT_VERSION_FILES:
+        path = app_dir / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if _has_version_row(text, version):
+            continue
+        for old_version in others:
+            updated, appended = _append_version_row(text, old_version, version)
+            if appended:
+                path.write_text(updated, encoding="utf-8")
+                changed.append(path)
+                break
+    return changed

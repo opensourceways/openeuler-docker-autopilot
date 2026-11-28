@@ -179,6 +179,32 @@ class FindUpdatesTest(unittest.TestCase):
         self.assertFalse(audit["has_test_script"])
         self.assertIn("转入 AI 审计", audit["reason"])
 
+    def test_audit_uses_the_target_version_directory(self) -> None:
+        # pfordelta 同时有 master 和固定哈希目录；master 按字典序更大，
+        # 不能让它顶掉清单指定的 df38c01 目录。
+        _make_app(
+            self.repo, "HPC", "pfordelta", versions=("df38c01", "master")
+        )
+        result = self._scan(
+            "df38c01",
+            apps=[
+                _entry(
+                    "df38c01",
+                    name="pfordelta",
+                    app="pfordelta",
+                    domain="HPC",
+                )
+            ],
+        )
+
+        self.assertEqual(len(result["audits"]), 1)
+        audit = result["audits"][0]
+        self.assertEqual(
+            audit["dockerfile_path"],
+            "HPC/pfordelta/df38c01/24.03-lts-sp4/Dockerfile",
+        )
+        self.assertEqual(audit["version"], "df38c01")
+
     def test_audit_item_carries_the_app_build_budget(self) -> None:
         from unittest import mock
 

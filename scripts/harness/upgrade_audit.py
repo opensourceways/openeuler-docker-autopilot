@@ -739,7 +739,11 @@ def validate_fix(context: dict, payload: dict) -> list[str]:
 
 
 def apply_fix(repo_dir: Path, context: dict, payload: dict) -> list[Path]:
-    """把修复结果写入工作树，返回实际改动的文件。"""
+    """把修复结果写入工作树，返回实际改动的文件。
+
+    AI 只返回 Dockerfile 与 doc/image-info.yml；``meta.yml``、README 的版本
+    登记由确定性步骤补齐，避免 CI 以 meta.yml 为准时漏建目标版本。
+    """
     changed: list[Path] = []
 
     dockerfile_path = repo_dir / context["dockerfile_path"]
@@ -761,6 +765,14 @@ def apply_fix(repo_dir: Path, context: dict, payload: dict) -> list[Path]:
             image_info_path.parent.mkdir(parents=True, exist_ok=True)
             image_info_path.write_text(updated_info, encoding="utf-8")
             changed.append(image_info_path)
+
+    for path in version_upgrade.ensure_version_registered(
+        repo_dir / str(context["domain"]) / str(context["app"]),
+        str(context["version"]),
+        str(context["os_version"]),
+    ):
+        if path not in changed:
+            changed.append(path)
     return changed
 
 
@@ -776,7 +788,8 @@ def build_fix_pr_body(
 ) -> str:
     lines = [
         f"本 PR 修复 **{context['app']} {context['version']}** 的审计问题，"
-        f"并同步 `doc/image-info.yml`（openEuler `{context['os_version']}`）。",
+        f"并同步 `meta.yml`、`README.md` 与 `doc/image-info.yml` 的版本登记"
+        f"（openEuler `{context['os_version']}`）。",
         "",
         "## 审计结论",
         "",
