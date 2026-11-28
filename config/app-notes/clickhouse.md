@@ -7,3 +7,9 @@ ClickHouse 官方 aarch64 release 二进制按 ARMv8.3-A 编译：gdb 复现首�
 ## test.sh 版本比较
 镜像目录名为 `<ver>-stable`，但二进制 `--version`/`SELECT version()` 输出纯版本号 `<ver>`（不带 `-stable`）。test.sh 必须用 `${EXPECTED_VERSION%-stable}` 归一化后再比较，否则稳定版镜像的版本校验必失败。
 <!-- /oe-app-note:auto -->
+
+<!-- oe-app-note:auto:v26.10.2.103-stable/24.03-lts-sp4 -->
+## 自动沉淀：v26.10.2.103-stable / 24.03-lts-sp4
+
+ClickHouse 官方 release 的下载路径使用完整 tag（`v<ver>-stable`），而 RPM/制品文件名使用纯版本号 `<ver>`（不带 `v`/`-stable`）。Dockerfile 需同时设 `ARG VERSION=<ver>`（拼制品名）和 `ARG TAG=v<ver>-stable`（拼下载路径）；确定性校验要求目标 tag 字样以字面量出现，`ARG TAG=v<ver>-stable` 即可满足。x86_64 上 RPM `%post` 会正确创建 `clickhouse` 用户，`getent`/`useradd` 兜底为幂等 no-op；该兜底用于覆盖 aarch64 Kunpeng 下 RPM `%post`（`clickhouse install`）触发 Illegal instruction 崩溃导致用户未创建的问题。
+<!-- /oe-app-note:auto -->
