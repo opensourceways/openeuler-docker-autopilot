@@ -281,6 +281,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       count: ${{ steps.plan.outputs.count }}
+      unrepairable: ${{ steps.plan.outputs.unrepairable_count }}
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - name: Check out workflow source
@@ -424,11 +425,11 @@ jobs:
           CREATE_RESULT: ${{ needs.create-image.result }}
           REPAIR_RESULT: ${{ needs.repair.result }}
           AUDIT_RESULT: ${{ needs.audit.result }}
+          PLAN_UNREPAIRABLE: ${{ needs.plan-repairs.outputs.unrepairable }}
         run: |
           outcome=success
           for result in \
             "${DISCOVER_RESULT}" \
-            "${UPGRADE_RESULT}" \
             "${CONDA_RESULT}" \
             "${CREATE_RESULT}" \
             "${REPAIR_RESULT}" \
@@ -437,6 +438,16 @@ jobs:
               failure|cancelled) outcome=failure ;;
             esac
           done
+          # upgrade 矩阵失败时，只有「所有失败应用都被自动修复成功」才算整体成功；
+          # prepare / replay / open-pr 等不可修复阶段的失败仍保持 failure。
+          case "${UPGRADE_RESULT}" in
+            failure|cancelled)
+              if [ "${REPAIR_RESULT}" != "success" ] ||
+                 [ "${PLAN_UNREPAIRABLE:-0}" != "0" ]; then
+                outcome=failure
+              fi
+              ;;
+          esac
           echo "outcome=${outcome}" >> "$GITHUB_OUTPUT"
 
       # 失败时把各失败 job 的关键日志行摘出来，回写评论时一并附上。
@@ -463,9 +474,16 @@ jobs:
           CREATE_RESULT: ${{ needs.create-image.result }}
           REPAIR_RESULT: ${{ needs.repair.result }}
           AUDIT_RESULT: ${{ needs.audit.result }}
+          PLAN_UNREPAIRABLE: ${{ needs.plan-repairs.outputs.unrepairable }}
         run: |
+          upgrade_label="${UPGRADE_RESULT:-skipped}"
+          if [ "${UPGRADE_RESULT}" = "failure" ] &&
+             [ "${REPAIR_RESULT}" = "success" ] &&
+             [ "${PLAN_UNREPAIRABLE:-0}" = "0" ]; then
+            upgrade_label="failure（已由自动修复补齐并提 PR）"
+          fi
           summary="$(printf '%s\n' \
-            "- 升级任务：\`${UPGRADE_RESULT:-skipped}\`" \
+            "- 升级任务：\`${upgrade_label}\`" \
             "- conda 登记：\`${CONDA_RESULT:-skipped}\`" \
             "- 新建镜像：\`${CREATE_RESULT:-skipped}\`" \
             "- 自动修复：\`${REPAIR_RESULT:-skipped}\`" \

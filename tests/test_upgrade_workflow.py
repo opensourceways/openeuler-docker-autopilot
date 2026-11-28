@@ -96,6 +96,10 @@ def test_finalize_job_writes_back_only_when_dispatched_from_an_issue():
     assert 'GITCODE_TOKEN' in text
     # 任一本轮 job 失败或取消都回写为 failure，Issue 保持打开
     assert 'failure|cancelled' in text
+    # upgrade 矩阵失败但自动修复全部成功时，整体按成功回写
+    assert 'PLAN_UNREPAIRABLE' in text
+    assert 'unrepairable' in text
+    assert 'REPAIR_RESULT}" != "success"' in text
     # 失败时把各失败 job 的关键日志一并贴进评论
     assert 'collect_failed_logs.py' in text
     assert '--failure-summary' in text
@@ -277,7 +281,10 @@ def test_validation_failure_triggers_one_automatic_repair_round():
     assert plan['needs'] == ['discover', 'upgrade']
     assert 'always()' in _squash(plan['if'])
     assert "needs.upgrade.result == 'failure'" in _squash(plan['if'])
-    assert set(plan['outputs']) >= {'count', 'matrix'}
+    assert set(plan['outputs']) >= {'count', 'matrix', 'unrepairable'}
+    assert plan['outputs']['unrepairable'] == (
+        '${{ steps.plan.outputs.unrepairable_count }}'
+    )
     assert 'upgrade_plan_repairs.py' in _squash(plan['steps'])
     # 读 jobs API 需要 actions 权限；create-image 还需要 write 才能派发场景一
     assert 'actions: write' in UPGRADE.read_text(encoding='utf-8')

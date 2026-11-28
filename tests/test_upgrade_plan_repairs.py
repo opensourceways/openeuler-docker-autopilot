@@ -47,6 +47,22 @@ class SelectFailedAppsTest(unittest.TestCase):
 
         self.assertEqual(apps, ["ok-app"])
 
+    def test_failed_job_apps_include_non_validation_stages(self) -> None:
+        jobs = [
+            {"name": "Discover upgradable apps", "conclusion": "failure"},
+            {
+                "name": "Upgrade redis / Prepare redis -> 7.4.0",
+                "conclusion": "failure",
+            },
+            {"name": "Upgrade kvrocks / Validate x86_64", "conclusion": "failure"},
+            {"name": "Upgrade ndpi / Replay aarch64", "conclusion": "cancelled"},
+            {"name": "Upgrade ok-app / Validate x86_64", "conclusion": "success"},
+        ]
+
+        apps = upgrade_plan_repairs.select_failed_job_apps(jobs)
+
+        self.assertEqual(apps, ["kvrocks", "ndpi", "redis"])
+
     def test_matrix_carries_repository_instructions(self) -> None:
         matrix = upgrade_plan_repairs.build_matrix(
             ["open-webui"], "优先把预热放到构建期"
@@ -105,6 +121,8 @@ class MainTest(unittest.TestCase):
         written = dict(line.split("=", 1) for line in values)
         self.assertEqual(written["count"], "1")
         self.assertEqual(written["apps"], '["open-webui"]')
+        self.assertEqual(written["unrepairable_count"], "0")
+        self.assertEqual(written["unrepairable"], "[]")
         self.assertEqual(
             json.loads(written["matrix"]),
             {
@@ -113,6 +131,49 @@ class MainTest(unittest.TestCase):
                 ]
             },
         )
+
+    def test_unrepairable_apps_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            jobs_file = root / "jobs.json"
+            jobs_file.write_text(
+                json.dumps(
+                    {
+                        "jobs": [
+                            {
+                                "name": "Upgrade redis / Prepare redis -> 7.4.0",
+                                "conclusion": "failure",
+                            },
+                            {
+                                "name": "Upgrade open-webui / Validate x86_64",
+                                "conclusion": "failure",
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output_file = root / "output"
+            previous = sys.argv
+            sys.argv = [
+                "upgrade_plan_repairs.py",
+                "--jobs",
+                str(jobs_file),
+            ]
+            try:
+                with mock.patch.dict(
+                    "os.environ", {"GITHUB_OUTPUT": str(output_file)}
+                ):
+                    self.assertEqual(upgrade_plan_repairs.main(), 0)
+            finally:
+                sys.argv = previous
+            values = output_file.read_text(encoding="utf-8").splitlines()
+
+        written = dict(line.split("=", 1) for line in values)
+        self.assertEqual(written["count"], "1")
+        self.assertEqual(written["apps"], '["open-webui"]')
+        self.assertEqual(written["unrepairable_count"], "1")
+        self.assertEqual(written["unrepairable"], '["redis"]')
 
 
 if __name__ == "__main__":

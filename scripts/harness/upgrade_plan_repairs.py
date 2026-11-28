@@ -52,6 +52,26 @@ def select_failed_apps(jobs: Iterable[Mapping[str, object]]) -> list[str]:
     return sorted(apps)
 
 
+def select_failed_job_apps(jobs: Iterable[Mapping[str, object]]) -> list[str]:
+    """返回 upgrade 矩阵里任意 job 失败/取消的 app（去重排序）。
+
+    与 :func:`select_failed_apps` 不同，这里包含 prepare、replay、open-pr 等
+    非验证阶段：这些失败没有可自动 repair 的分支或产物，是「不可修复」的。
+    """
+
+    apps: set[str] = set()
+    for job in jobs:
+        match = _JOB_NAME.match(str(job.get("name") or ""))
+        if match is None:
+            continue
+        if job.get("conclusion") not in {"failure", "cancelled"}:
+            continue
+        app = match.group("app")
+        if _APP_NAME.fullmatch(app):
+            apps.add(app)
+    return sorted(apps)
+
+
 def build_matrix(apps: Iterable[str], instructions: str) -> dict[str, list[dict[str, object]]]:
     include: list[dict[str, object]] = []
     for app in sorted(apps):
@@ -129,13 +149,18 @@ def main() -> int:
         jobs = fetch_jobs(repo=args.repo, run_id=args.run_id, token=token)
 
     apps = select_failed_apps(jobs or [])
+    unrepairable = sorted(set(select_failed_job_apps(jobs or [])) - set(apps))
     matrix = build_matrix(apps, args.instructions)
     _emit_output(
         count=str(len(apps)),
         apps=json.dumps(apps, ensure_ascii=False, separators=(",", ":")),
+        unrepairable_count=str(len(unrepairable)),
+        unrepairable=json.dumps(unrepairable, ensure_ascii=False, separators=(",", ":")),
         matrix=json.dumps(matrix, ensure_ascii=False, separators=(",", ":")),
     )
     print(f"failed validation apps: {apps}")
+    if unrepairable:
+        print(f"unrepairable failed apps: {unrepairable}")
     return 0
 
 
